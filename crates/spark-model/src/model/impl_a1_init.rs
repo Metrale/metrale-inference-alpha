@@ -86,6 +86,7 @@ pub(super) fn build_mtp_proposer(
     use_speculative: bool,
     mtp_weights: Vec<MtpWeights>,
     embed_tokens: DenseWeight,
+    target_final_norm: DenseWeight,
     lm_head_nvfp4: Option<QuantizedWeight>,
     // Padded transposed twin of the SHARED main head for the batched-propose
     // tile GEMM; `Some` only when the drafter head IS the main head (caller
@@ -124,6 +125,7 @@ pub(super) fn build_mtp_proposer(
         crate::layers::MtpHead::new(
             mtp_wts,
             embed_tokens,
+            target_final_norm,
             lm_nvfp4,
             lm_head_nvfp4_t,
             config,

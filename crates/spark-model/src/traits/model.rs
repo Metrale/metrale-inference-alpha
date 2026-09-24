@@ -708,6 +708,29 @@ pub trait Model: Send + Sync {
         bail!("stash_verify_hidden_rows: unsupported by this model")
     }
 
+    /// Exact drafter KV (`METRALE_MTP_KV_EXACT`): copy batched-verify rows
+    /// into catch-up stash slots, `slot_rows[j] = (slot, row)`, slot =
+    /// batch index * [`crate::layer::MTP_CATCHUP_MAX`] + k. No-op unless the
+    /// model's lever is on.
+    fn stash_verify_catchup_rows(&self, slot_rows: &[(usize, usize)]) -> Result<()> {
+        let _ = slot_rows;
+        Ok(())
+    }
+
+    /// Exact drafter KV: append one drafter row per accepted draft before the
+    /// next propose (see [`Self::stash_verify_catchup_rows`]). Returns rows
+    /// written; 0 when unsupported or the lever is off.
+    fn run_mtp_catchup_batched(
+        &self,
+        tokens: &[Vec<u32>],
+        first_slot: &[usize],
+        first_pos: &[usize],
+        seqs: &mut [&mut SequenceState],
+    ) -> Result<usize> {
+        let _ = (tokens, first_slot, first_pos, seqs);
+        Ok(0)
+    }
+
     /// Stashed-row variant of [`Self::save_hidden_for_mtp`]: copy stash slot
     /// `idx` (written by [`Self::stash_verify_hidden_rows`]) into the MTP
     /// input buffer. Used by the batched-verify verdict path, whose propose

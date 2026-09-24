@@ -555,6 +555,23 @@ pub trait DraftProposer: Send + Sync {
         1
     }
 
+    /// `ModelLevers::mtp_kv_exact`: append one drafter row per accepted draft
+    /// of the last verify, across sequences, before the next propose.
+    /// `tokens[i]` are sequence i's accepted drafts, `hiddens[i][k]` the
+    /// target hidden paired with `tokens[i][k]`, `first_pos[i]` the RoPE
+    /// position of `tokens[i][0]`. Returns rows written. Default: no-op.
+    fn catchup_batch(
+        &self,
+        _tokens: &[Vec<u32>],
+        _hiddens: &[Vec<DevicePtr>],
+        _first_pos: &[usize],
+        _states: &mut [&mut dyn ProposerState],
+        _ctx: &ForwardContext,
+        _stream: u64,
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
     /// Prefill the drafter's own context (KV cache) over the prompt, before
     /// the first `propose()` of a sequence (METRALE_MTP_DRAFTER_PREFILL).
     ///

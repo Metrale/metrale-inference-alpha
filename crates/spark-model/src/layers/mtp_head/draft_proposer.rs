@@ -10,6 +10,8 @@ impl DraftProposer for MtpHead {
             seq_len: 0,
             last_num_drafted: 0,
             last_pair_key: None,
+            last_drafts: Vec::new(),
+            pending_catchup: Vec::new(),
         }))
     }
 
@@ -67,6 +69,7 @@ impl DraftProposer for MtpHead {
                 stream,
                 embed_target,
                 mask_for_draft,
+                i == 0,
             )?;
             tracing::debug!(
                 "MTP propose[{i}]: token={current_token} pos={} mtp_seq_len={} → draft={draft}",
@@ -81,6 +84,7 @@ impl DraftProposer for MtpHead {
         }
 
         mtp_state.last_num_drafted = drafts.len();
+        mtp_state.last_drafts.clone_from(&drafts);
         Ok(drafts)
     }
 
@@ -259,6 +263,18 @@ impl DraftProposer for MtpHead {
         ))
     }
 
+    fn catchup_batch(
+        &self,
+        tokens: &[Vec<u32>],
+        hiddens: &[Vec<DevicePtr>],
+        first_pos: &[usize],
+        states: &mut [&mut dyn ProposerState],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<usize> {
+        self.catchup_batch_impl(tokens, hiddens, first_pos, states, ctx, stream)
+    }
+
     fn after_verify(
         &self,
         num_accepted: usize,
@@ -276,11 +292,18 @@ impl DraftProposer for MtpHead {
         // e.g. K=2: drafted 1, accepted 0 → trim 1. accepted 1 → trim 0.
         // e.g. K=3: drafted 2, accepted 0 → trim 2. accepted 1 → trim 1. accepted 2 → trim 0.
         let num_drafted = mtp_state.last_num_drafted.max(1);
-        let num_to_trim = mtp_rows_to_trim(
-            num_drafted,
-            num_accepted,
-            crate::speculative::mtp_refeed_accepted_enabled(),
-        );
+        // Exact-KV: row 0 was built from the verified input token and the
+        // target hidden, so it stays; rows 1.. were built from drafter
+        // hiddens and go — the accepted ones are rebuilt by the catch-up.
+        let num_to_trim = if self.kv_exact {
+            num_drafted - 1
+        } else {
+            mtp_rows_to_trim(
+                num_drafted,
+                num_accepted,
+                crate::speculative::mtp_refeed_accepted_enabled(),
+            )
+        };
         let old_sl = mtp_state.seq_len;
         if num_to_trim > 0 {
             mtp_state.seq_len = mtp_state.seq_len.saturating_sub(num_to_trim);
