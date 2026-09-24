@@ -91,7 +91,12 @@ impl ServePlan {
 /// [`ServePlan::disclosed`] evaluates, kept free so a test can feed it a
 /// recipe without standing up a whole plan.
 pub(crate) fn disclosed_from(args: &crate::cli::ServeArgs) -> BTreeMap<String, String> {
-    gate::record_serve::disclosure(args.mtp_gate_force(), args.speculative)
+    gate::record_serve::disclosure(
+        args.mtp_gate_force(),
+        args.speculative,
+        args.prefill_codispatch,
+        args.w4a4_downcast,
+    )
 }
 
 /// Resolve what `benchmark_id`'s gate run serves.

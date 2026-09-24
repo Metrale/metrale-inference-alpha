@@ -72,3 +72,35 @@ fn the_disclosure_is_read_off_the_rendered_serve() {
         pairs(&[("speculative", "false")])
     );
 }
+
+/// G22: `--prefill-codispatch` is a flag, so the record reads it off the
+/// rendered serve — the concurrency ladder's `prefill_codispatch = "true"`
+/// pin must disclose `true`, where `perf_env` used to say `0` for it.
+#[test]
+fn the_codispatch_flag_is_disclosed_off_the_rendered_serve() {
+    assert_eq!(
+        disclosed(
+            "  max_batch_size: \"8\"\n",
+            &[("prefill_codispatch", "true")]
+        ),
+        pairs(&[("prefill_codispatch", "true"), ("speculative", "false")])
+    );
+    assert_eq!(
+        disclosed("  prefill_codispatch: \"false\"\n", &[]),
+        pairs(&[("prefill_codispatch", "false"), ("speculative", "false")])
+    );
+}
+
+/// `--w4a4-downcast` rides `serve_overrides` like any valued bool and the
+/// record discloses it when on; off (the default) renders nothing extra.
+#[test]
+fn the_w4a4_downcast_flag_is_disclosed_off_the_rendered_serve() {
+    assert_eq!(
+        disclosed("  max_batch_size: \"8\"\n", &[("w4a4_downcast", "true")]),
+        pairs(&[("speculative", "false"), ("w4a4_downcast", "true")])
+    );
+    assert_eq!(
+        disclosed("  w4a4_downcast: \"false\"\n", &[]),
+        pairs(&[("speculative", "false")])
+    );
+}

@@ -23,6 +23,16 @@ use super::record::GateRecord;
 pub const MTP_GATE: &str = "mtp_gate";
 /// Whether `--speculative` was on at all — `mtp_gate` means nothing without it.
 pub const SPECULATIVE: &str = "speculative";
+/// The `--prefill-codispatch` flag as the rendered serve gave it (G22). It
+/// became a flag on 2026-09-22; before that `perf_env` disclosed it from the
+/// environment, which a flag never touches, so a serve running
+/// `--prefill-codispatch true` was recorded as `METRALE_PREFILL_CODISPATCH=0`.
+pub const PREFILL_CODISPATCH: &str = "prefill_codispatch";
+/// `--w4a4-downcast` (activations quantised to FP4 on the small-M projection
+/// and dense-FFN paths). Disclosed ONLY when true: the flag defaults to false
+/// and has no environment fallback, so absent is exactly false and every
+/// record before the flag existed reads correctly.
+pub const W4A4_DOWNCAST: &str = "w4a4_downcast";
 
 /// The disclosure for a server whose rendered flags resolved to these.
 ///
@@ -33,7 +43,17 @@ pub const SPECULATIVE: &str = "speculative";
 /// recorded as ABSENT rather than as the default the scheduler would apply:
 /// "the recipe pinned nothing" is the finding a reader needs, and spelling it
 /// `auto` would hide it.
-pub fn disclosure(mtp_gate_force: Option<bool>, speculative: bool) -> BTreeMap<String, String> {
+///
+/// `prefill_codispatch` follows the same rule: `Some` is the flag as rendered,
+/// `None` means the flag was absent and the legacy `METRALE_PREFILL_CODISPATCH`
+/// variable decides — which `serve_env` discloses when the recipe declared
+/// it, and which is off when unset.
+pub fn disclosure(
+    mtp_gate_force: Option<bool>,
+    speculative: bool,
+    prefill_codispatch: Option<bool>,
+    w4a4_downcast: bool,
+) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     m.insert(SPECULATIVE.to_string(), speculative.to_string());
     if let Some(force) = mtp_gate_force {
@@ -41,6 +61,12 @@ pub fn disclosure(mtp_gate_force: Option<bool>, speculative: bool) -> BTreeMap<S
             MTP_GATE.to_string(),
             if force { "force" } else { "auto" }.to_string(),
         );
+    }
+    if let Some(on) = prefill_codispatch {
+        m.insert(PREFILL_CODISPATCH.to_string(), on.to_string());
+    }
+    if w4a4_downcast {
+        m.insert(W4A4_DOWNCAST.to_string(), "true".to_string());
     }
     m
 }
