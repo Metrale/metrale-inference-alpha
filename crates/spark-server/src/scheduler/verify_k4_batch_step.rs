@@ -203,6 +203,24 @@ pub(super) fn step_verify_k4_batched(
         // save-from-stash will fail and skip only its re-propose.
         tracing::error!("stash_verify_hidden_rows: {e:#}");
     }
+    // Exact drafter KV (`METRALE_MTP_KV_EXACT`; the model no-ops when off):
+    // the verify rows of every accepted draft, for the Phase 4 catch-up.
+    const CATCHUP_MAX: usize = spark_model::layer::MTP_CATCHUP_MAX;
+    let accepted: Vec<usize> = verdicts
+        .iter()
+        .map(|&(_, na, _)| na.min(CATCHUP_MAX))
+        .collect();
+    let catchup_rows: Vec<(usize, usize)> = accepted
+        .iter()
+        .enumerate()
+        .flat_map(|(i, &na)| (0..na).map(move |k| (i, k)))
+        .map(|(i, k)| (i * CATCHUP_MAX + k, off[i] + k))
+        .collect();
+    if !catchup_rows.is_empty()
+        && let Err(e) = model.stash_verify_catchup_rows(&catchup_rows)
+    {
+        tracing::error!("stash_verify_catchup_rows: {e:#}");
+    }
 
     sched
         .timing
@@ -251,6 +269,31 @@ pub(super) fn step_verify_k4_batched(
         // here: the pre-existing pair (guard + explicit call) double-counted
         // STEPS, halving every per-step average the wave-10 attribution read.
         return;
+    }
+    // Exact drafter KV: append the accepted drafts' drafter rows (all pending
+    // sequences, one batched pass) before any propose reads the drafter KV.
+    let catchup_tokens: Vec<Vec<u32>> = pending
+        .iter()
+        .map(|&i| drafts_per_seq[i][..accepted[i]].to_vec())
+        .collect();
+    if catchup_tokens.iter().any(|t| !t.is_empty()) {
+        let first_slot: Vec<usize> = pending.iter().map(|&i| i * CATCHUP_MAX).collect();
+        let first_pos: Vec<usize> = pending
+            .iter()
+            .zip(&catchup_tokens)
+            .map(|(&i, t)| batch[i].seq.seq_len - t.len())
+            .collect();
+        let mut seq_refs: Vec<&mut SequenceState> = batch
+            .iter_mut()
+            .enumerate()
+            .filter(|(i, _)| pending.contains(i))
+            .map(|(_, a)| &mut a.seq)
+            .collect();
+        if let Err(e) =
+            model.run_mtp_catchup_batched(&catchup_tokens, &first_slot, &first_pos, &mut seq_refs)
+        {
+            tracing::error!("run_mtp_catchup_batched: {e:#}");
+        }
     }
     let mut need_fallback: Vec<usize> = Vec::new();
     let mut groups_batched = 0usize;

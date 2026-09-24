@@ -143,6 +143,12 @@ pub struct MtpProposerState {
     /// the row space is compacted (accepted pairs only) and drifts from the
     /// sequence position. `None` until the first row is written.
     pub last_pair_key: Option<usize>,
+    /// The drafts the last propose returned, in order (`ModelLevers::mtp_kv_exact`).
+    pub last_drafts: Vec<u32>,
+    /// Accepted drafts of the last verify whose drafter rows the next propose
+    /// must append from the verify's target hiddens before drafting
+    /// (`ModelLevers::mtp_kv_exact`). Empty otherwise.
+    pub pending_catchup: Vec<u32>,
 }
 
 impl ProposerState for MtpProposerState {
@@ -210,6 +216,9 @@ pub struct MtpHead {
 
     // Shared weights from target model
     embed_tokens: DenseWeight,
+    /// The TARGET's final norm weight, applied to target-hidden rows before
+    /// `pre_fc_norm_hidden` under `ModelLevers::mtp_target_postnorm`.
+    target_final_norm: DenseWeight,
     lm_head_nvfp4: QuantizedWeight,
 
     // KV cache for MTP attention (1 layer, separate from target)
@@ -236,6 +245,9 @@ pub struct MtpHead {
     /// magnitudes) → constant draft token 0 → 0% acceptance. BF16 KV (this
     /// head is a single tiny attention layer) fixes it. Gated by mtp_quant.
     kv_bf16: bool,
+    /// `ModelLevers::mtp_kv_exact`, resolved at construction (`after_verify`
+    /// has no `ForwardContext`).
+    kv_exact: bool,
     residual_add_k: KernelHandle,
     residual_add_rms_norm_k: KernelHandle,
     sigmoid_gate_mul_k: KernelHandle,
@@ -413,6 +425,7 @@ impl MtpHead {
 }
 
 mod batch_caps;
+mod catchup_batch;
 mod chain_hidden;
 mod draft_proposer;
 mod forward;
@@ -435,6 +448,8 @@ mod tests {
             seq_len: 42,
             last_num_drafted: 0,
             last_pair_key: None,
+            last_drafts: Vec::new(),
+            pending_catchup: Vec::new(),
         });
         let mtp = state.as_any().downcast_ref::<MtpProposerState>().unwrap();
         assert_eq!(mtp.seq_len, 42);

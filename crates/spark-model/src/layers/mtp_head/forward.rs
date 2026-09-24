@@ -49,6 +49,7 @@ impl MtpHead {
         stream: u64,
         draft_embed_target: Option<DevicePtr>,
         grammar_bitmask: Option<&[i32]>,
+        target_row: bool,
     ) -> Result<u32> {
         // ★ ONE read, not four. This ran per DRAFTED TOKEN and every one of
         // the four sites read the same variable only to decide whether to do
@@ -82,6 +83,10 @@ impl MtpHead {
 
         // The saved hidden is always BF16 (the residual stream is BF16).
         let normed_hidden = ctx.buffers.ssm_gates();
+        // `ssm_ba` is the concat destination written in step 3, so it is free
+        // to hold the target-final-normed row until then.
+        let target_hidden =
+            self.target_postnorm_row(ctx, target_row, target_hidden, ctx.buffers.ssm_ba(), stream)?;
         ops::rms_norm(
             ctx.gpu,
             self.rms_norm_k,

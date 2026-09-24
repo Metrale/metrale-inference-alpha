@@ -51,6 +51,8 @@
 //
 // Grid: (ceil(N/16), 1, 1), block 256 (8 warps split K over k64 blocks,
 // fixed-order reduction, deterministic). Requires K % 128 == 0.
+// The activation-reuse twins (`_ntX`) take X 16-row tiles per CTA:
+// grid (ceil(N/(16*X)), 1, 1), same block and the same bits.
 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
@@ -188,6 +190,159 @@ __device__ __forceinline__ void w4a4_gemv_mx_impl(
     }
 }
 
+// Activation-reuse twin of w4a4_gemv_mx_impl: NT 16-row weight tiles per
+// CTA (grid ceil(N / (16 * NT))). Each warp keeps its activation fragments in
+// registers and feeds them to all NT tiles, so the activation matrix is
+// re-read from L2 N/(16*NT) times instead of N/16 (at M=32 that traffic is 2x
+// the weight bytes). Warp w still accumulates exactly the k128 chunks
+// c = w (mod 8) in increasing order and the 8 per-warp partials are still
+// summed in warp order, so every twin is bit-identical to its one-tile kernel.
+//
+// A separate function, NOT a generalisation of w4a4_gemv_mx_impl: an NT=1
+// instantiation of this body computes the same bits but compiles to fewer
+// registers (126 vs 133 at MB=4), which fits 2 CTAs per SM instead of 1 and
+// draws more power at the same speed. The one-tile entries below are
+// therefore the historical code, so METRALE_W4A4_MX_NT=1 is a true revert.
+template <int MB, int KU, int NT>
+__device__ __forceinline__ void w4a4_gemv_mx_nt_impl(
+    const unsigned char* __restrict__ Aq,   // [M, K/2]  NVFP4 activations, FRAGMENT order
+    const unsigned char* __restrict__ As,   // [M, K/16] E4M3 group scales, FRAGMENT order
+    const float* __restrict__ Ag,           // [M]       per-row global scale
+    const unsigned char* __restrict__ Bq,   // [N, K/2]  NVFP4 weights (checkpoint layout)
+    const unsigned char* __restrict__ Bs,   // [N, K/16] E4M3 group scales (checkpoint layout)
+    const float scale2,
+    __nv_bfloat16* __restrict__ C,          // [M, N]
+    unsigned int M, unsigned int N, unsigned int K)
+{
+    const unsigned int warp = threadIdx.x >> 5;
+    const unsigned int lane = threadIdx.x & 31u;
+    const unsigned int g = lane >> 2;
+    const unsigned int t = lane & 3u;
+    const bool odd = (t & 1u) != 0u;
+    const unsigned int nb = blockIdx.x * 16u * NT;
+    const unsigned int half_K = K >> 1;
+    const unsigned int groups = K >> 4;
+    const unsigned int num_c = K >> 7;     // k128 chunks: 64 weight bytes per row
+
+    bool l0[NT], l1[NT], ls[NT];
+    const unsigned char* w0[NT];
+    const unsigned char* w1[NT];
+    const unsigned char* ws[NT];
+    #pragma unroll
+    for (int q = 0; q < NT; q++) {
+        const unsigned int n0 = nb + 16u * (unsigned int)q;
+        const unsigned int r0 = n0 + g, r1 = n0 + g + 8u, rs = n0 + g + (odd ? 8u : 0u);
+        l0[q] = r0 < N; l1[q] = r1 < N; ls[q] = rs < N;
+        w0[q] = Bq + (unsigned long long)r0 * half_K + t * 16u;
+        w1[q] = Bq + (unsigned long long)r1 * half_K + t * 16u;
+        ws[q] = Bs + (unsigned long long)rs * groups;
+    }
+
+    bool tl[MB];
+    const unsigned char* aq[MB];
+    const unsigned char* as[MB];
+    #pragma unroll
+    for (int j = 0; j < MB; j++) {
+        const unsigned int tok = (unsigned int)j * 8u + g;
+        tl[j] = tok < M;
+        aq[j] = Aq + (unsigned long long)tok * half_K + t * 16u;
+        as[j] = As + (unsigned long long)tok * groups;
+    }
+
+    float acc[NT][MB][4];
+    #pragma unroll
+    for (int q = 0; q < NT; q++) {
+        #pragma unroll
+        for (int j = 0; j < MB; j++) {
+            #pragma unroll
+            for (int c = 0; c < 4; c++) acc[q][j][c] = 0.0f;
+        }
+    }
+
+    for (unsigned int c0 = warp; c0 < num_c; c0 += W4A4_WARPS * KU) {
+        uint4 wl[KU][NT], wh[KU][NT], b[KU][MB];
+        uint2 sw[KU][NT], sb[KU][MB];
+        #pragma unroll
+        for (int u = 0; u < KU; u++) {
+            const unsigned int c = c0 + (unsigned int)u * W4A4_WARPS;
+            const bool live = c < num_c;
+            const uint4 z4 = make_uint4(0u, 0u, 0u, 0u);
+            const uint2 z2 = make_uint2(0u, 0u);
+            #pragma unroll
+            for (int q = 0; q < NT; q++) {
+                wl[u][q] = (live && l0[q]) ? *(const uint4*)(w0[q] + c * 64u) : z4;
+                wh[u][q] = (live && l1[q]) ? *(const uint4*)(w1[q] + c * 64u) : z4;
+                sw[u][q] = (live && ls[q]) ? *(const uint2*)(ws[q] + c * 8u) : z2;
+            }
+            #pragma unroll
+            for (int j = 0; j < MB; j++) {
+                b[u][j] = (live && tl[j]) ? *(const uint4*)(aq[j] + c * 64u) : z4;
+                sb[u][j] = (live && tl[j]) ? *(const uint2*)(as[j] + c * 8u) : z2;
+            }
+        }
+        #pragma unroll
+        for (int u = 0; u < KU; u++) {
+            if (c0 + (unsigned int)u * W4A4_WARPS >= num_c) break;
+            #pragma unroll
+            for (int q = 0; q < NT; q++) {
+                // Thread t holds groups 2t, 2t+1 of each row (ints 0,1 | 2,3).
+                // MMA0 takes scale blocks {G0,G4,G2,G6}, MMA1 {G1,G5,G3,G7}: each
+                // block's two ints are split across the pair (t, t^1), so ONE
+                // shfl_xor(1) per row per MMA completes the fragment.
+                const uint4 WL = wl[u][q], WH = wh[u][q];
+                const uint32_t x0l = __shfl_xor_sync(0xFFFFFFFFu, odd ? WL.x : WL.y, 1);
+                const uint32_t x0h = __shfl_xor_sync(0xFFFFFFFFu, odd ? WH.x : WH.y, 1);
+                const uint32_t x1l = __shfl_xor_sync(0xFFFFFFFFu, odd ? WL.z : WL.w, 1);
+                const uint32_t x1h = __shfl_xor_sync(0xFFFFFFFFu, odd ? WH.z : WH.w, 1);
+                const uint32_t a00 = odd ? x0l : WL.x, a02 = odd ? WL.y : x0l;
+                const uint32_t a01 = odd ? x0h : WH.x, a03 = odd ? WH.y : x0h;
+                const uint32_t a10 = odd ? x1l : WL.z, a12 = odd ? WL.w : x1l;
+                const uint32_t a11 = odd ? x1h : WH.z, a13 = odd ? WH.w : x1h;
+                const uint32_t s0 = __byte_perm(sw[u][q].x, sw[u][q].y, 0x6240);
+                const uint32_t s1 = __byte_perm(sw[u][q].x, sw[u][q].y, 0x7351);
+                #pragma unroll
+                for (int j = 0; j < MB; j++) {
+                    w4a4_mma(acc[q][j], a00, a01, a02, a03, b[u][j].x, b[u][j].y, s0, sb[u][j].x);
+                    w4a4_mma(acc[q][j], a10, a11, a12, a13, b[u][j].z, b[u][j].w, s1, sb[u][j].y);
+                }
+            }
+        }
+    }
+
+    __shared__ float red[W4A4_WARPS][MB][4][32];
+    #pragma unroll
+    for (int q = 0; q < NT; q++) {
+        if (q > 0) __syncthreads();
+        #pragma unroll
+        for (int j = 0; j < MB; j++) {
+            #pragma unroll
+            for (int c = 0; c < 4; c++) red[warp][j][c][lane] = acc[q][j][c];
+        }
+        __syncthreads();
+
+        // D (16 x 8): c0,c1 = weight row g, tokens 2t, 2t+1; c2,c3 = row g+8.
+        const unsigned int r0 = nb + 16u * (unsigned int)q + g, r1 = r0 + 8u;
+        for (unsigned int j = warp; j < (unsigned int)MB; j += W4A4_WARPS) {
+            float r[4];
+            #pragma unroll
+            for (int c = 0; c < 4; c++) {
+                float v = red[0][j][c][lane];
+                #pragma unroll
+                for (int ww = 1; ww < W4A4_WARPS; ww++) v += red[ww][j][c][lane];
+                r[c] = v;
+            }
+            #pragma unroll
+            for (int c = 0; c < 4; c++) {
+                const unsigned int n = (c < 2) ? r0 : r1;
+                const unsigned int tok = j * 8u + t * 2u + (unsigned int)(c & 1);
+                if (n < N && tok < M) {
+                    C[(unsigned long long)tok * N + n] = __float2bfloat16_rn(r[c] * (Ag[tok] * scale2));
+                }
+            }
+        }
+    }
+}
+
 #define W4A4_ENTRY(NAME, MB, KU)                                                          \
     extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32) void NAME(                    \
         const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,       \
@@ -200,6 +355,19 @@ __device__ __forceinline__ void w4a4_gemv_mx_impl(
 W4A4_ENTRY(w4a4_gemv_mx8, 1, 4)    // M <= 8
 W4A4_ENTRY(w4a4_gemv_mx16, 2, 4)   // M <= 16
 W4A4_ENTRY(w4a4_gemv_mx32, 4, 2)   // M <= 32
+
+#define W4A4_NT_ENTRY(NAME, MB, KU, NT)                                                   \
+    extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32) void NAME(                    \
+        const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,       \
+        const float* __restrict__ Ag, const unsigned char* __restrict__ Bq,               \
+        const unsigned char* __restrict__ Bs, const float scale2,                         \
+        __nv_bfloat16* __restrict__ C, unsigned int M, unsigned int N, unsigned int K) {  \
+        w4a4_gemv_mx_nt_impl<MB, KU, NT>(Aq, As, Ag, Bq, Bs, scale2, C, M, N, K);         \
+    }
+
+// Activation-reuse twins (`METRALE_W4A4_MX_NT`), bit-identical to mx16/mx32.
+W4A4_NT_ENTRY(w4a4_gemv_mx16_nt2, 2, 4, 2)   // 9..16 rows, 32 rows per CTA
+W4A4_NT_ENTRY(w4a4_gemv_mx32_nt4, 4, 1, 4)   // 17..32 rows, 64 rows per CTA
 
 // ── Per-row dynamic NVFP4 activation quantisation ───────────────────────────
 __device__ __forceinline__ unsigned int w4a4_e2m1_rne(float x) {

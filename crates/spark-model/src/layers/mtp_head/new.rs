@@ -15,6 +15,7 @@ impl MtpHead {
     pub fn new(
         weights: MtpWeights,
         embed_tokens: DenseWeight,
+        target_final_norm: DenseWeight,
         lm_head_nvfp4: QuantizedWeight,
         // Padded transposed twin of the SHARED main head (see the field docs):
         // `Some` only when the drafter head IS the main head, so routing the
@@ -395,6 +396,7 @@ impl MtpHead {
             quant,
             mtp_vocab_size,
             embed_tokens,
+            target_final_norm,
             lm_head_nvfp4,
             kv_cache: Mutex::new(kv_cache),
             attn_layer_idx: 0,
@@ -419,6 +421,7 @@ impl MtpHead {
                 gpu.kernel("paged_decode_fp8", "paged_decode_attn_fp8")?
             },
             kv_bf16,
+            kv_exact: levers.mtp_kv_exact,
             residual_add_k: gpu.kernel("residual_add", "bf16_residual_add")?,
             residual_add_rms_norm_k: gpu.kernel("norm", "residual_add_rms_norm")?,
             sigmoid_gate_mul_k: gpu.kernel("residual_add", "sigmoid_gate_mul")?,

@@ -303,6 +303,25 @@ pub struct ModelLevers {
     /// verified by the target, so emitted tokens cannot change. Read by BOTH
     /// chains through `MtpHead::chain_hidden`. Opt-in until its A/B lands.
     pub mtp_chain_postnorm: bool,
+    /// `METRALE_MTP_TARGET_POSTNORM=1` — feed the drafter's FIRST draft (and
+    /// every drafter KV row built from a target hidden: drafter prefill and
+    /// the exact-KV catch-up) the target's FINAL-NORMED hidden, as the
+    /// reference does: vLLM 0.27 `Qwen3NextModel.forward` returns
+    /// `self.norm(hidden_states, residual)` and the MTP proposer receives
+    /// that tensor as `target_hidden_states`. Metrale Engine stashes the
+    /// pre-norm residual stream, and `pre_fc_norm_hidden` does not undo the
+    /// difference (the final norm's weight is elementwise). Applied inside
+    /// the head (target final norm, then `pre_fc_norm_hidden`), so the
+    /// stash contract is unchanged. Acceptance-only: drafts are verified.
+    pub mtp_target_postnorm: bool,
+    /// `METRALE_MTP_KV_EXACT=1` — keep the drafter KV gapless on the batched
+    /// verify path, as vLLM's proposer does: after a verify, keep the row
+    /// built from the verified input token, drop only the chain rows (drafts
+    /// j >= 1, built from drafter hiddens), and append one catch-up row per
+    /// ACCEPTED draft from the verify forward's own target hidden before
+    /// the next propose. Without it a reject deletes a valid row and an
+    /// accepted token never gets a row. Acceptance-only.
+    pub mtp_kv_exact: bool,
     /// `METRALE_FP8_MOE_GROUPED_DECODE=1` — serve the TARGET model's multi-row
     /// FP8 MoE decode (batched verify, multi-sequence decode, attention-layer
     /// FFN) through the cross-row grouped kernels

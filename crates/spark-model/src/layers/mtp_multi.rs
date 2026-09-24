@@ -93,6 +93,8 @@ impl DraftProposer for MultiModuleMtpHead {
                 seq_len: 0,
                 last_num_drafted: 0,
                 last_pair_key: None,
+                last_drafts: Vec::new(),
+                pending_catchup: Vec::new(),
             })
             .collect();
         Ok(Box::new(MultiModuleMtpState {
@@ -149,6 +151,7 @@ impl DraftProposer for MultiModuleMtpHead {
                 stream,
                 embed_target,
                 mask_for_draft,
+                i == 0,
             )?;
 
             tracing::debug!(

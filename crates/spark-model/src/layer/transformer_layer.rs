@@ -33,6 +33,9 @@ mod default_loops;
 /// is a pure host-side layout change). 48 GDN layers x 4 tables x 32
 /// entries x 8 B = 48 KB.
 pub const VERIFY_WY_TABLE_SEQS: usize = 32;
+/// Catch-up stash rows per sequence (`ModelLevers::mtp_kv_exact`): the most
+/// drafts one verify can accept on the batched path (K=4 -> 3), rounded up.
+pub const MTP_CATCHUP_MAX: usize = 4;
 /// Tables per GDN layer: h_state + Hi0..Hi14 (K=16 verify → 15
 /// intermediates). 4 → 16 (2026-09-01): the wyN pointer-table twins
 /// extend the cross-sequence batched verify to K=5..16, so the staging
