@@ -123,6 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token || github.token }}
           REPO: ${{ github.repository }}
+          ORG: ${{ github.repository_owner }}
           WANT: metrale-macos-burst
           FALLBACK: macos-14
         run: |
@@ -130,10 +131,40 @@ jobs:
           # The burst controller removes the label before it stops the service,
           # so "online AND carrying the label" is the only honest test of
           # whether a job routed here would actually be picked up.
-          online=$(gh api "repos/$REPO/actions/runners" \
-                     --jq "[.runners[] | select(any(.labels[]; .name == \"$WANT\")) | select(.status == \"online\")] | length" \
-                     2>/dev/null) || online=UNKNOWN
-          case "$online" in ''|*[!0-9]*) online=UNKNOWN ;; esac
+          #
+          # Both scopes are counted. repos/{owner}/{repo}/actions/runners lists
+          # REPOSITORY-level runners only -- an org-scoped runner is simply
+          # absent from it, however available it is to this repo. Querying only
+          # that endpoint means an org-registered burst Mac is invisible here,
+          # MACOS_RUNNER_LABEL never gets set, and test-macos-metal sits on
+          # macos-14 forever while a perfectly healthy runner idles.
+          count_runners() {
+            gh api "$1/actions/runners" --paginate \
+              --jq "[.runners[] | select(any(.labels[]; .name == \"$WANT\")) | select(.status == \"online\")] | length" \
+              2>/dev/null | awk '{t+=$1} END {print t+0}'
+          }
+          repo_online=$(count_runners "repos/$REPO") || repo_online=UNKNOWN
+          case "$repo_online" in ''|*[!0-9]*) repo_online=UNKNOWN ;; esac
+          # Reading org runners needs organization_self_hosted_runners: read on
+          # the certification App. Without it this call 403s, which is UNKNOWN,
+          # not zero.
+          org_online=$(count_runners "orgs/$ORG") || org_online=UNKNOWN
+          case "$org_online" in ''|*[!0-9]*) org_online=UNKNOWN ;; esac
+
+          # A positive count from either scope proves a runner is there. Zero
+          # proves absence only when BOTH scopes answered -- a scope that
+          # errored could be hiding the runner, and guessing "offline" would
+          # move the Metal job off a Mac that is actually available.
+          if [ "$repo_online" != UNKNOWN ] && [ "$org_online" != UNKNOWN ]; then
+            online=$((repo_online + org_online))
+          elif [ "$repo_online" != UNKNOWN ] && [ "$repo_online" -gt 0 ]; then
+            online=$repo_online
+          elif [ "$org_online" != UNKNOWN ] && [ "$org_online" -gt 0 ]; then
+            online=$org_online
+          else
+            online=UNKNOWN
+          fi
+          echo "scopes -- repo:$repo_online org:$org_online -> $online"
 
           cur=$(gh api "repos/$REPO/actions/variables/MACOS_RUNNER_LABEL" --jq '.value' 2>/dev/null) || cur=""
           echo "runners online with '$WANT': $online   MACOS_RUNNER_LABEL=${cur:-<unset>}"
