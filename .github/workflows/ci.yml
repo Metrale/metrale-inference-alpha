@@ -758,7 +758,17 @@ jobs:
           fi
           base="${PUSH_BEFORE}"
           case "$base" in 0000000000000000000000000000000000000000|"") base="${GITHUB_SHA}~1" ;; esac
-          python3 scripts/check_cross_hardware.py --base "$base" --head "${GITHUB_SHA}" --json > chki.json
+          # Exit 1 is the script's verdict that a reached hardware owes a check,
+          # which is exactly the merge this table exists to record; under
+          # `set -e` it used to end the step before any row was written. A
+          # crash exits 1 too, so the verdict is trusted only when the JSON
+          # parses; any other exit code is a failure outright.
+          rc=0
+          python3 scripts/check_cross_hardware.py --base "$base" --head "${GITHUB_SHA}" --json > chki.json || rc=$?
+          if [ "$rc" -gt 1 ] || ! python3 -c 'import json; assert isinstance(json.load(open("chki.json"))["paths"], list)'; then
+            echo "::error title=CHKI failed::check_cross_hardware.py exited $rc without a usable report"
+            exit 1
+          fi
           python3 scripts/chki_reach_table.py --pr "$pr" --chki-json chki.json --out table.md
           {
             echo "### CHKI reach table — the row for $pr"; echo; cat table.md;
