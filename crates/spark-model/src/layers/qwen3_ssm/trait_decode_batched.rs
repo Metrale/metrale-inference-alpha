@@ -295,9 +295,13 @@ impl Qwen3SsmLayer {
             // path uses (`trait_prefill_proj.rs` — pipelined twin preferred,
             // bit-identical to `w8a16_gemm`).
             if self.w8a16_gemm_pipelined_k.0 != 0 {
-                ops::w8a16_gemm_pipelined(
+                // Tile by M (G18 lever B): 17..=32 rows take the 32-row
+                // twin — same bits, a quarter of the MMA work and no 96-row
+                // zero fill; above 32 the 128 tile as before.
+                ops::w8a16_gemm_pipelined_by_m(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    self.w8a16_gemm_pipelined_m32_k,
                     normed,
                     fp8.weight,
                     fp8.row_scale,
@@ -1039,9 +1043,14 @@ impl Qwen3SsmLayer {
             // CUDA_ERROR_ILLEGAL_ADDRESS the QKVZ dispatch above hits first.
             // Same block-scaled W8A16 GEMM pair as the prefill path.
             if self.w8a16_gemm_pipelined_k.0 != 0 {
-                ops::w8a16_gemm_pipelined(
+                // Tile by M (G18 lever B), out_proj twin of the QKVZ arm:
+                // the 32-row tile runs K/128 barrier steps per CTA instead
+                // of K/32 — the 64-CTA, 128-step latency chain this
+                // projection measured as 166 us for 8.4 MB.
+                ops::w8a16_gemm_pipelined_by_m(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    self.w8a16_gemm_pipelined_m32_k,
                     normed_out_buf,
                     fp8.weight,
                     fp8.row_scale,
@@ -1269,6 +1278,27 @@ impl Qwen3SsmLayer {
             // the 64-layer dense FFN stack at M=4 vs the ~31 ms
             // weight-traffic floor this path hits. Falls through to
             // forward_prefill when unavailable (MoE / missing kernel).
+            let moe_out = ctx.buffers.moe_output();
+            ops::residual_add(
+                ctx.gpu,
+                self.residual_add_k,
+                hidden,
+                moe_out,
+                (num_tokens * h) as u32,
+                stream,
+            )?;
+        } else if self.ffn.fp8_grouped_decode_ok(num_tokens, ctx) {
+            // CROSS-ROW GROUPED FP8 MoE (G9, 2026-09-22): the per-token `else`
+            // arm below ran the whole MoE once per verify row — Σk = 4/8/16
+            // serial single-token dispatches per layer at C=1/2/4 with K=4
+            // drafts — so aggregate MoE throughput was flat above C=1.
+            // forward_fp8_grouped_decode groups the rows by expert and reads
+            // each routed/shared expert once per step; row math is
+            // bit-identical to the loop's kernels (see that file's header).
+            k4_diag_checkpoint(ctx, "10a:residual_add_rms_norm", stream)?;
+            self.ffn
+                .forward_fp8_grouped_decode(normed2_base, num_tokens, ctx, stream)?;
+            k4_diag_checkpoint(ctx, "10b:ffn_fp8_grouped_decode", stream)?;
             let moe_out = ctx.buffers.moe_output();
             ops::residual_add(
                 ctx.gpu,

@@ -76,7 +76,8 @@ impl DraftProposer for MtpHead {
             drafts.push(draft);
             current_token = draft;
             // For subsequent drafts, use the MTP head's own hidden state
-            current_hidden = ctx.buffers.hidden_states();
+            // (pre- or post-final-norm: `chain_hidden`, the one reader).
+            current_hidden = Self::chain_hidden(ctx);
         }
 
         mtp_state.last_num_drafted = drafts.len();
@@ -95,6 +96,25 @@ impl DraftProposer for MtpHead {
         out_conf: Option<&mut Vec<Vec<f32>>>,
     ) -> Result<Option<Vec<Vec<u32>>>> {
         if !self.can_propose_batch(last_tokens.len(), ctx.buffers, ctx.config) {
+            return Ok(None);
+        }
+        // The MoE arm's width policy sees only the config and the arena; the
+        // grouped decode's context terms (kill switch, FP32 routing, EP) are
+        // checked here so a refusal is a per-seq fallback, never an error
+        // mid-chain. Logged once: a silent fallback would look exactly like
+        // the pre-lever state (n single-row forwards per draft position).
+        if let Some(moe) = self.moe_fp8.as_ref()
+            && !moe.fp8_grouped_decode_ok(last_tokens.len(), ctx)
+        {
+            static LOGGED: std::sync::Once = std::sync::Once::new();
+            LOGGED.call_once(|| {
+                tracing::warn!(
+                    "MTP propose_batch: grouped FP8 MoE decode refused for n={} (kill switch \
+                     METRALE_NO_FP8_MOE_GROUPED_DECODE, FP32 routing or EP) — the MoE drafter \
+                     falls back to per-sequence propose",
+                    last_tokens.len()
+                );
+            });
             return Ok(None);
         }
         // All states must downcast to MtpProposerState; any miss means a
