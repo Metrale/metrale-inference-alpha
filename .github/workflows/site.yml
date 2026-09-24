@@ -98,11 +98,9 @@ jobs:
     name: Blog frontmatter
     needs: [changes]
     runs-on: >-
-      ${{ vars.USE_METRALE_UBUNTU_RUNNERS == '1'
-          && (github.event_name != 'pull_request'
+      ${{ (github.event_name != 'pull_request'
            || github.event.pull_request.head.repo.full_name == github.repository)
-          && (vars.PR_CHEAP_RUNNER || 'ubuntu-latest')
-          || 'ubuntu-latest' }}
+          && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install bun
@@ -127,7 +125,10 @@ jobs:
 
   unit:
     name: Site unit tests
-    runs-on: ubuntu-latest
+    runs-on: >-
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: site

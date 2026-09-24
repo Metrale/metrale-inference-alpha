@@ -1,0 +1,5 @@
+# Custom labels on the self-hosted runners, so actionlint can check runs-on.
+self-hosted-runner:
+  labels:
+    - metrale-macos-burst
+    - metal-gpu
