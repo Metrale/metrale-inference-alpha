@@ -451,6 +451,7 @@ impl TransformerModel {
             use_speculative,
             mtp_weights,
             embed_tokens,
+            final_norm,
             draft_lm_head_nvfp4,
             draft_lm_head_nvfp4_t,
             &config,
@@ -481,6 +482,16 @@ impl TransformerModel {
         // verify path self-gates on it via can_batch_verify).
         let verify_hidden_stash = if proposer.is_some() {
             gpu.alloc(crate::layer::VERIFY_WY_TABLE_SEQS * config.hidden_size * 2)?
+        } else {
+            DevicePtr::NULL
+        };
+        let verify_catchup_stash = if proposer.is_some() && levers.mtp_kv_exact {
+            gpu.alloc(
+                crate::layer::VERIFY_WY_TABLE_SEQS
+                    * crate::layer::MTP_CATCHUP_MAX
+                    * config.hidden_size
+                    * 2,
+            )?
         } else {
             DevicePtr::NULL
         };
@@ -949,6 +960,7 @@ impl TransformerModel {
             proposer,
             mtp_hidden_save,
             verify_hidden_stash,
+            verify_catchup_stash,
             mtp_catchup_ring,
             mtp_catchup_meta: parking_lot::Mutex::new((0, 0)),
             mtp_prefill_hidden,

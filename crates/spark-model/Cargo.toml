@@ -399,3 +399,7 @@ required-features = ["cuda", "gpu-examples"]
 [[example]]
 name = "fp8_gemm_twin_parity"
 required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "w4a4_gemv_nt_oracle"
+required-features = ["cuda", "gpu-examples"]

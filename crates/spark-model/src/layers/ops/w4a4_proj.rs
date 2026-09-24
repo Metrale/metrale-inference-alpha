@@ -69,6 +69,9 @@ struct W4a4State {
     mx8: KernelHandle,
     mx16: KernelHandle,
     mx32: KernelHandle,
+    /// Activation-reuse twins (`METRALE_W4A4_MX_NT`), bit-identical to mx16/mx32.
+    mx16_nt2: KernelHandle,
+    mx32_nt4: KernelHandle,
     aq: DevicePtr,
     a_scale: DevicePtr,
     a_gs: DevicePtr,
@@ -87,6 +90,37 @@ const AUDIT_MAX_N: usize = 65536;
 fn audit_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("METRALE_W4A4_PROJ_AUDIT").is_some_and(|v| !v.is_empty()))
+}
+
+/// `METRALE_W4A4_MX_NT` = 4 (default) | 1. At 4 the 9..=32-row W4A4 GEMV
+/// runs the activation-reuse twins: 17..=32 rows take 4 16-row weight tiles
+/// per CTA, 9..=16 rows take 2, and each warp feeds its
+/// activation fragments to every tile from registers, so the activation
+/// matrix is re-read from L2 that many times less. Bit-identical to the
+/// one-tile kernels (same per-warp chunk order, warp-order reduction). 1 is
+/// the kill switch: the historical one-tile kernels, unchanged code.
+/// dgx1 ABBA vs 178a1246 (GPU-rail J/token): C=8 -6.1% at +0.8% tok/s,
+/// C=16 -9.1% at -2.6% tok/s.
+fn mx_nt() -> u32 {
+    static NT: OnceLock<u32> = OnceLock::new();
+    *NT.get_or_init(
+        || match std::env::var("METRALE_W4A4_MX_NT").ok().as_deref() {
+            None | Some("") | Some("4") => 4,
+            Some("1") => 1,
+            Some(v) => panic!("METRALE_W4A4_MX_NT={v}: expected 1 or 4"),
+        },
+    )
+}
+
+/// PURE: (kernel, rows per CTA) for an `m`-row launch at tile factor `nt`.
+fn mx_pick(s: &W4a4State, m: u32, nt: u32) -> (KernelHandle, u32) {
+    match (m, nt) {
+        (0..=8, _) => (s.mx8, 16),
+        (9..=16, 1) => (s.mx16, 16),
+        (9..=16, _) => (s.mx16_nt2, 32),
+        (_, 1) => (s.mx32, 16),
+        _ => (s.mx32_nt4, 64),
+    }
 }
 
 fn cache() -> &'static Mutex<Vec<(usize, Option<W4a4State>)>> {
@@ -115,13 +149,20 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
         h("w4a4_gemv_mx16"),
         h("w4a4_gemv_mx32"),
     );
-    let state = if [quant, mx8, mx16, mx32].iter().all(|k| k.0 != 0) {
+    let (mx16_nt2, mx32_nt4) = (h("w4a4_gemv_mx16_nt2"), h("w4a4_gemv_mx32_nt4"));
+    let state = if [quant, mx8, mx16, mx32, mx16_nt2, mx32_nt4]
+        .iter()
+        .all(|k| k.0 != 0)
+    {
+        tracing::info!("w4a4 projection: METRALE_W4A4_MX_NT={}", mx_nt());
         let (m, k) = (W4A4_MAX_M as usize, W4A4_MAX_K as usize);
         Some(W4a4State {
             quant,
             mx8,
             mx16,
             mx32,
+            mx16_nt2,
+            mx32_nt4,
             aq: gpu.alloc(m * k / 2)?,
             a_scale: gpu.alloc(m * k / 16)?,
             a_gs: gpu.alloc(m * 4)?,
@@ -275,15 +316,9 @@ fn proj(
             *last = Some(want);
         }
         drop(last);
-        let mx = if m <= 8 {
-            s.mx8
-        } else if m <= 16 {
-            s.mx16
-        } else {
-            s.mx32
-        };
+        let (mx, rows_per_cta) = mx_pick(&s, m, mx_nt());
         KernelLaunch::new(gpu, mx)
-            .grid([div_ceil(n, 16), 1, 1])
+            .grid([div_ceil(n, rows_per_cta), 1, 1])
             .block([256, 1, 1])
             .arg_ptr(s.aq)
             .arg_ptr(s.a_scale)
@@ -377,24 +412,5 @@ fn audit(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn routes_every_27b_projection_shape_up_to_32_rows() {
-        for k in [5120u32, 6144, 17408] {
-            for m in 1..=32 {
-                assert!(w4a4_route(m, 5120, k, true), "m={m} k={k}");
-            }
-            assert!(!w4a4_route(33, 5120, k, true), "33 rows exceed mx32");
-            assert!(!w4a4_route(4, 5120, k, false), "opt-in");
-        }
-    }
-
-    #[test]
-    fn declines_what_the_kernel_or_scratch_cannot_hold() {
-        assert!(!w4a4_route(4, 5120, 5120 + 32, true), "K % 64");
-        assert!(!w4a4_route(4, 5120, W4A4_MAX_K + 64, true), "scratch K");
-        assert!(!w4a4_route(0, 5120, 5120, true));
-    }
-}
+#[path = "w4a4_proj_tests.rs"]
+mod w4a4_proj_tests;

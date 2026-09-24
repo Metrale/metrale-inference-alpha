@@ -207,6 +207,7 @@ impl MtpHead {
         stream: u64,
         out_ids: &mut [u32],
         out_lp: Option<&mut [f32]>,
+        target_rows: bool,
     ) -> Result<()> {
         let n = tokens.len();
         let h = ctx.config.hidden_size;
@@ -244,7 +245,17 @@ impl MtpHead {
             stream,
         )?;
         let normed_hidden = ctx.buffers.ssm_gates();
+        // `ssm_ba` is the [n, 2h] concat destination written in step 3, so row
+        // i's first half is free to hold its target-final-normed hidden.
+        let concat_scratch = ctx.buffers.ssm_ba();
         for (i, &hp) in hiddens.iter().enumerate() {
+            let hp = self.target_postnorm_row(
+                ctx,
+                target_rows,
+                hp,
+                concat_scratch.offset(i * 2 * h * bf16),
+                stream,
+            )?;
             ops::rms_norm(
                 gpu,
                 self.rms_norm_k,
@@ -790,6 +801,7 @@ impl MtpHead {
                 } else {
                     None
                 },
+                j == 0,
             )?;
             for i in 0..n {
                 all[i].push(ids[i]);
@@ -804,6 +816,9 @@ impl MtpHead {
             for state in states.iter_mut() {
                 state.last_num_drafted = j + 1;
             }
+        }
+        for (state, drafts) in states.iter_mut().zip(all.iter()) {
+            state.last_drafts.clone_from(drafts);
         }
         Ok(all)
     }

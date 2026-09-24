@@ -185,10 +185,20 @@ impl MtpHead {
                 eps,
                 stream,
             )?;
+            // `scratch.concat` ([c, 2h]) is written only in step 3, so it can
+            // hold the target-final-normed rows until then.
+            let hidden_rows = self.target_postnorm_rows(
+                ctx,
+                true,
+                hiddens.offset(done * h * bf16),
+                scratch.concat,
+                c as u32,
+                stream,
+            )?;
             ops::rms_norm(
                 ctx.gpu,
                 self.rms_norm_k,
-                hiddens.offset(done * h * bf16),
+                hidden_rows,
                 &self.pre_fc_norm_hidden,
                 scratch.normed_hidden,
                 c as u32,

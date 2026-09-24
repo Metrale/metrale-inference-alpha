@@ -533,31 +533,7 @@ impl TransformerModel {
             return Ok(None);
         }
         let stream = self.gpu.default_stream();
-        let ctx = ForwardContext {
-            buffers: &self.buffers,
-            hc_row_offset: 0,
-            gpu: self.gpu.as_ref(),
-            config: &self.config,
-            dispatch: &self.dispatch,
-            // Route-aware v0: base (Skip) proceeds free; an active adapter is
-            // rejected before the fold on these multi-seq/speculative paths
-            // (reject_decode_lora), so Fold is inert here.
-            moe_lora_route: self.decode_moe_route(),
-            derived: &self.derived,
-            levers: &self.levers,
-            stats: &self.stats,
-            attn_metadata: None,
-            profile: false,
-            comm: None,
-            graph_capture: false,
-            decode_step: false,
-            gdn_exact_replay: false,
-            gdn_write_on_accept: false,
-            token_ids: None,
-            host_token_ids: None,
-            routed_lora_layers: None,
-            midchunk_capture: None,
-        };
+        let ctx = self.mtp_propose_ctx();
         // First-propose drafter context (cold-turn prefill); fast no-op on
         // every later call — same as the per-seq path.
         for seq in seqs.iter_mut() {
@@ -585,6 +561,101 @@ impl TransformerModel {
             stream,
             out_conf,
         )
+    }
+
+    /// The context the batched MTP propose and the exact-KV catch-up run
+    /// under (one construction, both callers).
+    fn mtp_propose_ctx(&self) -> ForwardContext<'_> {
+        ForwardContext {
+            buffers: &self.buffers,
+            hc_row_offset: 0,
+            gpu: self.gpu.as_ref(),
+            config: &self.config,
+            dispatch: &self.dispatch,
+            // Route-aware v0: base (Skip) proceeds free; an active adapter is
+            // rejected before the fold on these multi-seq/speculative paths
+            // (reject_decode_lora), so Fold is inert here.
+            moe_lora_route: self.decode_moe_route(),
+            derived: &self.derived,
+            levers: &self.levers,
+            stats: &self.stats,
+            attn_metadata: None,
+            profile: false,
+            comm: None,
+            graph_capture: false,
+            decode_step: false,
+            gdn_exact_replay: false,
+            gdn_write_on_accept: false,
+            token_ids: None,
+            host_token_ids: None,
+            routed_lora_layers: None,
+            midchunk_capture: None,
+        }
+    }
+
+    /// `ModelLevers::mtp_kv_exact`, phase 2 of the batched verify: copy
+    /// verify-forward rows into catch-up stash slots (`slot_rows[j] =
+    /// (slot, row)`) before anything clobbers `hidden_states`. No-op when
+    /// the lever is off.
+    pub(super) fn stash_verify_catchup_rows_dispatch(
+        &self,
+        slot_rows: &[(usize, usize)],
+    ) -> Result<()> {
+        if !self.levers.mtp_kv_exact || self.verify_catchup_stash.is_null() {
+            return Ok(());
+        }
+        let cap = crate::layer::VERIFY_WY_TABLE_SEQS * crate::layer::MTP_CATCHUP_MAX;
+        let stream = self.gpu.default_stream();
+        let h = self.config.hidden_size;
+        for &(slot, row) in slot_rows {
+            anyhow::ensure!(
+                slot < cap,
+                "stash_verify_catchup_rows: slot {slot} >= {cap}"
+            );
+            let src = self.buffers.hidden_states().offset(row * h * 2);
+            let dst = self.verify_catchup_stash.offset(slot * h * 2);
+            self.gpu.copy_d2d_async(src, dst, h * 2, stream)?;
+        }
+        Ok(())
+    }
+
+    /// `ModelLevers::mtp_kv_exact`, before the batched propose: append the
+    /// drafter rows for every accepted draft. `tokens[i]` are sequence i's
+    /// accepted drafts, their hiddens in catch-up stash slots
+    /// `first_slot[i]..`, `first_pos[i]` the RoPE position of `tokens[i][0]`.
+    pub(super) fn run_mtp_catchup_batched_dispatch(
+        &self,
+        tokens: &[Vec<u32>],
+        first_slot: &[usize],
+        first_pos: &[usize],
+        seqs: &mut [&mut SequenceState],
+    ) -> Result<usize> {
+        if !self.levers.mtp_kv_exact || self.verify_catchup_stash.is_null() {
+            return Ok(0);
+        }
+        let Some(proposer) = self.proposer.as_ref().map(|p| p.as_ref()) else {
+            return Ok(0);
+        };
+        let h = self.config.hidden_size;
+        let hiddens: Vec<Vec<spark_runtime::gpu::DevicePtr>> = tokens
+            .iter()
+            .zip(first_slot)
+            .map(|(t, &s)| {
+                (0..t.len())
+                    .map(|k| self.verify_catchup_stash.offset((s + k) * h * 2))
+                    .collect()
+            })
+            .collect();
+        let mut states: Vec<&mut dyn crate::speculative::ProposerState> = Vec::new();
+        for seq in seqs.iter_mut() {
+            match seq.proposer_state.as_mut() {
+                Some(s) => states.push(s.as_mut()),
+                None => return Ok(0),
+            }
+        }
+        let ctx = self.mtp_propose_ctx();
+        let stream = self.gpu.default_stream();
+        proposer.catchup_batch(tokens, &hiddens, first_pos, &mut states, &ctx, stream)
     }
 
     pub(super) fn read_deferred_draft_token_dispatch(&self) -> Result<u32> {

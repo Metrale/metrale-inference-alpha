@@ -433,6 +433,18 @@ impl Model for TransformerModel {
     fn save_hidden_for_mtp_from_stash(&self, idx: usize, _stream: u64) -> Result<()> {
         self.save_hidden_for_mtp_from_stash_dispatch(idx, _stream)
     }
+    fn stash_verify_catchup_rows(&self, slot_rows: &[(usize, usize)]) -> Result<()> {
+        self.stash_verify_catchup_rows_dispatch(slot_rows)
+    }
+    fn run_mtp_catchup_batched(
+        &self,
+        tokens: &[Vec<u32>],
+        first_slot: &[usize],
+        first_pos: &[usize],
+        seqs: &mut [&mut SequenceState],
+    ) -> Result<usize> {
+        self.run_mtp_catchup_batched_dispatch(tokens, first_slot, first_pos, seqs)
+    }
     fn run_mtp_propose_batched(
         &self,
         tokens: &[u32],

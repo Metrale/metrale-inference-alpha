@@ -150,10 +150,12 @@ fn the_moe_forward_and_mtp_levers_are_strict_opt_ins() {
     assert!(!d.k2_diag);
     assert!(!d.mtp_debug_norms);
     assert!(!d.mtp_chain_postnorm);
+    assert!(!d.mtp_target_postnorm);
+    assert!(!d.mtp_kv_exact);
     assert!(!d.moe_fp8_grouped_decode_target);
     assert!(!d.fp8_attn_m32);
 
-    let cases: [(&str, fn(&ModelLevers) -> bool); 8] = [
+    let cases: [(&str, fn(&ModelLevers) -> bool); 10] = [
         ("METRALE_FP32_ROUTING", |l| l.fp32_routing),
         ("METRALE_FP32_GATE", |l| l.fp32_gate),
         ("METRALE_FRANKENSTEIN_DECODE_VIA_PREFILL", |l| {
@@ -162,6 +164,8 @@ fn the_moe_forward_and_mtp_levers_are_strict_opt_ins() {
         ("METRALE_K2_DIAG", |l| l.k2_diag),
         ("METRALE_MTP_DEBUG_NORMS", |l| l.mtp_debug_norms),
         ("METRALE_MTP_CHAIN_POSTNORM", |l| l.mtp_chain_postnorm),
+        ("METRALE_MTP_TARGET_POSTNORM", |l| l.mtp_target_postnorm),
+        ("METRALE_MTP_KV_EXACT", |l| l.mtp_kv_exact),
         ("METRALE_FP8_MOE_GROUPED_DECODE", |l| {
             l.moe_fp8_grouped_decode_target
         }),
