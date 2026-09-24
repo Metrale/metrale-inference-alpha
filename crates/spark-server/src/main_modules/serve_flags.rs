@@ -92,6 +92,12 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             args.w4a4_downcast
         );
     }
+    let wide = spark_model::layers::ops::w4a4_proj::set_w4a4_wide_from_cli(
+        args.w4a4_downcast && args.w4a4_downcast_wide,
+    );
+    if args.w4a4_downcast_wide && !wide {
+        tracing::warn!("--w4a4-downcast-wide needs --w4a4-downcast; it did NOT take effect");
+    }
     if let Some(on) = args.prefill_codispatch {
         let in_force = spark_model::layers::ops::set_prefill_codispatch_from_cli(on);
         if in_force != on {

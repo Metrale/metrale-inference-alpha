@@ -6,18 +6,36 @@ use super::*;
 fn routes_every_27b_projection_shape_up_to_32_rows() {
     for k in [5120u32, 6144, 17408] {
         for m in 1..=32 {
-            assert!(w4a4_route(m, 5120, k, true), "m={m} k={k}");
+            assert!(w4a4_route(m, 5120, k, true, false), "m={m} k={k}");
         }
-        assert!(!w4a4_route(33, 5120, k, true), "33 rows exceed mx32");
-        assert!(!w4a4_route(4, 5120, k, false), "opt-in");
+        assert!(!w4a4_route(33, 5120, k, true, false), "33 rows exceed mx32");
+        assert!(!w4a4_route(4, 5120, k, false, false), "opt-in");
     }
 }
 
 #[test]
+fn wide_extends_the_route_to_64_rows_and_no_further() {
+    for m in 1..=64 {
+        assert!(w4a4_route(m, 5120, 5120, true, true), "m={m}");
+    }
+    assert!(
+        !w4a4_route(65, 5120, 5120, true, true),
+        "65 rows exceed mx64"
+    );
+    assert!(
+        !w4a4_route(40, 5120, 5120, false, true),
+        "wide without downcast"
+    );
+}
+
+#[test]
 fn declines_what_the_kernel_or_scratch_cannot_hold() {
-    assert!(!w4a4_route(4, 5120, 5120 + 32, true), "K % 64");
-    assert!(!w4a4_route(4, 5120, W4A4_MAX_K + 64, true), "scratch K");
-    assert!(!w4a4_route(0, 5120, 5120, true));
+    assert!(!w4a4_route(4, 5120, 5120 + 32, true, false), "K % 64");
+    assert!(
+        !w4a4_route(4, 5120, W4A4_MAX_K + 64, true, false),
+        "scratch K"
+    );
+    assert!(!w4a4_route(0, 5120, 5120, true, false));
 }
 
 /// Distinct fake handles so a pick can be identified by value.
@@ -33,6 +51,8 @@ fn state() -> W4a4State {
         mx16_ps: k(1600),
         mx32_ps: k(3200),
         sms: 48,
+        mx64: k(64),
+        mx64_nt2: k(642),
         aq: DevicePtr::NULL,
         a_scale: DevicePtr::NULL,
         a_gs: DevicePtr::NULL,
@@ -48,7 +68,16 @@ fn pick(s: &W4a4State, m: u32, nt: u32) -> (u64, u32) {
 #[test]
 fn nt1_picks_the_historical_kernels_at_16_rows_per_cta() {
     let s = state();
-    for (m, want) in [(1, 8), (8, 8), (9, 16), (16, 16), (17, 32), (32, 32)] {
+    for (m, want) in [
+        (1, 8),
+        (8, 8),
+        (9, 16),
+        (16, 16),
+        (17, 32),
+        (32, 32),
+        (33, 64),
+        (64, 64),
+    ] {
         assert_eq!(pick(&s, m, 1), (want, 16), "m={m}");
     }
 }
@@ -63,6 +92,9 @@ fn tile_factor_picks_the_twin_and_its_grid_rows() {
     assert_eq!(pick(&s, 16, 4), (162, 32));
     assert_eq!(pick(&s, 17, 4), (324, 64));
     assert_eq!(pick(&s, 32, 4), (324, 64));
+    // 33..=64 caps at NT=2 (the NT=4 build spills).
+    assert_eq!(pick(&s, 33, 4), (642, 32));
+    assert_eq!(pick(&s, 64, 4), (642, 32));
 }
 
 /// A launch as comparable values: (kernel, rows per CTA | 0, sst, smem).
@@ -113,6 +145,11 @@ fn persistent_declines_what_it_cannot_stage_or_amortise() {
     assert_eq!(plan(16, 5120, 17408, 4, true), tiles(162, 32));
     // k/v (N=1024): 64 tiles cannot amortise the staging.
     assert_eq!(plan(32, 1024, 5120, 4, true), tiles(324, 64));
+    // 33..=64 rows (`--w4a4-downcast-wide`): the persistent entries stop at
+    // 32 rows, so the wide twin serves them even with PS on.
+    assert_eq!(plan(33, 17408, 5120, 4, true), tiles(642, 32));
+    assert_eq!(plan(64, 17408, 5120, 4, true), tiles(642, 32));
+    assert_eq!(plan(64, 17408, 5120, 1, true), tiles(64, 16));
     // The smallest N that routes is exactly 8 tiles per SM.
     let edge = 8 * 48 * 16;
     assert_eq!(plan(32, edge, 5120, 4, true), persistent(3200, 5, 100_352));

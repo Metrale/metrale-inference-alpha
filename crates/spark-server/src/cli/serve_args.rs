@@ -363,6 +363,24 @@ pub struct ServeArgs {
     )]
     pub w4a4_downcast: bool,
 
+    /// Widen `--w4a4-downcast` from 1..=32 to 1..=64 rows (default: false).
+    ///
+    /// ON routes the 33..=64-row verify projections (the C=17..32 rungs at
+    /// one draft) of GDN qkvz/out_proj and attention q/k/v/o through the same
+    /// W4A4 FP4 block-scale GEMV instead of the W4A8 dequant tile. The dense
+    /// FFN keeps its W4A4 MMQ at those widths (measured cheaper). Per row the math is exactly the 1..=32-row W4A4 path's, so
+    /// it is the same numerics `--w4a4-downcast` already accepts, now at the
+    /// wider widths. A NUMERICS change at those widths, hence opt-in. Requires
+    /// `--w4a4-downcast`; ignored without it.
+    #[arg(
+        long,
+        default_value_t = false,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        action = clap::ArgAction::Set
+    )]
+    pub w4a4_downcast_wide: bool,
+
     /// Sequential-decode-exact GDN/SSM verify chain — OPT-IN (default: off).
     ///
     /// ★ THIS FLAG IS NOT A CORRECTNESS SWITCH. A 2026-08-21 measurement on

@@ -373,6 +373,10 @@ W4A4_ENTRY(w4a4_gemv_mx32, 4, 2)   // M <= 32
 // Activation-reuse twins (`METRALE_W4A4_MX_NT`), bit-identical to mx16/mx32.
 W4A4_NT_ENTRY(w4a4_gemv_mx16_nt2, 2, 4, 2)   // 9..16 rows, 32 rows per CTA
 W4A4_NT_ENTRY(w4a4_gemv_mx32_nt4, 4, 1, 4)   // 17..32 rows, 64 rows per CTA
+// 33..64 rows (`--w4a4-downcast-wide`): the same per-row math as mx8/16/32
+// (bit-identical per row to any of them), 8 token blocks.
+W4A4_NT_ENTRY(w4a4_gemv_mx64, 8, 1, 1)
+W4A4_NT_ENTRY(w4a4_gemv_mx64_nt2, 8, 1, 2)
 
 #include "w4a4_gemv_mx_ps.cuh"
 
