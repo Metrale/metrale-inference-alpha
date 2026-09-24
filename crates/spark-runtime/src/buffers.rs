@@ -10,6 +10,7 @@ use anyhow::Result;
 use metrale_core::config::ModelConfig;
 
 mod accessors;
+mod debug_checksum;
 pub mod decode_meta;
 mod rowwise_slab;
 mod sizes;

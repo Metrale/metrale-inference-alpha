@@ -179,6 +179,20 @@ pub struct MtpHead {
     moe_nvfp4: Option<MoeLayer>,
     moe_experts_generic: Option<Vec<(ProjectionWeight, ProjectionWeight, ProjectionWeight)>>,
     moe_shared_generic: Option<(ProjectionWeight, ProjectionWeight, ProjectionWeight)>,
+    /// The checkpoint's own FP8 block-scaled routed + shared experts as a
+    /// [`MoeLayer`] with FP8 pointer tables — the native-FP8 main layers'
+    /// construction (null NVFP4 slots, BF16 router, `set_fp8_experts`) —
+    /// built for a BF16/FP8 head whenever the loader found the MTP experts
+    /// FP8 on disk (`MtpWeights::fp8_experts`; Qwen3.6-35B-A3B-FP8). One
+    /// layer serves BOTH drafter paths: `forward_one` runs it at M=1
+    /// (`MoeLayer::forward`, the fused single-token FP8 kernels) and the
+    /// batched propose runs `forward_fp8_grouped_decode` for its n rows —
+    /// the kernel pair the G9 GPU oracle proves bit-identical per row. The
+    /// per-expert BF16 GEMV loop (`moe_forward_generic`) cannot batch across
+    /// sequences, which is why the MoE drafter fell back to n single-row
+    /// forwards per draft position (16 at C=16: ~24 ms of a 176 ms step).
+    /// `None` = that loop.
+    moe_fp8: Option<MoeLayer>,
     moe_gate: DenseWeight,
     shared_expert_gate: DenseWeight,
 
@@ -399,11 +413,14 @@ impl MtpHead {
 }
 
 mod batch_caps;
+mod chain_hidden;
 mod draft_proposer;
 mod forward;
 mod forward_batch;
+mod forward_batch_ffn;
 mod moe_forward;
 mod new;
+mod new_native_fp8_moe;
 mod prefill;
 pub(crate) mod row_dispatch;
 
@@ -453,46 +470,4 @@ pub(crate) fn mtp_rows_to_trim(
 }
 
 #[cfg(test)]
-mod refeed_trim_tests {
-    use super::mtp_rows_to_trim;
-
-    #[test]
-    fn flag_off_is_exactly_the_legacy_behaviour() {
-        // Legacy: trim only the rejected rows. These are the K=2/3/4 cases
-        // the schedulers actually produce.
-        assert_eq!(mtp_rows_to_trim(1, 0, false), 1); // K=2 reject
-        assert_eq!(mtp_rows_to_trim(1, 1, false), 0); // K=2 accept
-        assert_eq!(mtp_rows_to_trim(2, 0, false), 2); // K=3 reject
-        assert_eq!(mtp_rows_to_trim(2, 1, false), 1); // K=3 accept-1
-        assert_eq!(mtp_rows_to_trim(2, 2, false), 0); // K=3 accept-2
-        assert_eq!(mtp_rows_to_trim(3, 3, false), 0); // K=4 accept-3
-    }
-
-    #[test]
-    fn flag_on_also_drops_accepted_rows_past_the_first() {
-        // The first accepted draft used the TARGET hidden — it stays.
-        assert_eq!(mtp_rows_to_trim(1, 1, true), 0); // K=2 accept: nothing extra
-        assert_eq!(mtp_rows_to_trim(2, 1, true), 1); // K=3 accept-1: rejected only
-        assert_eq!(mtp_rows_to_trim(2, 2, true), 1); // K=3 accept-2: drop draft 2
-        assert_eq!(mtp_rows_to_trim(3, 2, true), 2); // K=4 accept-2: 1 rejected + 1
-        assert_eq!(mtp_rows_to_trim(3, 3, true), 2); // K=4 accept-3: drop drafts 2,3
-    }
-
-    #[test]
-    fn full_reject_is_identical_with_and_without_the_flag() {
-        // Nothing was accepted, so there is no drafter-hidden row to rebuild.
-        for d in 0..8 {
-            assert_eq!(mtp_rows_to_trim(d, 0, true), mtp_rows_to_trim(d, 0, false));
-        }
-    }
-
-    #[test]
-    fn never_trims_more_rows_than_were_drafted() {
-        for d in 0..8 {
-            for a in 0..=d + 2 {
-                assert!(mtp_rows_to_trim(d, a, true) <= d, "d={d} a={a}");
-                assert!(mtp_rows_to_trim(d, a, false) <= d, "d={d} a={a}");
-            }
-        }
-    }
-}
+mod refeed_trim_tests;

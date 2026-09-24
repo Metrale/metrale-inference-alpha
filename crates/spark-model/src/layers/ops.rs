@@ -55,6 +55,10 @@ mod fp8_moe;
 mod fp8_moe_batch_a;
 #[path = "ops/fp8_moe_batch_b.rs"]
 mod fp8_moe_batch_b;
+mod fp8_moe_grouped;
+// 32-row M-tile twin of `w8a16_gemm_pipelined` + THE by-M selector (G18
+// levers A/B): GDN in_proj/out_proj and attention Q/K/V/o_proj at 17..=32
+// verify rows.
 #[path = "ops/gdn_flashinfer.rs"]
 // The FlashInfer GDN bridge uses dlopen/dlsym, which do not exist on Windows.
 // The absent variant is mounted at the SAME module path so both call sites
@@ -65,6 +69,7 @@ pub mod gdn_flashinfer;
 #[cfg(not(unix))]
 #[path = "ops/gdn_flashinfer_absent.rs"]
 pub mod gdn_flashinfer;
+mod w8a16_gemm_pipelined_m32;
 // Tensor-core BF16 decode GEMM with a 16-row M tile — the BF16 LM-head arm
 // (#927/#928). Behind METRALE_LM_HEAD_M16_TC; SSOT for its launch geometry.
 #[path = "ops/dense_gemm_m16_bf16.rs"]
@@ -239,6 +244,7 @@ pub use fp8_gemv_batch::*;
 pub use fp8_moe::*;
 pub use fp8_moe_batch_a::*;
 pub use fp8_moe_batch_b::*;
+pub use fp8_moe_grouped::*;
 pub use gemm_dense::*;
 pub use gemm_dense_int8::*;
 pub use gemm_fp4::*;
@@ -297,5 +303,6 @@ pub use ssm_mamba::*;
 pub use ssm_preproc::*;
 pub use ssm_ssd::*;
 pub use w8a16_gemm_m16::*;
+pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
 pub use wide_prefill::*;
