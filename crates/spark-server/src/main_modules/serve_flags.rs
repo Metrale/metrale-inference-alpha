@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Publishing the command line's kernel-path selections.
+//!
+//! Each of these was an `METRALE_*` variable read at its own call site. They are
+//! CONFIGURATION — the concurrency campaign's best recipe needs three of them —
+//! so they belong on the command line, where `--help` lists them, `ps` shows
+//! them and a recipe can be read without a ten-line env preamble. The variables
+//! stay honoured as a fallback for scripts that predate the flags.
+//!
+//! ## Absent is not a value
+//!
+//! Every cell below is a `OnceLock` whose fallback closure reads the
+//! environment on first touch. Publishing a clap DEFAULT into one seals it
+//! before anything asks, which makes the fallback unreachable — so five
+//! documented `METRALE_*` variables were inert under `met serve` while
+//! `--help` still described them and the startup log still echoed the flag back.
+//! Every flag here is therefore an `Option`, and an absent flag publishes
+//! NOTHING.
+
+use crate::cli;
+
+/// Publish the command line's kernel-path selections to the crates that
+/// dispatch on them. Called once, before any model is built.
+///
+/// Logged, not silent: a run's kernel selection is the first thing anyone
+/// reproducing a number needs, and reading it back out of the process is not
+/// possible after the fact.
+pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
+    // The three GDN flags are ONE cell in `spark-model`, so they are published
+    // together or not at all. Publishing them unconditionally — which is what
+    // passing clap defaults amounted to — sealed that cell on every boot and
+    // made `METRALE_SSM_H_FP16`, `METRALE_GDN_FUSED_NORM` and
+    // `METRALE_SSM_BATCHED_RECURRENT` inert while `--help` still documented them.
+    // A frozen config that set one of those ran with the OPPOSITE setting and
+    // nothing said so.
+    //
+    // With none of the three given there is nothing to publish, and
+    // `gdn_flags::flags()` resolves from the environment on first touch as
+    // documented. With any of them given the command line owns the whole cell,
+    // as it always has; `warn_shadowed_env` names the variables that decision
+    // overrides.
+    let gdn_from_cli = args.ssm_h_dtype.is_some()
+        || args.gdn_fused_norm.is_some()
+        || args.ssm_batched_recurrent.is_some()
+        || args.exact_verify.is_some();
+    if gdn_from_cli {
+        // SSOT decode (`gdn_flags::ssm_h_dtype_bits`) — the SAME function
+        // `validate_serve_args` rejects on, so the validator cannot approve a
+        // reading the kernels do not share. `f16-pool` publishes BOTH bits.
+        let (h_f16, h_f16_pool) =
+            spark_model::layers::qwen3_ssm::ssm_h_dtype_bits(args.ssm_h_dtype.as_deref());
+        let flags = spark_model::layers::qwen3_ssm::GdnFlags {
+            h_f16,
+            h_f16_pool,
+            fused_norm: args.gdn_fused_norm.unwrap_or(false),
+            // ★ NOT `unwrap_or(false)`. `set_from_cli` publishes all three GDN
+            // selections at once, so `--ssm-h-dtype f16` alone used to clear a
+            // batched recurrence the operator never mentioned. With the
+            // compiled target declaring it (`kernels/hopper` says ON, +6% and
+            // md5-identical), a `false` here would silently un-declare the
+            // target's own default on every serve that names any GDN flag.
+            batched_recurrent: args.ssm_batched_recurrent.unwrap_or(
+                spark_model::layers::ops::target_defaults::resolved()
+                    .ssm_batched_recurrent
+                    .value,
+            ),
+            exact_verify: args.exact_verify.unwrap_or(false),
+        };
+        let in_force = spark_model::layers::qwen3_ssm::gdn_flags::set_from_cli(flags);
+        if in_force != flags {
+            tracing::warn!(
+                "GDN flags were already resolved from the environment ({in_force:?}); \
+                 the command line's ({flags:?}) did NOT take effect"
+            );
+        }
+        warn_shadowed_env();
+    }
+    // `--prefill-codispatch`: Option, so an absent flag publishes NOTHING and
+    // `prefill_codispatch_enabled()` resolves from `METRALE_PREFILL_CODISPATCH`
+    // on first touch, exactly as the varlen twin does. Publishing a clap
+    // default here would seal the cell on every boot and make the documented
+    // variable inert -- the failure this module's header exists to describe.
+    if let Some(on) = args.prefill_codispatch {
+        let in_force = spark_model::layers::ops::set_prefill_codispatch_from_cli(on);
+        if in_force != on {
+            tracing::warn!(
+                "prefill-codispatch was already resolved ({in_force}); the command \
+                 line's ({on}) did NOT take effect"
+            );
+        }
+    }
+    // `--ssm-rollback-mode`: explicit clap default ("snapshot"), so it is
+    // published on every serve. The value was validated by
+    // `validate_serve_args` through the SAME `FromStr` (SSOT) before this
+    // runs, so the parse cannot fail here.
+    let rollback = args
+        .ssm_rollback_mode
+        .parse::<spark_model::ssm_reserve::SsmRollbackMode>()
+        .expect("validated by validate_serve_args");
+    let rollback_in_force = spark_model::ssm_reserve::set_ssm_rollback_mode(rollback);
+    if rollback_in_force != rollback {
+        tracing::warn!(
+            "ssm-rollback-mode was already resolved ({rollback_in_force:?}); the command \
+             line's ({rollback:?}) did NOT take effect"
+        );
+    }
+    // `--ssm-decode-ring-slots`: ABSENT IS NOT A VALUE. `auto` (the clap
+    // default) publishes NOTHING, so the documented `METRALE_SSM_DECODE_RING`
+    // fallback stays reachable AND preflight can publish the depth it fitted
+    // to free memory later in the same boot (#915). An explicit N is
+    // published here, before preflight runs, which is exactly what makes the
+    // auto-fit's later write a no-op — an operator's pinned depth is refused
+    // rather than silently shrunk.
+    if let Some(slots) =
+        spark_model::ssm_reserve::parse_decode_ring_slots(&args.ssm_decode_ring_slots)
+            .expect("validated by validate_serve_args")
+    {
+        let in_force = spark_model::ssm_reserve::set_decode_ring_slots(slots);
+        if in_force != slots {
+            tracing::warn!(
+                "ssm-decode-ring-slots was already resolved ({in_force}); the command                  line's ({slots}) did NOT take effect"
+            );
+        }
+    }
+    // `--prefill-varlen-batch`: its own single-value cell, so it publishes
+    // independently of the GDN trio. Absent publishes nothing and the
+    // documented `METRALE_PREFILL_VARLEN` fallback stays reachable.
+    if let Some(varlen) = args.prefill_varlen_batch {
+        let in_force = spark_model::layers::ops::set_prefill_varlen_from_cli(varlen);
+        if in_force != varlen {
+            tracing::warn!(
+                "prefill-varlen-batch was already resolved ({in_force}); the command \
+                 line's ({varlen}) did NOT take effect"
+            );
+        }
+        if std::env::var_os("METRALE_PREFILL_VARLEN").is_some() {
+            tracing::warn!(
+                "METRALE_PREFILL_VARLEN is set but was OVERRIDDEN: `--prefill-varlen-batch` \
+                 on the command line owns the decision. Drop the flag to let the \
+                 environment decide."
+            );
+        }
+    }
+    // `None` where the flag was not given, so the documented `METRALE_*` fallback
+    // still decides. Passing the clap default instead sealed both cells on
+    // every boot and made those variables silent no-ops.
+    spark_runtime::set_ssm_tail_midchunk(args.ssm_tail_midchunk);
+    // Published BEFORE any prefill, like its neighbours: the snapshot lookup
+    // resolves it once and caches, so a late publish would be read as off.
+    spark_runtime::set_hermetic(args.hermetic);
+    crate::scheduler::levers::set_mtp_gate_force(args.mtp_gate_force());
+    // Every value RESOLVED, none of them the raw argument. Each of these five
+    // may now come from the environment, and a log that echoes what was asked
+    // for rather than what is in force is exactly how a dead knob stays
+    // invisible for a campaign.
+    // ONE line naming every per-target serving default, its resolved value and
+    // whether the environment overrode it. The deliverable of the 2026-09-11
+    // maintainer review: a reader of a serve log can now tell which
+    // configuration produced a number without also having the launch script.
+    tracing::info!(
+        "{}",
+        spark_model::layers::ops::target_defaults::summary_line()
+    );
+    let gdn = spark_model::layers::qwen3_ssm::gdn_flags::flags();
+    tracing::info!(
+        "kernel flags: ssm_h_dtype={} gdn_fused_norm={} ssm_batched_recurrent={} \
+         exact_verify={} ssm_tail_midchunk={} mtp_gate={} ssm_rollback_mode={:?} \
+         ssm_decode_ring_slots={} prefill_varlen_batch={}",
+        if gdn.h_f16 { "f16" } else { "f32" },
+        gdn.fused_norm,
+        gdn.batched_recurrent,
+        // The RESOLVED decision (h_f16 forces this off), matching the
+        // "echo what is in force" rule the surrounding fields follow.
+        gdn.verify_exact_active(),
+        spark_runtime::ssm_tail_midchunk_enabled(),
+        if crate::scheduler::levers::mtp_gate_force() {
+            "force"
+        } else {
+            "auto"
+        },
+        spark_model::ssm_reserve::ssm_rollback_mode(),
+        // RESOLVED: `auto` until something publishes a depth. Preflight logs
+        // the fitted depth (and the formula behind it) when it shrinks one.
+        match spark_model::ssm_reserve::published_decode_ring_slots() {
+            Some(slots) => slots.to_string(),
+            None => "auto".to_string(),
+        },
+        // RESOLVED, not the raw argument — may come from the environment.
+        spark_model::layers::ops::prefill_varlen_enabled(),
+    );
+}
+
+/// Legacy `METRALE_*` variables that a GDN flag on the command line overrides.
+///
+/// `gdn_flags::set_from_cli` publishes all three of its fields together — there
+/// is no per-field "unspecified" to express — so ONE of these flags takes the
+/// whole decision away from the environment, including for the two the operator
+/// did not write. That is the long-standing "the flag wins" rule and not a
+/// change; what is new is saying so. An operator whose variable was overruled is
+/// running a different configuration than they believe they are, and every
+/// number from that run is mislabelled.
+///
+/// Warned only when a GDN flag was actually given: with none of them given
+/// nothing is published and these variables decide, which is the documented
+/// behaviour and needs no warning.
+const SHADOWED_BY_CLI: &[(&str, &str)] = &[
+    ("METRALE_SSM_H_FP16", "--ssm-h-dtype f16"),
+    ("METRALE_GDN_FUSED_NORM", "--gdn-fused-norm"),
+    ("METRALE_SSM_BATCHED_RECURRENT", "--ssm-batched-recurrent"),
+];
+
+fn warn_shadowed_env() {
+    for (var, flag) in SHADOWED_BY_CLI {
+        if std::env::var_os(var).is_some() {
+            tracing::warn!(
+                "{var} is set but was OVERRIDDEN: a GDN flag on the command line publishes \
+                 all three kernel selections at once, so this variable did not decide \
+                 anything. Pass `{flag}` instead, or drop the GDN flags entirely to let the \
+                 environment decide."
+            );
+        }
+    }
+}

@@ -1,0 +1,44 @@
+name: GDN .so provenance pin
+
+# Pure hashing of committed files — no GPU, no toolchain, read-only.
+# Turns a silent binary-blob swap in 3rdparty_patches/gdn_aot/ into a red
+# check with a named remediation (rebuild.sh + PINS.sha256).
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  # No path filter on pull_request: this check joins the required set, and a
+  # path-filtered required check never reports on PRs outside its paths,
+  # leaving them permanently "expected" and unmergeable. The job is one
+  # sha256sum -c — running it on every PR costs seconds.
+  pull_request:
+  push:
+    branches: [main, master]
+    paths:
+      - "3rdparty_patches/gdn_aot/**"
+      - ".github/workflows/gdn-so-pin.yml"
+  # Merge queue: queue commits fire none of the events above, and this check
+  # is required — without this trigger the entry hangs until timeout.
+  # Unfiltered for the same reason as pull_request.
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-gdn-so-pins:
+    name: Verify committed GDN binaries match PINS.sha256
+    runs-on: >-
+      ${{ vars.USE_METRALE_UBUNTU_RUNNERS == '1'
+          && (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && (vars.PR_CHEAP_RUNNER || 'ubuntu-latest')
+          || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: sha256sum -c PINS.sha256
+        shell: bash
+        run: bash .github/scripts/check-gdn-so-pins.sh

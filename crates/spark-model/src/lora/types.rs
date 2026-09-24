@@ -1,0 +1,373 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! LoRA adapter type surface: the module/AB enums, per-layer + per-slot weight
+//! structs, the loaded [`LoraWeights`] set with its ref-count/LRU/generation
+//! bookkeeping, and the pure victim-selection view types. Split out of the
+//! former monolithic `lora/mod.rs` (SDD seam: TYPES) — visibility unchanged.
+
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
+
+use metrale_core::config::PeftAdapterConfig;
+use spark_runtime::gpu::DevicePtr;
+use spark_runtime::weights::WeightStore;
+
+use super::*;
+use crate::layers::ops::lora_delta::LoraPair;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LoraModule {
+    QProj,
+    KProj,
+    VProj,
+    OProj,
+    GateProj,
+    UpProj,
+    DownProj,
+    /// GDN block OUTPUT projection (`linear_attn.out_proj`), value_dim ->
+    /// hidden. Not `OProj`: different contract dim, disjoint layer set.
+    OutProj,
+}
+
+impl LoraModule {
+    pub const ALL: [LoraModule; 8] = [
+        Self::QProj,
+        Self::KProj,
+        Self::VProj,
+        Self::OProj,
+        Self::GateProj,
+        Self::UpProj,
+        Self::DownProj,
+        Self::OutProj,
+    ];
+
+    /// Dense SwiGLU FFN module — see [`Self::applies_to_layer`].
+    pub fn is_dense_ffn(&self) -> bool {
+        matches!(self, Self::GateProj | Self::UpProj | Self::DownProj)
+    }
+
+    /// Whether this module is the GDN block's output projection.
+    pub fn is_gdn_out(&self) -> bool {
+        matches!(self, Self::OutProj)
+    }
+
+    /// Which layers may carry this module: attention q/k/v/o on full-attention
+    /// layers only; dense gate/up/down on EVERY layer of a dense-FFN model (a
+    /// hybrid's linear-attention layers carry the SwiGLU FFN too); GDN out_proj
+    /// on linear-attention layers only. THE authority for BOTH the pool layout
+    /// and the packing walk, so reserved and written bytes cannot disagree.
+    pub fn applies_to_layer(&self, cfg: &metrale_core::config::ModelConfig, layer: usize) -> bool {
+        use metrale_core::config::LayerType;
+        let full_attn = cfg.layer_type(layer) == LayerType::FullAttention;
+        if self.is_dense_ffn() {
+            // MoE `mlp.*` is the routed-expert path, packed separately.
+            cfg.num_experts == 0
+        } else if self.is_gdn_out() {
+            !full_attn
+        } else {
+            full_attn
+        }
+    }
+
+    /// PEFT suffix name (target_modules vocabulary).
+    pub fn peft_name(&self) -> &'static str {
+        match self {
+            Self::QProj => "q_proj",
+            Self::KProj => "k_proj",
+            Self::VProj => "v_proj",
+            Self::OProj => "o_proj",
+            Self::GateProj => "gate_proj",
+            Self::UpProj => "up_proj",
+            Self::DownProj => "down_proj",
+            Self::OutProj => "out_proj",
+        }
+    }
+
+    /// (out_dim, in_dim) of the base projection. Holo-3.1-0.8B (verified
+    /// against the checkpoint header): k/v `[512,1024]`, o `[1024,2048]`,
+    /// gate/up `[3584,1024]`, down `[1024,3584]`.
+    ///
+    /// q_proj: on a gated-attention model (`attn_gated`) the raw projection
+    /// emits the interleaved `[Q|gate]` at width `2·q_heads·head_dim` (the
+    /// FULL width the PEFT `lora_B` was trained against — verified `[8192,16]`
+    /// on holo-3.1-35b); ungated q is `q_heads·head_dim`.
+    pub fn dims(&self, cfg: &metrale_core::config::ModelConfig) -> (usize, usize) {
+        let h = cfg.hidden_size;
+        match self {
+            Self::QProj => (
+                (if cfg.attn_gated { 2 } else { 1 }) * cfg.num_attention_heads * cfg.head_dim,
+                h,
+            ),
+            Self::KProj | Self::VProj => (cfg.num_key_value_heads * cfg.head_dim, h),
+            Self::OProj => (h, cfg.num_attention_heads * cfg.head_dim),
+            Self::GateProj | Self::UpProj => (cfg.intermediate_size, h),
+            Self::DownProj => (h, cfg.intermediate_size),
+            // GDN out_proj contracts over the SSM value width, NOT over
+            // hidden or over the attention head width.
+            Self::OutProj => (h, cfg.linear_num_value_heads * cfg.linear_value_head_dim),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AdapterAb {
+    A = 0,
+    B = 1,
+}
+
+/// One full-attention layer's adapted modules. `None` = module not adapted.
+/// Pairs are the CANONICAL [`LoraPair`] from `layers::ops::lora_delta`
+/// (Copy — installed by copy into the layer structs at model build).
+///
+/// `Clone` (LoraPair is Copy) so a slot's layers can be re-installed onto the
+/// layer structs on a runtime rotation (`set_active_lora`).
+#[derive(Clone)]
+pub struct LoraLayerWeights {
+    pub layer_idx: usize,
+    pub q_proj: Option<LoraPair>,
+    pub k_proj: Option<LoraPair>,
+    pub v_proj: Option<LoraPair>,
+    pub o_proj: Option<LoraPair>,
+    pub gate_proj: Option<LoraPair>,
+    pub up_proj: Option<LoraPair>,
+    pub down_proj: Option<LoraPair>,
+    /// GDN out_proj delta (linear-attention layers only).
+    pub out_proj: Option<LoraPair>,
+    /// Feature-1: MoE router (`mlp.gate`) delta on the routing logits. `None`
+    /// unless the adapter targets the router AND `METRALE_LORA_EXPERTS=1`.
+    pub router: Option<LoraPair>,
+    /// Feature-1: this layer's routed-expert LoRA coverage (sparse per-expert
+    /// pairs). `None` for attention/dense-only adapters or when expert LoRA is
+    /// disabled. Packed into a SEPARATE expert allocation (not the equal-slot
+    /// attention pool), so the BGMV route tables + slot offset math are
+    /// untouched.
+    pub experts: Option<ExpertLoraLayer>,
+}
+
+impl LoraLayerWeights {
+    /// A zeroed per-layer entry (all modules unadapted). Used by the pack loops
+    /// to lazily create a layer entry the first time any module — attention,
+    /// router, or expert — lands on it.
+    pub fn empty(layer_idx: usize) -> Self {
+        Self {
+            layer_idx,
+            q_proj: None,
+            k_proj: None,
+            v_proj: None,
+            o_proj: None,
+            gate_proj: None,
+            up_proj: None,
+            down_proj: None,
+            out_proj: None,
+            router: None,
+            experts: None,
+        }
+    }
+}
+
+/// One packed pool slot: a resident adapter's own name/config + its per-layer
+/// pairs (a/b DevicePtrs into that slot's byte sub-region of the shared pool).
+/// `layers` is GLOBAL-layer-indexed (len = num_hidden_layers), the same index
+/// the install walk uses.
+#[derive(Clone)]
+pub struct AdapterSlot {
+    pub name: String,
+    pub adapter_config: PeftAdapterConfig,
+    pub layers: Vec<Option<LoraLayerWeights>>,
+    /// Task #25 (slot generation): monotonic counter bumped every time this
+    /// slot's CONTENTS are replaced (disk/RDMA swap-into-slot). Folded into the
+    /// adapter identity ([`adapter_id_hash`]) so re-staging DIFFERENT weights
+    /// under the SAME adapter name yields a FRESH id — a later request then
+    /// misses the stale (previous-generation) prefix/KV instead of warm-hitting
+    /// it. Init 0; gen 0 is a strict no-op in the fold so a slot's FIRST-load id
+    /// (and the base sentinel) stay byte-identical to the pre-#25 (#24) value. A
+    /// pure rotate (same weights re-pointed) does NOT bump.
+    pub generation: u64,
+}
+
+/// One adapter to pack, for the multi-adapter entry point. `store` is the
+/// adapter's on-device BF16 `WeightStore` (host F16/F32→BF16 already done by
+/// `spark_runtime::weights::adapter::load_adapter_safetensors`).
+pub struct LoraAdapterInput<'a> {
+    pub name: String,
+    pub store: &'a WeightStore,
+    pub peft: PeftAdapterConfig,
+}
+
+/// The loaded adapter set: one fixed-address rank-padded pool holding up to
+/// `max_loras` equal-size slots, one [`AdapterSlot`] per resident adapter, and
+/// per-module `[max_loras]` device u64 pointer tables (the frozen M2 BGMV
+/// contract — filled index k for each packed slot, NULL for the rest).
+///
+/// Single-adapter runs pack exactly one slot (`slots.len() == 1`, `active == 0`)
+/// — byte-identical to the pre-multi-adapter path. `name`/`adapter_config` mirror
+/// the ACTIVE slot for logs/status; the install walk reads [`Self::active_layers`].
+pub struct LoraWeights {
+    /// Name of the ACTIVE adapter (mirrors `slots[active].name`).
+    pub name: String,
+    /// Config of the ACTIVE adapter (mirrors `slots[active].adapter_config`).
+    pub adapter_config: PeftAdapterConfig,
+    pub max_rank: usize,
+    pub max_loras: usize,
+    /// One fixed-address allocation holding every padded A/B for every slot.
+    pub pool: DevicePtr,
+    pub pool_bytes: usize,
+    /// Feature-1: separate fixed-address allocation for the router + routed-
+    /// expert padded A/B (sized from the audited key set, NOT `num_experts ×
+    /// num_layers`). `None` when no adapter targets experts/router (byte-
+    /// identical to the pre-Feature-1 pool). Deliberately outside the equal-size
+    /// attention pool so `pool_slot_bytes` + the BGMV route tables are untouched.
+    pub expert_pool: Option<DevicePtr>,
+    pub expert_pool_bytes: usize,
+    /// The resident adapters, slot-indexed (`slots[k]` lives at pool byte
+    /// offset `k * pool_slot_bytes`). `len() <= max_loras`.
+    pub slots: Vec<AdapterSlot>,
+    /// Index into `slots` of the currently-active adapter (0 at load).
+    pub active: usize,
+    /// key = (global_layer_idx, module) → (a_table, b_table); each table is
+    /// a device `[max_loras]` u64 array, NULL (0) = base-only slot.
+    pub tables: BTreeMap<(usize, LoraModule), (DevicePtr, DevicePtr)>,
+    /// The parallel `[max_loras]` device f32 SCALE table the bgmv reads,
+    /// indexed by slot: `scale_table[k]` = `slots[k].adapter_config.scaling()`
+    /// (alpha/r, or alpha/√r under rsLoRA — the same per-adapter scale that
+    /// rides each [`LoraPair`]), 0.0 for unpacked slots. Scale is per-ADAPTER
+    /// (not per-module), so ONE table suffices. Built once at pool pack time
+    /// alongside the a/b tables (load-time-fixed → graph-safe kernel arg).
+    pub scale_table: DevicePtr,
+    /// Task #25 (slot ref_count): per-slot in-flight-sequence count, one
+    /// [`AtomicUsize`] per pool index (`len() == max_loras`, stable across
+    /// swaps). A sequence acquires (`+1`) its resolved slot at prefill and
+    /// releases (`-1`) at terminal free; a swap/rotate INTO a slot with
+    /// `ref_count > 0` is REFUSED (you cannot replace an adapter mid-decode —
+    /// it would corrupt in-flight KV and replay a captured graph over swapped
+    /// pool bytes). Kept as a parallel Vec here (not on [`AdapterSlot`], which
+    /// derives Clone and is cloned during install — `AtomicUsize` is not Clone);
+    /// [`LoraWeights`] is deliberately non-Clone and already `Send + Sync`.
+    /// Interior-mutable through `&self` (acquire/release run on the prefill/free
+    /// `&self` paths); swaps read it under `&mut self` at a quiescent point.
+    pub ref_counts: Vec<AtomicUsize>,
+    /// Task #27 (demand-driven promotion): the PINNED/CACHE boundary. Slots
+    /// `[0, pinned)` are the startup `--lora-adapter` set — advertised by
+    /// `/v1/models`, resolved by the position-based `resolve_adapter_slot`, and
+    /// NEVER an eviction victim. Slots `[pinned, max_loras)` are the promotion
+    /// HOT CACHE (empty placeholders at load): a demand-promoted adapter lands
+    /// in one of these. `pinned == slots-populated-at-load`.
+    pub pinned: usize,
+    /// Task #27: per-slot last-used LRU tick, one [`AtomicU64`] per pool index
+    /// (`len() == max_loras`, parallel to `ref_counts`). Bumped in
+    /// [`Self::acquire_slot`] on the RESOLVED index so victim selection ages the
+    /// TRUE slot a request used (including `-1 -> active`). A cache slot with the
+    /// smallest `last_used` among the `ref_count == 0` idle slots is the LRU
+    /// eviction victim. Interior-mutable through `&self` like `ref_counts`.
+    pub last_used: Vec<AtomicU64>,
+    /// Task #27: monotonic source for `last_used` ticks (never wraps in
+    /// practice). Bumped once per acquire.
+    pub lru_tick: AtomicU64,
+    /// Feature-2 (token overlay): per-slot Stage-1 raw overlay upload, `len ==
+    /// slots.len()` (padding slots push `None`). Consumed + cleared by
+    /// `set_lora_weights` (Stage 2 `build_overlay`), which needs the served
+    /// embed/lm_head tables that only exist after weight load. `Vec::new()` /
+    /// all-`None` ⇒ no overlay adapter ⇒ byte-identical to a no-overlay build.
+    pub overlay_raw: Vec<Option<super::overlay_build::OverlayRawSlot>>,
+}
+
+/// Task #27: a per-slot snapshot for the pure victim-selection policy. Taken on
+/// the model thread at a scheduler-quiescent point (the only place `ref_count`
+/// is authoritative), then handed to `select_victim_slot`.
+#[derive(Clone, Copy, Debug)]
+pub struct SlotView {
+    /// `true` if this slot currently holds a (non-placeholder) adapter.
+    pub filled: bool,
+    /// In-flight sequence count (`0` == idle == evictable).
+    pub ref_count: usize,
+    /// LRU tick (larger = more recently used).
+    pub last_used: u64,
+}
+
+/// Why a promotion cannot find a victim slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VictimError {
+    /// Every cache slot is busy (`ref_count > 0`) — a RETRYABLE condition, never
+    /// an eviction of an in-flight adapter.
+    PoolFull,
+}
+
+impl LoraLayerWeights {
+    /// Select this layer's [`LoraPair`] for `module` (`None` = module not
+    /// adapted). The single source of truth for the (layer, module) → pair map,
+    /// shared by [`select_routed_pair`] and [`LoraWeights::refresh_slot_tables`].
+    pub fn module_pair(&self, module: LoraModule) -> Option<&LoraPair> {
+        match module {
+            LoraModule::QProj => self.q_proj.as_ref(),
+            LoraModule::KProj => self.k_proj.as_ref(),
+            LoraModule::VProj => self.v_proj.as_ref(),
+            LoraModule::OProj => self.o_proj.as_ref(),
+            LoraModule::GateProj => self.gate_proj.as_ref(),
+            LoraModule::UpProj => self.up_proj.as_ref(),
+            LoraModule::DownProj => self.down_proj.as_ref(),
+            LoraModule::OutProj => self.out_proj.as_ref(),
+        }
+    }
+}
+
+impl LoraWeights {
+    /// The active slot's per-layer pairs (GLOBAL-layer-indexed) — what the
+    /// install walk copies onto the layer structs.
+    pub fn active_layers(&self) -> &[Option<LoraLayerWeights>] {
+        &self.slots[self.active].layers
+    }
+
+    /// #30 (routed-prefill precision): resolve a request's `adapter_slot`
+    /// (`>= 0` → that slot, `-1` → active) and return `Some(resolved)` ONLY when it
+    /// routes to a NON-active, in-range slot — the SINGLE source of truth for
+    /// "this prefill must apply the request slot's pair via the dense path". Kept
+    /// in exact lockstep with [`crate::model`]'s `upload_seq_slot_uniform`
+    /// (`resolved == active` → `DevicePtr(0)` → installed-pair path). Returns
+    /// `None` for an active/base request (byte-identical) and for out-of-range
+    /// slots (bad request → installed active pair, never a panic).
+    pub fn routed_prefill_slot(&self, adapter_slot: i32) -> Option<usize> {
+        routed_prefill_slot_of(adapter_slot, self.active, self.slots.len())
+    }
+
+    /// Resolve an adapter NAME to its slot index (for runtime rotation).
+    pub fn slot_of(&self, name: &str) -> Option<usize> {
+        self.slots
+            .iter()
+            .position(|s| !s.name.is_empty() && s.name == name)
+    }
+
+    /// All resident adapter names in slot order (for `/v1/models`).
+    pub fn adapter_names(&self) -> Vec<String> {
+        self.slots
+            .iter()
+            .filter(|s| !s.name.is_empty())
+            .map(|s| s.name.clone())
+            .collect()
+    }
+
+    /// Stable adapter_id (Task #24) for a pool slot request selector. `slot`
+    /// follows the `SequenceState.adapter_slot` convention: `>= 0` selects that
+    /// resident slot, `-1` means "defer to the installed active adapter" (so a
+    /// default request keys under whatever adapter is actually active — matching
+    /// `build_seq_slot_host`'s `-1 -> active` resolution). The id is the NAME
+    /// hash, resolved at prefill time (active may rotate between HTTP resolve and
+    /// prefill). Out-of-range slots fall back to the base sentinel `0`.
+    pub fn adapter_id_for_slot(&self, slot: i32) -> u64 {
+        let resolved = if slot >= 0 {
+            slot as usize
+        } else {
+            self.active
+        };
+        match self.slots.get(resolved) {
+            Some(s) if !s.name.is_empty() => adapter_id_hash(&s.name, s.generation),
+            Some(_) | None => 0,
+        }
+    }
+}
+
+#[path = "types_slots.rs"]
+mod types_slots;
+
+#[cfg(test)]
+#[path = "types_tests.rs"]
+mod tests;

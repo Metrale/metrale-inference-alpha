@@ -1,0 +1,53 @@
+{
+  "color": {
+    "ground": {
+      "dark": "#0E1318",
+      "light": "#FFFFFF"
+    },
+    "ink": {
+      "onDark": [
+        "#F7F7F9",
+        "#D9D9DE"
+      ],
+      "onLight": "#15181F"
+    },
+    "violet": [
+      "#CDBFF1",
+      "#9F8DD8"
+    ],
+    "cyan": [
+      "#6FD9EC",
+      "#5A96BD"
+    ],
+    "gold": [
+      "#E4C070",
+      "#AE8A3F"
+    ],
+    "product": {
+      "onDark": "#8A8F99",
+      "onLight": "#6B7079"
+    },
+    "ui": {
+      "grayText": "#6B7079"
+    }
+  },
+  "type": {
+    "family": "Urbanist",
+    "wordmarkWeight": 500,
+    "productWeight": 400,
+    "source": "https://fonts.google.com/specimen/Urbanist"
+  },
+  "geometry": {
+    "baseline": 362,
+    "mWidth": 378,
+    "stem": 47,
+    "wordmarkWidth": 1709,
+    "clearSpaceUnit": 76
+  },
+  "minimumSize": {
+    "markPx": 24,
+    "compactMarkPx": 16,
+    "wordmarkPx": 140,
+    "productLockupPx": 240
+  }
+}

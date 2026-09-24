@@ -1,0 +1,380 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! GPU init + the pre-load reserve preflight.
+//!
+//! The post-load OOM check that used to live here is `post_load_audit.rs`;
+//! it moved when the #915 second pass brought the decode ring's post-load
+//! yardstick in (`headroom.rs`) and this file reached its 500-line cap.
+
+use anyhow::Result;
+
+use metrale_core::config::ModelConfig;
+
+use crate::cli;
+
+mod decode_ring;
+mod gpu_backend;
+mod headroom;
+mod per_sequence_state;
+mod post_load_audit;
+mod refusal;
+mod ssm_h_fp16;
+#[cfg(any(feature = "cuda", feature = "metal"))]
+pub(crate) use gpu_backend::init_gpu_backend;
+pub(crate) use headroom::PostLoadInputs;
+pub(crate) use post_load_audit::post_load_memory_audit;
+use {per_sequence_state::per_sequence_reserve, ssm_h_fp16::ssm_h_fp16_preconditions};
+
+pub(crate) struct ReservePreflight {
+    pub(crate) inference_reserve: usize,
+    pub(crate) buffer_arena_bytes: usize,
+    pub(crate) gdn_two_phase_bytes: usize,
+    pub(crate) ssm_prefill_chunk: usize,
+    pub(crate) max_batch_tokens_pre: usize,
+}
+
+pub(crate) fn preflight_reserve(
+    args: &cli::ServeArgs,
+    config: &ModelConfig,
+    free_mem: usize,
+    // #915 second pass: what the decode-ring auto-fit needs to predict the
+    // POST-load KV headroom instead of fitting against pre-load free memory.
+    // Gathered by the caller because none of it is derivable from `args` +
+    // `config`: the device total, the checkpoint directory, the resolved KV
+    // dtype and whether this target ships the W8A8 prefill kernels.
+    post_load: &PostLoadInputs<'_>,
+) -> Result<ReservePreflight> {
+    let h_state_bytes = config.ssm_h_state_bytes();
+    let conv_state_bytes = config.ssm_conv_state_bytes();
+    // `args.dflash` belongs here: `TransformerModel::new` forces the verify
+    // pools ON whenever DFlash capture layers exist (`has_mtp |= dflash`),
+    // so a DFlash serve allocates the full K=γ+1 intermediate/checkpoint
+    // pools. Omitting it reserved only the base per-seq blobs and left the
+    // entire verify-pool family OUTSIDE the util pledge — 13.7 GB tracked vs
+    // a 1.3 GB reserve on the 27B at bs=8/γ=8 (2026-08-22 boot ledger, the
+    // measured bulk of the ~12 GB pledge overshoot).
+    let spec_on_pool =
+        args.speculative || args.self_speculative || args.ngram_speculative || args.dflash;
+    ssm_h_fp16_preconditions(args, config)?;
+    // SSM state pool = per-seq live state (max_batch blobs) + MTP verify
+    // state (intermediates + checkpoint) for the slots spec dispatch can
+    // actually reach. SSOT: `ssm_reserve::mtp_state_slots` — the SAME
+    // number `SsmStatePool::new` allocates and the scheduler's spec
+    // dispatch guard enforces. At bs<=32 this reproduces the historical
+    // `max_batch × blob × (1 + (num_drafts+1) + 1)` byte-for-byte; above
+    // 32 it stops reserving verify blobs for slots that can never verify
+    // (25.4 GB at bs=64/K=4 on the 27B — the bs=64 preflight refusal).
+    // Kill switch: METRALE_MTP_POOL_FULL_WIDTH (presence) restores
+    // full-width sizing on BOTH sides.
+    let mtp_state_slots = spark_model::ssm_reserve::mtp_state_slots(args.max_batch_size);
+    // Tiered verify slots (2026-08-16): the H-intermediate term is per-slot
+    // (`verify_slot_h_intermediates`); DFlash pools are γ-sized and do not
+    // follow the MTP ladder, so they reserve uniform full width — mirroring
+    // `SsmStatePool::new`'s `num_intermediates != num_drafts + 1` condition.
+    // Stage-3 f16-SIZED pool: the FP32 prefill staging arena, ONE blob per
+    // slot (shared across layers — see `ssm_h_prefill_stage_bytes`). A
+    // separate term for the same reason the replay ring is: it is sized by a
+    // SINGLE layer's h blob, not by the across-layers per-seq total every
+    // other term here uses. Zero on an FP32-sized pool. `max_batch_size`, not
+    // `+1`: this preflight has never counted the pools' dummy slot.
+    let ssm_h_stage_bytes = spark_model::ssm_reserve::ssm_h_prefill_stage_bytes(
+        args.max_batch_size,
+        h_state_bytes,
+        spark_model::layers::qwen3_ssm::ssm_h_f16_pool_enabled(),
+    );
+    // DFlash pool width: the verify pools are γ-sized (uniform K = γ+1 on
+    // EVERY slot — `SsmStatePool::new`'s `uniform_h`), and γ comes from the
+    // DRAFTER's checkpoint, which loads long after this preflight. Peek the
+    // drafter's config.json for `dflash_config.block_size`; a missing or
+    // remote checkpoint falls back to `resolved_dflash_gamma`'s 16 ceiling —
+    // the same unknown-γ fallback the pool allocation uses (`γ+1 = 17`), so
+    // the miss direction is over-reserve, never under.
+    let pool_num_drafts = if args.dflash {
+        peek_dflash_block_size(args.draft_model.as_deref())
+            .map(spark_model::layers::qwen3_ssm::default_dflash_gamma)
+            .unwrap_or_else(|| args.resolved_dflash_gamma(None))
+    } else {
+        args.resolved_num_drafts()
+    };
+    let ssm_pool_bytes = spark_model::ssm_reserve::ssm_pool_reserve_bytes(
+        args.max_batch_size,
+        config.num_ssm_layers() * h_state_bytes,
+        config.num_ssm_layers() * conv_state_bytes,
+        spec_on_pool,
+        pool_num_drafts,
+        mtp_state_slots,
+        args.dflash,
+        // Stage-3 f16-SIZED pool: mirrors `SsmStatePool::new`'s narrowing.
+        // Unreachable today (ssm_h_fp16_preconditions refuses the mode
+        // above), wired so preflight and allocator cannot diverge when the
+        // refusal lifts.
+        spark_model::layers::qwen3_ssm::ssm_h_f16_pool_enabled(),
+        // `--ssm-rollback-mode` (published by serve_flags before this runs).
+        // Replay drops every per-token verify intermediate; its input ring
+        // is the separate term below.
+        spark_model::ssm_reserve::ssm_rollback_mode(),
+    );
+    // Replay-mode verify-window input ring (EXPERIMENTAL scaffold): sized by
+    // the SAME SSOT `SsmStatePool::new` allocates through. K ceiling is the
+    // MTP `num_drafts + 1` — matching this preflight's existing convention
+    // for the conv term (the DFlash γ=17 widening and the pools' dummy slot
+    // have never been preflight-counted; the CUDA headroom absorbs them).
+    let ssm_replay_ring = if spec_on_pool
+        && spark_model::ssm_reserve::ssm_rollback_mode()
+            == spark_model::ssm_reserve::SsmRollbackMode::Replay
+    {
+        spark_model::ssm_reserve::ssm_replay_ring_bytes(
+            config.num_ssm_layers(),
+            spark_model::ssm_reserve::ssm_replay_row_bytes(
+                config.ssm_qkvz_size(),
+                config.linear_num_value_heads,
+            ),
+            pool_num_drafts + 1,
+            mtp_state_slots,
+        )
+    } else {
+        0
+    };
+    let spec_tokens_pre = spec_reserve_tokens(args);
+    // B4 (chunked-prefill BF16 KV cliff): the prior `.min(8192)` cap forced
+    // every prompt > 8 k to chunk, which compounds K-side BF16 rounding noise
+    // at chunk boundaries (per the 4-agent audit 2026-05-27). When the user
+    // explicitly passes `--max-prefill-tokens N` (anything other than the
+    // default 8192), respect it — no hard cap. Otherwise default to 8192 to
+    // bound GDN persistent-buffer reservation for unbounded `max_seq_len`.
+    let ssm_prefill_chunk: usize = if config.num_ssm_layers() > 0 {
+        if args.max_prefill_tokens != 8192 && args.max_prefill_tokens > 0 {
+            args.max_seq_len.min(args.max_prefill_tokens)
+        } else {
+            args.max_seq_len.min(8192)
+        }
+    } else {
+        0
+    };
+    let user_set_prefill_pre = args.max_prefill_tokens != 8192;
+    let prefill_budget_pre = if user_set_prefill_pre && args.max_prefill_tokens > 0 {
+        args.max_prefill_tokens
+    } else if ssm_prefill_chunk > 0 {
+        ssm_prefill_chunk
+    } else if args.max_prefill_tokens > 0 {
+        args.max_prefill_tokens
+    } else {
+        args.max_seq_len
+    };
+    // Issue #15 auto-clamp removed (2026-07-02): snapshot reachability is
+    // handled by the tail-checkpoint split in `prefill_chunk_dispatch`, so
+    // the budget (and this arena-sizing mirror) stays at full chunk size.
+    let max_batch_tokens_pre = prefill_budget_pre
+        .max(spec_tokens_pre)
+        .max(args.max_batch_size);
+    let buffer_arena_bytes = spark_runtime::buffers::BufferSizes::from_config(
+        config,
+        max_batch_tokens_pre,
+        args.max_seq_len,
+        args.block_size,
+        args.max_batch_size,
+    )
+    .total_bytes();
+    // Marconi snapshot region. SSOT:
+    // `spark_model::ssm_reserve::marconi_snapshot_slots` makes the SAME
+    // decision (same env var, same predicate) the runtime allocation in
+    // `TransformerModel::new` makes. The region's only reader is a
+    // prefix-cache lookup, so with the cache inactive every reserved slot is
+    // unreachable — 2380 MiB on GLM-5.3 (16 slots x 34 KDA layers x FP32
+    // h+conv) that nothing can ever restore from. Kill switch:
+    // METRALE_SSM_MARCONI_FULL.
+    let marconi = spark_model::ssm_reserve::marconi_snapshot_slots(
+        args.ssm_cache_slots,
+        spark_model::ssm_reserve::prefix_caching_active(
+            args.prefix_caching_enabled(),
+            config.kv_only_prefix_cache_is_safe(),
+        ),
+    );
+    if let Some(reason) = marconi.skip_reason {
+        tracing::info!(
+            "SSM snapshot pool: Marconi region SKIPPED ({}) — {} slot(s) x {} layer(s) \
+             = {} MB not reserved (restore with --enable-prefix-caching, or \
+             METRALE_SSM_MARCONI_FULL to over-reserve)",
+            reason,
+            args.ssm_cache_slots,
+            config.num_ssm_layers(),
+            (args.ssm_cache_slots * config.num_ssm_layers() * (h_state_bytes + conv_state_bytes))
+                / (1024 * 1024),
+        );
+    }
+    // The per-sequence SSM state blob — `num_ssm_layers x (h + conv)`, 151.5
+    // MiB on the 27B. Both snapshot regions are whole multiples of it:
+    // Marconi reserves one per cache slot, the decode ring one per active
+    // sequence per ring slot.
+    let per_seq_blob = config.num_ssm_layers() * (h_state_bytes + conv_state_bytes);
+    let marconi_bytes = marconi.slots * per_seq_blob;
+    // Same predicate as the pool term: DFlash IS a speculative serve and
+    // pays the same graph/JIT/scratch overheads the 4 GB headroom exists for.
+    let cuda_headroom: usize = if spec_on_pool {
+        4 * 1024 * 1024 * 1024
+    } else {
+        512 * 1024 * 1024
+    };
+    let gdn_two_phase_bytes: usize = {
+        let key_dim = config.linear_num_key_heads * config.linear_key_head_dim;
+        let value_dim = config.linear_num_value_heads * config.linear_value_head_dim;
+        let nv = config.linear_num_value_heads;
+        let conv_dim = key_dim * 2 + value_dim;
+        if conv_dim > 0 && config.num_ssm_layers() > 0 {
+            let sl = max_batch_tokens_pre;
+            sl * conv_dim * 2 + sl * nv * 2 * 4 + sl * value_dim * 2 + sl * value_dim * 2
+        } else {
+            0
+        }
+    };
+    // Everything the reserve needs that does NOT scale with ring depth. The
+    // ring is separated out because it is the only term preflight is allowed
+    // to shrink (#915): rollback depth degrades gracefully, the batch and the
+    // pools it sizes do not.
+    let fixed_reserve: usize = ssm_pool_bytes
+        + ssm_h_stage_bytes
+        + ssm_replay_ring
+        + marconi_bytes
+        + gdn_two_phase_bytes
+        + cuda_headroom
+        + per_sequence_reserve(args, config);
+    // Phase-C decode-rollback ring: the depth the flags/env ask for, then the
+    // largest depth that actually fits alongside everything above. Both steps
+    // are SSOT'd in `decode_ring` (which publishes the fitted depth so
+    // `TransformerModel::new` allocates exactly what was reserved).
+    let ring_requested = decode_ring::requested_slots(args, config);
+    let ring_slot_bytes = decode_ring::slot_bytes(args, per_seq_blob);
+    // The yardstick, and why it is that one: the predicted post-load KV
+    // headroom where the route's residency can be predicted, pre-load free
+    // memory (the first pass's behaviour) everywhere else. See `headroom.rs`
+    // for the H100 receipts that made the first yardstick the wrong one.
+    let yardstick =
+        headroom::post_load_yardstick(args, config, post_load, fixed_reserve, buffer_arena_bytes);
+    let fit = decode_ring::autofit(
+        args,
+        ring_requested,
+        ring_slot_bytes,
+        per_seq_blob,
+        fixed_reserve + buffer_arena_bytes,
+        free_mem,
+        &yardstick,
+    );
+    tracing::info!("{}", fit.decision);
+    if let Some(warning) = &fit.warning {
+        tracing::warn!("SSM decode-rollback ring auto-fit — {}", warning);
+    }
+    let ssm_snapshot_bytes = marconi_bytes + fit.slots * ring_slot_bytes;
+    let inference_reserve: usize = fixed_reserve + fit.slots * ring_slot_bytes;
+    let total_reserve = inference_reserve + buffer_arena_bytes;
+    if total_reserve > free_mem {
+        return Err(refusal::reserve_refusal(
+            args,
+            config,
+            refusal::Refusal {
+                total_reserve,
+                free_mem,
+                seq_len_independent: ssm_pool_bytes
+                    + ssm_h_stage_bytes
+                    + ssm_snapshot_bytes
+                    + cuda_headroom,
+                ring_requested,
+                ring_slots: fit.slots,
+                per_seq_blob,
+                ring_pinned: spark_model::ssm_reserve::published_decode_ring_slots().is_some(),
+            },
+        ));
+    }
+    tracing::info!(
+        "Preflight reserve: inference={} MB, buffer_arena={} MB (pre-load free: {:.1} GB); {}",
+        inference_reserve / (1024 * 1024),
+        buffer_arena_bytes / (1024 * 1024),
+        free_mem as f64 / (1024.0 * 1024.0 * 1024.0),
+        decode_ring::formula(fit.slots, args.max_batch_size, per_seq_blob),
+    );
+    // Q09: per-component breakdown so future MTP/spec-decode reserve
+    // jumps are diagnosable from the log alone. Each line is dropped at
+    // debug to avoid noise on hot startup paths; flip to info if you
+    // need to trace a specific deployment's reserve.
+    let spec_on = spec_on_pool;
+    tracing::debug!(
+        "Preflight reserve breakdown: \
+         ssm_pool={} MB ({} max_batch blobs + {} MTP-covered slots × {} verify blobs, \
+         {} ssm_layers × (h+conv)), \
+         ssm_snapshot={} MB ({} slots), \
+         gdn_two_phase={} MB ({} tokens), \
+         cuda_headroom={} MB ({}), \
+         spec_on={}, num_drafts={}",
+        ssm_pool_bytes / (1024 * 1024),
+        args.max_batch_size,
+        if spec_on_pool { mtp_state_slots } else { 0 },
+        if spec_on_pool {
+            args.resolved_num_drafts() + 2
+        } else {
+            0
+        },
+        config.num_ssm_layers(),
+        ssm_snapshot_bytes / (1024 * 1024),
+        marconi.slots,
+        gdn_two_phase_bytes / (1024 * 1024),
+        max_batch_tokens_pre,
+        cuda_headroom / (1024 * 1024),
+        if spec_on { "spec/MTP on" } else { "no spec" },
+        spec_on,
+        if spec_on {
+            args.resolved_num_drafts() as i64
+        } else {
+            -1
+        },
+    );
+    Ok(ReservePreflight {
+        inference_reserve,
+        buffer_arena_bytes,
+        gdn_two_phase_bytes,
+        ssm_prefill_chunk,
+        max_batch_tokens_pre,
+    })
+}
+
+/// Peek the DFlash drafter's trained block size (γ) from its config.json
+/// without loading the checkpoint — the preflight reserve needs the verify
+/// pools' K = γ+1 long before the drafter loads. `None` (missing path, remote
+/// HF id, absent field) falls back to the caller's 16 ceiling: the same
+/// unknown-γ width `SsmStatePool` allocates, so a failed peek over-reserves
+/// rather than re-opening the pledge hole.
+fn peek_dflash_block_size(draft_model: Option<&str>) -> Option<usize> {
+    let dir = std::path::Path::new(draft_model?);
+    let raw = std::fs::read_to_string(dir.join("config.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let g = v.get("dflash_config")?.get("block_size")?.as_u64()? as usize;
+    (g > 0).then_some(g)
+}
+
+/// SSOT for "how many rows can one sequence's speculative step occupy" —
+/// the term the batch-token floors (`max_batch_tokens_pre` here,
+/// `resolve_prefill_budget` in `kv_cache.rs`) take a max against.
+///
+/// It was the same three-flag expression copy-pasted in both files, and
+/// both copies omitted `--dflash` (returning 1 for a serve whose verify
+/// step is γ+1 rows wide). Inert today only because the prefill budget's
+/// 8192 floor dominates the max — this exists so the two sites cannot
+/// drift and so the DFlash width is stated, not defaulted.
+///
+/// MTP ladder: `num_drafts + 2` (the K = drafts+1 verify rows plus the
+/// bonus row — the historical constant, unchanged). DFlash: γ + 1 verify
+/// rows (`[last_token, draft_0..γ-1]`), which is the same arithmetic at
+/// the effective `num_drafts = γ - 1` the scheduler runs with; γ comes
+/// from the drafter's checkpoint via the same peek the pool reserve uses.
+pub(crate) fn spec_reserve_tokens(args: &cli::ServeArgs) -> usize {
+    if args.dflash {
+        let gamma = args.dflash_gamma.unwrap_or_else(|| {
+            peek_dflash_block_size(args.draft_model.as_deref())
+                .map(spark_model::layers::qwen3_ssm::default_dflash_gamma)
+                .unwrap_or_else(|| args.resolved_dflash_gamma(None))
+        });
+        gamma + 1
+    } else if args.speculative || args.self_speculative || args.ngram_speculative {
+        args.resolved_num_drafts() + 2
+    } else {
+        1
+    }
+}

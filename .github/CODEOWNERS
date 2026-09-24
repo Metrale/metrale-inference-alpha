@@ -1,0 +1,63 @@
+# Metrale Engine CODEOWNERS
+#
+# Lines starting with `#` are comments. The LAST matching pattern wins
+# (per GitHub's CODEOWNERS spec — be careful adding broader patterns
+# at the bottom of this file, they will override more specific ones
+# above).
+#
+# SECURITY: every path under .github/ — workflows, dependabot config,
+# CODEOWNERS itself, issue/PR templates — is owner-only and must stay
+# that way. A malicious workflow change can exfiltrate secrets through
+# `pull_request_target` (it runs from the PR branch with secrets
+# access), so do NOT add patterns below the `.github/` block that
+# loosen ownership of anything inside that tree. Branch-protection on
+# `main` enforces this by requiring CODEOWNER review on every PR.
+#
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default fallback — every PR pings the maintainer.
+*                                            @tbraun96 @rsafier @SeedSource @TheTom
+
+# Compute path: kernel registration, model loaders, hot-path Rust.
+kernels/                                     @tbraun96 @rsafier @SeedSource @TheTom
+crates/metrale-kernels/                        @tbraun96 @rsafier @SeedSource @TheTom
+crates/spark-model/                          @tbraun96 @rsafier @SeedSource @TheTom
+crates/spark-runtime/                        @tbraun96 @rsafier @SeedSource @TheTom
+
+# Server / HTTP API surface.
+crates/spark-server/                         @tbraun96 @rsafier @SeedSource @TheTom
+
+# Multi-rank communication (NCCL / RDMA).
+crates/spark-comm/                           @tbraun96 @rsafier @SeedSource @TheTom
+crates/metrale-rdma/                           @tbraun96 @rsafier @SeedSource @TheTom
+
+# Storage / NVMe-backed swap.
+crates/spark-storage/                        @tbraun96 @rsafier @SeedSource @TheTom
+crates/metrale-tier/                           @tbraun96 @rsafier @SeedSource @TheTom
+
+# Web properties. The blog is the one tree an editorial contributor owns:
+# @DrRainbows reviews and approves posts under `blog/` without gaining any
+# say over the compute path, CI, or the other two properties.
+#
+# ★ A code owner MUST have WRITE permission on the repository. As of
+# 2026-08-30 @DrRainbows has `pull` (read) only, so GitHub will not request
+# review from them and their approval will NOT satisfy the CODEOWNER rule —
+# this line is INERT until an admin grants write access. The three default
+# owners are repeated here deliberately so that, until then, `blog/`
+# ownership is exactly what the `*` fallback already gave it: this line can
+# only ever add a reviewer, never remove one.
+blog/                                        @tbraun96 @rsafier @SeedSource @DrRainbows @TheTom
+
+# Build, CI, governance. Belt-and-suspenders: the broad `.github/`
+# pattern catches everything in the tree, and the more specific entries
+# below are restated explicitly so a future contributor adding a more
+# specific override (e.g. `.github/workflows/scratch.yml @someone-else`)
+# notices they're working against an explicit ownership decision.
+.github/                                     @tbraun96 @rsafier @SeedSource @TheTom
+.github/workflows/                           @tbraun96 @rsafier @SeedSource @TheTom
+.github/CODEOWNERS                           @tbraun96 @rsafier @SeedSource @TheTom
+.github/dependabot.yml                       @tbraun96 @rsafier @SeedSource @TheTom
+docs/adr/                                    @tbraun96 @rsafier @SeedSource @TheTom
+Cargo.toml                                   @tbraun96 @rsafier @SeedSource @TheTom
+LICENSE                                      @tbraun96 @rsafier @SeedSource @TheTom
+CLA.md                                       @tbraun96 @rsafier @SeedSource @TheTom

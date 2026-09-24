@@ -1,0 +1,939 @@
+# Benchmarks for this model, and the thresholds its gate records must meet.
+#
+# Sibling of MODEL.toml so the numbers sit beside the thing they describe;
+# hardware and model are implied by the path and cannot disagree with the
+# contents. Read by `metrale_plugin::gate::bench`.
+#
+# Thresholds are per CHECKPOINT, not per model: two checkpoints of one model
+# can differ by several BFCL points, so they cannot share a bar.
+#
+# This file is deliberately OUTSIDE the closure hash (`taxon::configs` does not
+# list it), so ratcheting a threshold does not invalidate the record that
+# justified the ratchet.
+#
+# `status = "unmeasured"` entries carry NO [benchmarks.metrics] table. Absence
+# is the TODO -- a guessed threshold a run could clear would report PASS for
+# something nobody measured.
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "agentic-webserver"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+# The human name the TUI's variant list shows; additive only, thresholds and
+# default are unchanged. The dense sibling lives in qwen3.8-27b/BENCH.toml.
+label = "Qwen3.6-35B-A3B MoE flagship (FP8)"
+default = true
+status = "measured"
+note = """\
+★ HARNESS PORT DONE AND MEASURED; the residual is a THRESHOLD question, not a defect. Four \
+real harness defects were found and fixed (2fcea05b): the warm cargo target dir was never \
+warmed and pointed at the wrong path, so the agent's first `cargo test` cold-built the dep \
+tree and hit the 180 s command timeout; `run_shell` read both pipes to EOF before \
+child.wait(), so any `cargo run &` -- which the prompt invites -- burned the full timeout \
+and returned nothing; `ping()` used a line reader, scoring a live newline-less `pong` as \
+dead; and five followed_directions regexes diverged from followed_directions.py. MEASURED \
+before -> after, same box, N=10 tiers: webserver_ok 3/9/6/7 -> 10 and 8; followed_directions \
+0/6/4/7 -> 9 and 5; Sigma-wall 394-637 s -> 923 and 734 s, with the agent now taking 10-18 \
+turns per run instead of 3-7. One tier reached the full 10/10. REMAINING: 10/10 AND 10/10 is \
+not reachable ON DEMAND. temperature is 0.0 (STALE NOTE FIXED 2026-08-09: this said 0.3; \
+0.0 landed in c050ced3f and binary 8b7de2638 carries it) -- the value the harness pins and the \
+one that scored 10/10 there -- so this gate is stochastic by construction. An exact 10-of-10 \
+bar on a stochastic instrument fails a healthy build roughly half the time. OWNER DECISION, \
+deliberately not taken here: either state these bounds as a distribution over k tiers (e.g. \
+best-of-2, or a mean with a floor), or keep the exact bar and accept re-runs. Lowering the \
+counts to today's draw is still the wrong move, which is why they are unchanged. The ENGINE \
+is not in question: the shell harness scored webserver_ok 10/10 and cargo_valid 10/10 on \
+this same binary. || original: Gate A (benchmark-pr skill): N=10 agentic-webserver on the \
+35B MoE flagship — 10/10 webserver_ok, 10/10 followed_directions, Σwall <= 1300 s \
+(SUPERSEDED: the ceiling in force is `sum_wall_s` <= 700, lowered 2026-09-21 — read its \
+metric comment below, not this paragraph). The two \
+10/10 counts are ABSOLUTE correctness bounds and take no noise. ★ Σwall is DELIBERATELY NOT \
+RATCHETED to the 978.13 s best (PR #388, dgx3): unlike the BFCL scores, tier Σwall carries \
++/-200-300 s of run-to-run noise from single 230-320 s outlier iterations, so a ~978 s \
+ceiling would fail constantly on healthy builds. 1300 s was a BLOWUP DETECTOR, not a perf \
+gate — it cannot see a 5-10% TTFT regression, which is what the two TTFT gates are for. \
+Historical band Σwall 950-1287 s; high-water (fastest) 978.13 s recorded here for reference \
+only. Walls are box-specific: compare like-for-like or not at all. || ★ `iterations` is \
+PINNED at exactly 10, the N the two 10/10 bounds are written for. A count bound alone does \
+not describe the run that produced it: `webserver_ok >= 10` is satisfied by 12 successes out \
+of 20, and `sum_wall_s` <= 700 is satisfied by 5 iterations. Neither is the gate. This adds a \
+threshold, it does not relax one -- the recorded runs all carry iterations 10."""
+
+[benchmarks.metrics.followed_directions]
+min = 10.0
+
+[benchmarks.metrics.iterations]
+min = 10.0
+max = 10.0
+
+[benchmarks.metrics.sum_wall_s]
+# RAISED 1000 -> 1800 on 2026-08-18, and demoted from speed bound to blowup
+# detector. Σwall is a PRODUCT — turns x per-turn cost — and turn count is
+# drawn by the agent, not the engine. The 2026-08-09 tightening to 1000 read a
+# 600-800 s window (733.8 and 782.9 back-to-back) that a five-tier sample now
+# shows was unrepresentative; every one of these was 10/10 + 10/10:
+#
+#   dgx1  774 s / 113 turns = 6.85 s/turn      dgx1 1039 s / 144 = 7.22
+#   dgx1  813 s / 115 turns = 7.07 s/turn      dgx2 1019 s / 166 = 6.14
+#   dgx1  860 s / 126 turns = 6.83 s/turn
+#
+# 1000 sat INSIDE that healthy distribution and rejected the last two — and it
+# ranked them backwards, failing dgx2's 6.14 s/turn, the fastest tier on
+# record, while passing dgx1's 7.07. Speed is now bounded by `s_per_turn`
+# below; this ceiling only has to catch a blowup.
+#
+# LOWERED 1800 -> 700 on 2026-09-21, owner's call, against a REGIME CHANGE the
+# 1800 predates. The 109 recorded runs are not one population; they split on
+# 2026-09-12:
+#
+#   before 2026-09-12   n=88   443-1025 s   mean 774   66 of 88 ABOVE 700
+#   since  2026-09-12   n=21   521-647 s    mean 573   0 of 21 above 700
+#                                           stdev 30.2 (5.3% CoV)
+#
+# The last fourteen runs, 2026-09-17 onward, sit in 564-647 s at 3.7% CoV; the
+# five most recent are 565.1, 565.7, 566.1, 566.9, 567.1. 1800 was sized for
+# the old band and cannot see a 2x blowup in the new one -- it would take a
+# 3.1x regression to trip, which is not a detector, it is an ornament.
+#
+# 700 keeps every run of the current regime: 8.2% over the worst (647.1) and
+# 22% over the mean (572.8). It is still a BLOWUP DETECTOR, not a speed gate --
+# speed is bounded by `s_per_turn` below, and the two 10/10 counts are the
+# correctness bounds. If the agent's turn count moves, `sum_turns` catches it.
+#
+# ★ A run from BEFORE the regime change cannot pass this. That is intended and
+# is the reason to write the split down rather than just the number: a bisect
+# that reaches back past 2026-09-12 will fail here on healthy old builds, and
+# the right reading of that is "different regime", not "regression".
+max = 700.0
+
+[benchmarks.metrics.sum_turns]
+# DEGENERACY, stated directly instead of being smuggled into a wall bound. An
+# agent that completes every task but wanders through far more turns than the
+# work needs is fast per turn and still a regression. 250 is ~1.5x the 166-turn
+# worst of the five tiers above, against a hard cap of 400 (max_turns 40 x 10).
+max = 250.0
+
+[benchmarks.metrics.s_per_turn]
+# SPEED. The agent's own seconds (scorer excluded) per agent turn. Five tiers
+# span 6.83-7.22 on dgx1 and 6.14 on dgx2 — a 5.7% on-box spread against
+# Σwall's 34%, i.e. six times tighter, which is the whole reason this bound
+# exists.
+#
+# 8.5 is ~18% above the worst of them and >3x the on-box noise band away, so it
+# catches a real decode regression without firing on a draw.
+#
+# ★ PROVISIONAL, and loose on purpose. Those five tiers were measured with the
+# scorer's cargo build still inside the wall; the numerator is now agent-only,
+# so recorded values will come in BELOW them and this ceiling has more headroom
+# than the 18% it was drawn for. Ratchet it after repeated back-to-back tiers
+# on the new numerator — never to the best tier.
+#
+# ★ Because this bound now EXISTS, a tier that took zero turns records no
+# `s_per_turn` at all (deliberately: a 0.0 would read as the best speed ever
+# recorded) and `check_record` reports it as "missing from the record". That is
+# fail-closed and correct, but the real fault in that case is the 0/10
+# webserver_ok beside it — read that line first.
+max = 8.5
+
+[benchmarks.metrics.webserver_ok]
+min = 10.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "bfcl-subset-echolp"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+default = true
+status = "measured"
+note = """\
+Gate B. Echolp draw (46/23/12, floor 25, n=1004, seed 42, temp 0) on the 35B MoE. THIS BENCH \
+EXISTS BECAUSE THE 35B HAS NEVER BEEN RUN ON THE GOLDEN n=995 DRAW — every 35B BFCL number \
+on record is this draw, so gating it on the golden one would have meant inventing a \
+threshold. THRESHOLDS ARE THE HIGH-WATER RATCHET, NOT THE LIVE BASELINE. RATCHETED 2026-08-13 \
+(owner instruction): overall 84.66 -> 86.50, normalized 83.32 -> 86.90. The old floors were \
+set from the 2026-07-10 high-water (84.66/83.32) and were never re-raised after the gate \
+started reproducing 86.95/86.55 bit-identically across many shas (2026-08-07..08-12, engine \
+bitwise-deterministic at batch 1). Consequence: the 2026-08-12 batch4 stack shipped a \
+-1.61/-1.79 deterministic regression (85.34/84.76, reproduced to the hundredth at 03a74eac19 \
+and cb9f8ecab4 — the rerouted MoE router GEMM, see router_gate_gemm_dense) and PASSED with \
+0.10 to spare. The new floors are best-ever minus 0.05: the gate compares value + noise >= \
+min with noise = 0.4, so 86.50/86.90 fail anything below 86.10/86.50 — 0.45 under the \
+86.55/86.95 best, outside the +/-0.4 MTP-nondeterminism band — while a healthy build \
+reproducing the best-ever state passes with the full noise margin. Do not lower these \
+silently; a conscious lowering needs a recorded reason here. The pre-2026-08 note recorded a \
+then-unexplained -0.60/-1.26 live-baseline gap (2026-07-26, 84.06/82.06); the deterministic \
+86.95/86.55 record since 2026-08-07 supersedes it. `noise` is the measured +/-0.4 \
+MTP-nondeterminism band. Do NOT score this against the golden draw's numbers: same overall \
+(~87.44 vs 87.45) but normalized differs ~1.8 points purely from category mix. History: \
+2026-07-10 main-438ed09 84.66/83.32 (old high-water); 2026-07-13 d77bdf84 84.66/83.32; \
+2026-07-26 main 22adb23e control 84.06/82.06; 2026-07-26 pr369 de6153f3 83.96/81.96; \
+2026-08-03 PR #388 Gate B 84.26/82.15 n=1004; 2026-08-07..08-12 main 86.95/86.55 \
+bit-reproduced (new high-water); 2026-08-12 03a74eac19 85.34/84.76 REGRESSION (batch4 \
+stack); 2026-08-13 cb9f8ecab4 85.34/84.76 (identical — deterministic). The draw is PINNED \
+at n=1004: a score from a different draw is not comparable to these thresholds, and the \
+sample count is the only thing that reveals it after the fact, so it is gated exactly rather \
+than merely recorded. Self-start pins ssm_cache_slots=256 via [benchmarks.serve_overrides] \
+(the same override the poison gate uses) so a 1004-sample serial generate cannot evict its \
+own Marconi snapshots; the flagship recipe leaves the pool at its default 16. That is \
+capacity, not a score lever — the floors below stay the ratchet — but check_record demands \
+the pin on the record, so records measured before the pin stop covering and the next gate \
+run re-records under the declared config. ★ CERTIFIED BY SHARDS SINCE 2026-09-13 \
+(gate::check_group: a complete partition of `--param shard=i/n` runs at one commit, any n; \
+the campaign sizes n to its fleet) — a whole-draw record no longer satisfies this gate. ★ SCORED OPEN by owner decision: cross-request SSM snapshot reuse stays \
+ON; on the golden draw that partition dependence is measured at 12 of 995 (#936; the twelve \
+are named in benchmarks::bfcl::sensitive and in the bfcl-subset note), and this draw shares \
+the mechanism. ★ NO SHARDED MEASUREMENT OF THIS DRAW EXISTS YET: the floors below are the \
+whole-draw ratchet carried forward PROVISIONALLY, and the first campaign run under the shard \
+rule (the stack that introduces it) either confirms them or re-cuts them here with the \
+reason recorded — the ssm_cache_slots=256 pin was sized for one serial 1004-sample generate, \
+and a 251-sample shard sits inside it with more room, so the aggregate is expected at or \
+above the whole-draw number, not below it. ★ RE-CUT 2026-09-14 (owner decision, issue #1083, \
+discussion #1084): overall 86.50 -> 84.56, normalized 86.90 -> 85.77 — the first sharded \
+measurement, 84.96/86.17 at 45cd3b1550, minus the 0.40 band. The reason is RECORDED, as \
+this note demands: until #1043/#1071 Metrale Engine sent this checkpoint its tool prompt TWICE (the \
+template's and its own injected one) and the duplicate was worth +1.5 on the aggregate, \
++2.8 on shard c — proven by a same-node control, 45cd3b1550 with only #1071 reverted, \
+scoring shard c 87.60/87.49 to the hundredth of the pre-#1071 record. Duplicating a prompt \
+is not a solution; one tool prompt is the definition from here, and these floors are that \
+definition's ratchet. DO NOT recover them by re-adding the second prompt. They rise with \
+the next receipt that beats them (a better SINGLE prompt is measurement-definition work \
+and gets its own campaign)."""
+
+[benchmarks.serve_overrides]
+ssm_cache_slots = "256"
+
+[benchmarks.metrics.normalized_single_turn_score]
+min = 85.77
+noise = 0.4
+
+[benchmarks.metrics.overall_accuracy]
+min = 84.56
+noise = 0.4
+
+[benchmarks.metrics.samples]
+min = 1004
+max = 1004
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "ttft-cold-gate"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+default = true
+status = "measured"
+note = """\
+Gate C cold-TTFT guard. RE-CUT 2026-09-20: median 950 ms is the owner's stated ceiling; p90 \
+2150 ms is the coordinator's, under delegated authority (see below). Latest committed record: \
+.benchmarks/ttft-cold-gate/2026-09-20-43a3c9b202.json (spark-28c2 = dgx3, 2026-09-20 12:06 \
+UTC, prompt_lengths 256/1024/4096 x 12 repeats = 36 samples) reads median 908.07 ms and p90 \
+2019.86 ms, so the ceilings sit 4.6% and 6.4% above it. \
+SPEED-BOUND POLICY (owner, 2026-09-20), stated here so the next re-cut is a derivation and not \
+a judgement: a CEILING (lower-is-better: TTFT, latency, wall) is the latest measured value x \
+1.05 rounded UP to a clean step; a FLOOR (higher-is-better: tok/s) is measured x 0.975 rounded \
+DOWN; the clean step is 0.5 below 100, 10 from 100 to 1000 and 50 above 1000; "measured" is \
+ONE named committed record, never a best run. The median ceiling was GIVEN by the owner rather than \
+derived (the policy on this record would read 960) and is written exactly as stated. The p90 \
+ceiling was first stated as 2100 and re-cut to 2150 on 2026-09-20 by the coordinator, to whom \
+the owner delegated it, because a ceiling's job is to fail on regression without failing on \
+normal variation, so the margin that matters is against the WORST observed PASS in the regime, \
+not the median run: 2100 cleared the regime maximum of 2066.7 ms by only 1.6%; 2150 clears it \
+by 4.0% and the reference run by 6.4%, is the clean 50-step the policy would derive, and is \
+still a 52% tightening from the superseded 4482.03. \
+SPREAD, so nobody re-cuts from one draw: every committed record since the level settled on \
+main at 2026-08-29 (d8bc9c9d86) through 2026-09-20 — n=30 across spark-256a (dgx1), spark-43fa \
+(dgx2), spark-28c2 (dgx3), edgexpert-aae5 and edgexpert-2640 — reads median 880.3-923.3 ms \
+(sigma 7.7) and p90 2000.9-2066.7 ms (sigma 18.9), so both ceilings clear every healthy run on \
+every box; the p90 ceiling clears the widest value (2026-08-29-d8bc9c9d86, spark-256a) by \
+4.0%, and is still the bound to re-examine first if this gate ever fails on p90 alone. The two spark-15df records of 2026-08-26/27 (sha 60812ca7b6: 1003.8 / \
+2178.8 and 1008.3 / 2167.0) would NOT clear these ceilings; 60812ca7b6 is an ancestor of the \
+2026-08-29 step and dgx1 read 994 / 2140 on 2026-08-28 too, so they are pre-step records, not \
+evidence about the current level. \
+LEVEL HISTORY, from the records: median 1640 on 2026-08-06; 1583 after the 2026-08-21 re-cut; \
+976 on 2026-08-23 (e1fd858f14, spark-256a, the first sub-1000 record); 923 on 2026-08-29 and \
+~900 since. The superseded ceilings (1623.59 / 4482.03, cut 2026-08-21 from the dgx1 baseline \
+1576.3 x +3% and 4268.6 x +5%) had drifted to 1.8x / 2.2x the measured level, so no cold-TTFT \
+regression short of a near-doubling could fail them — the same drift the 2026-08-21 re-cut \
+itself complained about, one step later. \
+TTFT is box-local by nature; the five boxes above now agree to within ~5%, but a NEW box must \
+still be read against these before its first record is called a regression. \
+`update_baseline = true` means the gate ALSO compares each run to the previous one at +3%/+5%; \
+these committed values are the only ABSOLUTE bound and must be re-cut whenever the path gets \
+materially faster."""
+
+[benchmarks.metrics.median_ms]
+# The ceiling of 950 is the owner's stated bound (2026-09-20). Measured 908.07
+# ms on 2026-09-20-43a3c9b202 (spark-28c2); the x1.05 policy would read 960.
+max = 950.0
+
+[benchmarks.metrics.p90_ms]
+# The ceiling of 2150 is the coordinator's re-cut of the owner's 2100 (2026-09-20,
+# delegated; reasoning in the note). Measured 2019.86 ms on the same record;
+# equals the x1.05 policy. The widest committed p90 since 2026-08-29 (2066.7,
+# spark-256a) clears it by 4.0%.
+max = 2150.0
+
+# ── NVFP4-MoE VARIANT of the cold-TTFT guard ────────────────────────────────
+# The FP8 entry above is the DEFAULT subject, and until this entry existed it
+# was the ONLY one: no gate anywhere exercised an NVFP4 MoE checkpoint. That
+# mattered — the fast-MoE default-on work (#654) is gated on
+# `modelopt_mixed_precision || nvfp4_moe`, so it is INERT on FP8, and the whole
+# 10-gate suite passed it while never touching the path it changed.
+#
+# `default` is deliberately absent: this is a variant, so its records are named
+# `YYYY-MM-DD-<sha>-<slug>.json` and cannot collide with the FP8 record cut from
+# the same commit on the same day.
+#
+# CEILINGS = same-box baseline (dgx1, 2026-08-21, this recipe) x the gate limits,
+# derived exactly as the FP8 entries above are. Measured against a SELF-DRIVEN
+# server, because the machinery deliberately refuses to let an unmeasured entry
+# bootstrap itself: `status = "unmeasured"` entries are DROPPED rather than given
+# empty thresholds, so `resolve()` fails loudly instead of an unbounded entry
+# passing every check it is handed. A new variant is therefore always
+# measure-then-declare, never gate-then-fill-in.
+#   cold  median 442.3 ms  p90 1314.3 ms   (256/1024/4096 tok: 244.8 / 442.3 / 1310.7)
+#   warm  median 439.6 ms  p90 1291.1 ms   (256/1024/4096 tok: 230.7 / 439.6 / 1290.9)
+# TTFT is box-local — a different box must re-record these, not reuse them.
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+gate = "ttft-cold-gate"
+recipe = "qwen3.6/qwen3.6-35b-a3b-nvfp4"
+status = "measured"
+note = """\
+Cold-TTFT guard for the NVFP4 MoE checkpoint — the path fast-MoE default-on \
+actually changes, and which no gate exercised before this entry. Ceilings = \
+dgx1 baseline 442.3 ms median x +3%, 1314.3 ms p90 x +5%."""
+
+[benchmarks.metrics.median_ms]
+max = 455.57
+
+[benchmarks.metrics.p90_ms]
+max = 1380.02
+
+
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "ttft-warm-gate"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+default = true
+status = "measured"
+note = """\
+Gate C warm-TTFT guard. RE-CUT 2026-09-20 to the owner's stated ceilings, median 210 ms and \
+p90 230 ms, against the latest committed record: \
+.benchmarks/ttft-warm-gate/2026-09-20-43a3c9b202.json (spark-28c2 = dgx3, 2026-09-20 12:06 \
+UTC, 36 samples) reads median 192.92 ms and p90 212.14 ms, so the ceilings sit 8.9% and 8.4% \
+above it. The policy (stated in full on the cold entry above: ceiling = measured x 1.05 rounded \
+UP to a clean step, 10 in the 100-1000 range) reads 210 / 230 from this record — here the \
+owner's values and the derivation agree. \
+SPREAD: every committed record since the level stepped, 2026-09-14 through 2026-09-20 — n=14 \
+across spark-43fa (dgx2), spark-28c2 (dgx3) and edgexpert-2640 — reads median 190.4-195.7 ms \
+(sigma 1.3) and p90 210.7-213.4 ms (sigma 0.7); both ceilings clear every one by more than 7%. \
+spark-256a (dgx1) has NO record on the post-step level yet: its last, 2026-09-13-1a0dc88a8c, \
+read 835.4 / 2055.6 on the pre-step tree, so the first dgx1 record is the one to watch. Two \
+boxes stepping on the same day from the same tree says the step is code, not a box. \
+THE STEP: warm median 835 -> 191 ms and p90 2056 -> 213 ms between the records at 1a0dc88a8c \
+(2026-09-13 12:03 UTC, spark-256a) and 1a9edba35d (2026-09-14 14:11 UTC, spark-43fa). The cold \
+gate did NOT move (906 -> 903), so whatever landed changed only the cached-prefix path. \
+Candidates on the first-parent path 1a0dc88a8c..1a9edba35d, STATED AS CANDIDATES, NOT A \
+FINDING — no A/B has been run: 9625ef1a03 (#1039, grammar token-mask cache persisted and \
+prewarm overlapped with prefill), 0e171c0a48 (warm-capacity budget counts every earlier cell's \
+stale leaves), d54f3631b8 (#1035, SSM rollback ring sized from free memory). Whichever it was, \
+a warm-TTFT regression that undid it would land near 835 ms and FAIL here by 4x; at the \
+superseded ceilings (1559.32 / 4507.44, cut 2026-08-21 from the dgx1 baseline 1513.9 x +3% and \
+4292.8 x +5%) the entire step could have been lost — 8x the measured level — and still passed. \
+LEVEL HISTORY, from the records: median 1560 on 2026-08-06; 1514 after the 2026-08-21 re-cut; \
+889 on 2026-08-23 (e1fd858f14, spark-256a); 843 on 2026-08-29; 826-847 through 2026-09-13; \
+190-196 since 2026-09-14. \
+TTFT is box-local by nature — a new box must be read against these before its first record is \
+called a regression. `update_baseline = true` means the gate ALSO compares each run to the \
+previous one at +3%/+5%; these committed values are the only ABSOLUTE bound and must be re-cut \
+whenever the path gets materially faster."""
+
+[benchmarks.metrics.median_ms]
+# The ceiling of 210 is the owner's stated bound (2026-09-20), and equals the
+# x1.05 policy on the measured 192.92 ms (2026-09-20-43a3c9b202, spark-28c2).
+max = 210.0
+
+[benchmarks.metrics.p90_ms]
+# The ceiling of 230 is the owner's stated bound (2026-09-20), and equals the
+# x1.05 policy on the measured 212.14 ms on the same record.
+max = 230.0
+
+# ── NVFP4-MoE VARIANT of the warm-TTFT guard (see the cold note above) ──────
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+gate = "ttft-warm-gate"
+recipe = "qwen3.6/qwen3.6-35b-a3b-nvfp4"
+status = "measured"
+note = """\
+Warm-TTFT guard for the NVFP4 MoE checkpoint. Ceilings = dgx1 baseline \
+439.6 ms median x +3%, 1291.1 ms p90 x +5%."""
+
+[benchmarks.metrics.median_ms]
+max = 452.79
+
+[benchmarks.metrics.p90_ms]
+max = 1355.65
+
+
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "concurrency-sweep-moe"
+# ★ nvfp4head, not bf16head, 2026-09-22: measured clean on dgx2/dgx3 at the vLLM MoE
+# leg's own axes (isl 128 / osl 1024 / ctx 2048 / 128 seqs / bf16 KV / MTP k=3): the
+# NVFP4 head beats the bf16 head at every rung measured (C=1 60.92 vs 55.49, C=2
+# 69.85 vs 67.45, C=4 70.82 vs 66.79). Same finding, same mechanism as the dense
+# ladder: above M=8 the bf16 head is a scalar GEMM over the 248K vocab. The workload
+# axes stay matched to the vLLM leg; the head dtype is the engine's own precision
+# choice, exactly as it is on the dense published leg.
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head"
+label = "Qwen3.6-35B-A3B MoE flagship (FP8), published instrument"
+default = true
+status = "measured"
+note = """\
+The MoE half of the concurrency curve. The MoE decode path takes the \
+grouped-GEMM expert arm above the width gate (n >= 16, layers/mod.rs \
+moe_grouped_decode_min_rows) where the dense path never does, so C=16 \
+exercises code on this model that the dense sweep cannot reach at any \
+concurrency; a dense record cannot speak for it. \
+★ ITS OWN GATE ID (2026-09-20), `concurrency-sweep-moe`, not a second \
+checkpoint of `concurrency-sweep`. A required gate has ONE declared subject \
+per box class (check.rs record_is_required_subject) and baseline_for refuses \
+two `default = true` checkpoints on one gate, so as a variant of the dense \
+gate this entry could never be run by `bench certify` (it spawns each \
+REQUIRED id with no --checkpoint) and its floors could never fail a merge. \
+The mechanism is the one `concurrency-sweep-dflash2` already uses. \
+★ THE INSTRUMENT IS THE PUBLISHED ONE, not the dense gate's. The dense gate \
+measures ISL 512 / OSL 320 on the natural code fixture; this entry pins ISL \
+128 / OSL 1024 on the `essay` request (bench/ladder38 harness, byte for \
+byte, #1154) at C=1,2,4,8,16 — the instrument the ONLY vLLM measurement of \
+this checkpoint was taken on (bench/baselines/qwen36-35b-a3b/published.json, \
+2026-09-19, dgx2), which stops at C=16 by design because C >= 32 exhausted \
+GB10's unified memory under vLLM and powercycled the box. This entry has no \
+history on any instrument, so nothing is lost by choosing the comparable \
+one; its tok/s will read ~4x the dense gate's and MUST NEVER share an axis \
+with them. Read each gate against its own history only. \
+★ SERVE PROFILE = the one-shot's adjudicated parity profile, as the \
+manifest's parity_note records it: ctx 2048, batch cap 128, util 0.85, bf16 \
+KV, MTP K=4, thinking off, presence/frequency penalties 0.0 (the essay \
+request pins those per request), fifo scheduling (the recipe defaults to \
+slai, which vLLM has no counterpart for). Each key is justified inline in \
+[benchmarks.serve_overrides] below; every one is disclosed on the record and \
+demanded there by check_record, and together they DECLARE every axis \
+site/src/lib/ladder-baselines.js fingerprints, so a record can be judged \
+against the one-shot axis by axis instead of refused as undeclared. \
+★ MEASURED 2026-09-23 — THE BOOTSTRAP THIS ENTRY PRESCRIBED, done in order. \
+Until then it carried NO metrics table on purpose: zero records of this \
+checkpoint existed under .benchmarks/concurrency-sweep*/, and a guessed \
+threshold a run could clear would report PASS for something nobody measured \
+(this file's header rule). The gate cannot bootstrap itself (baseline_for \
+drops an unmeasured entry, so --pull-request-gate refuses to run it), so: \
+(1) the recipe was served by hand on dgx1 (spark-256a) from met e8a212247c \
+with EXACTLY the serve_overrides below applied — argv sha256 02c9d45ef999… \
+(the server's own /serve-config agreed), binary sha256 2dcef02f15ba…, and NO \
+METRALE_*/METRALE_* lever in the serve's environment; (2) `met benchmark run \
+concurrency-sweep-moe --url <it> --model Qwen/Qwen3.6-35B-A3B-FP8 --param \
+prompt_mode=essay --param isls=128 --param osl=1024 --param \
+concurrencies=1,2,4,8,16` ran THREE times on that one frozen binary, zero \
+request errors and zero vacuous cells in every rep — aggregate tok/s per rep \
+C=1/2/4/8/16: 73.77/85.15/97.56/107.40/107.69, 72.94/84.52/98.42/106.51/107.86, \
+72.67/85.74/96.85/107.30/108.55 (means 73.13/85.14/97.61/107.07/108.03, sample \
+sigma 0.57/0.61/0.79/0.49/0.46); (3) the floors below are mean - max(3*sigma, \
+5%) per rung, cut together, never from a best rep (the dense entry's rule) — \
+5% was the wider band at every rung — plus peak_aggregate_tok_s at the C=16 \
+bar, vacuous_cells at zero and min_completion_tokens at the observed minimum \
+over every request of every rep; status flipped to "measured" and, in the \
+SAME PR, the gate moved from gate::coverage::PROMOTION_CANDIDATES to \
+REQUIRED — the campaign certifying that PR writes the first gated record. \
+(4) Ratchet later only from >= 10 consecutive gate runs AND the committed \
+history split by regime (the C=1 comment in qwen3.8-27b/BENCH.toml is the \
+worked example). \
+★ THESE FLOORS GUARD REGRESSION, NOT PARITY. On this same instrument the \
+vLLM one-shot (published.json, 2026-09-19, dgx2) reads C=1/2/4/8/16 \
+52.11/93.16/145.94/222.08/329.93 tok/s: Metrale Engine wins C=1 (73.13 vs 52.11) and \
+LOSES every rung from C=2 up, by 3.05x at C=16. The bars below are Metrale Engine's \
+own measured curve minus its noise band; clearing them says the MoE engine \
+has not regressed from 2026-09-23, and says nothing about vLLM. \
+bench_override_tree_tests pins this entry BY VALUE — the instrument pins, \
+the status and every floor — so a re-cut must edit that test, which is the \
+review it deserves.\
+"""
+
+[benchmarks.serve_overrides]
+# The published instrument's context: ISL 128 + ~200 template tokens + OSL
+# 1024 is under 1.5K, so 2048 holds every sequence with headroom and matches
+# the one-shot's `--max-model-len 2048`. The recipe's 32768 is its agentic
+# operating point and would size the KV budget for a workload this ladder
+# never sends.
+max_model_len = "2048"
+# The one-shot's `--max-num-seqs 128`. Above the widest measured rung (16),
+# as the batch-cap rule requires: a cap below the widest rung makes that rung
+# serial by construction and the top of the curve measures the cap.
+max_batch_size = "128"
+# The recipe's own default, restated so the RECORD declares it: the site's
+# fingerprint (ladder-baselines.js REQUIRED_AXES) treats an undeclared KV
+# dtype as a mismatch, never as "the default". bf16 is also the one-shot's
+# parity (`--kv-cache-dtype auto` resolves to bf16 there).
+kv_cache_dtype = "bf16"
+# GB10 unified memory: 0.90 froze dgx2 and needed a powercycle; 0.85 is the
+# ceiling every gate serve on this class uses and the one-shot's
+# `--gpu-memory-utilization 0.85`.
+gpu_memory_utilization = "0.85"
+# The recipe defaults to slai (SLO-aware). vLLM has no counterpart, so the
+# parity oracle pinned Metrale Engine to fifo for the MoE ladder; a scheduling policy
+# is part of the instrument, not a knob to leave to the recipe.
+scheduling_policy = "fifo"
+# MTP K=4 on both engines (vLLM: num_speculative_tokens=3). Metrale Engine's
+# `--num-drafts 3` is "3=K=4 verify" (serve_args.rs); this MODEL.toml sets no
+# default_num_drafts, so without the pin the serve would draft K=2 and the
+# record would not say so.
+# ★ 3 -> 1, 2026-09-22 (G10). Same box, same everything, C=1: --num-drafts 3 measured
+# 62.00 tok/s, --num-drafts 1 measured 74.83 (+21%). The K=4 verify never lands a
+# second or third token on this drafter ("0 accept-3 / 0 accept-2" in every 100-step
+# window), so it pays a four-token forward for at most one bonus token. C>=2 is
+# dominated by the per-token MoE loop (G9) and was not part of the A/B.
+num_drafts = "1"
+# Thinking off at the SERVE, like the ssm-state-poisoning gate on this same
+# recipe: per-request `enable_thinking:false` degenerates to a ~2-token stop
+# on qwen3_6_moe (see that entry), and the one-shot ran thinking off. The
+# driver also sends reasoning_effort "none"; the serve pin makes the record
+# carry the fact.
+disable_thinking = "true"
+# Marconi pool for the warm-up round: the sweep runs every measured prompt
+# once before timing, and the one-shot served `--enable-prefix-caching`, so
+# the comparable Metrale Engine cell is a warm one where the pool can hold it. 32
+# slots warm C=1/2/4 (`concurrency::slots_needed`) and the sweep declares
+# the wider rungs cold by construction; the recipe's default pool of 16
+# would not hold C=4.
+ssm_cache_slots = "32"
+# lm_head_dtype is deliberately NOT overridden: the nvfp4head recipe's own
+# NVFP4 head is the engine's precision choice (see the recipe note above),
+# and the bootstrap serve rendered `--lm-head-dtype nvfp4` from it.
+
+[benchmarks.param_overrides]
+# The published instrument — see the note. Values are parsed by each
+# parameter's own schema kind, exactly like --param KEY=VALUE, and
+# check_record demands every pin on the record.
+concurrencies = "1,2,4,8,16"
+isls = "128"
+osl = "1024"
+prompt_mode = "essay"
+
+# ── Floors cut 2026-09-23 from 3 hand-measured reps on the pinned instrument
+# (dgx1, met e8a212247c, argv sha 02c9d45e…; the note has every rep), each
+# rung mean - max(3*sigma, 5% of mean), sample sigma (n-1), truncated to 0.01,
+# cut together. 5% was the wider band at every rung, so each bar sits 5%
+# under its mean. No `noise` key: the band is already in the bar, and this
+# entry has no run-to-run history yet to size one from.
+[benchmarks.metrics.c1_aggregate_tok_s]
+# Mean 73.13, sigma 0.57; the floor of 69.47 = 73.13 x 0.95.
+min = 69.47
+
+[benchmarks.metrics.c2_aggregate_tok_s]
+# Mean 85.14, sigma 0.61; the floor of 80.88 = 85.14 x 0.95.
+min = 80.88
+
+[benchmarks.metrics.c4_aggregate_tok_s]
+# Mean 97.61, sigma 0.79; the floor of 92.72 = 97.61 x 0.95.
+min = 92.72
+
+[benchmarks.metrics.c8_aggregate_tok_s]
+# Mean 107.07, sigma 0.49; the floor of 101.71 = 107.07 x 0.95.
+min = 101.71
+
+[benchmarks.metrics.c16_aggregate_tok_s]
+# Mean 108.03, sigma 0.46; the floor of 102.63 = 108.03 x 0.95. The top rung,
+# and the one that takes the grouped-GEMM expert arm the dense ladder never
+# reaches (see the note).
+min = 102.63
+
+[benchmarks.metrics.peak_aggregate_tok_s]
+# The peak landed at C=16 in all three reps (107.69 / 107.86 / 108.55), so
+# the floor of 102.63 is the C=16 bar: a sweep whose peak fell below it has
+# lost its top rung whichever C produced it.
+min = 102.63
+
+[benchmarks.metrics.min_completion_tokens]
+# The observed minimum over every request of every rep: 914 (reps 1 and 2;
+# rep 3's minimum was the full 1024 budget). Denies a degenerate early-EOS
+# minority the floor that the vacuity rule (cell occupancy + a majority over
+# 0.8 x osl) alone would not — the dense entry's argument, verbatim.
+min = 914
+
+[benchmarks.metrics.vacuous_cells]
+# The vacuity guarantee: every cell of every bootstrap rep was non-vacuous,
+# and the ceiling of 0 keeps it so.
+max = 0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "mlperf-agentic-subset"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+default = true
+status = "unmeasured"
+note = """\
+MLPerf Agentic Inference (datacenter) subset leg -- REGISTERED UNRUNNABLE, NEVER MEASURED. \
+The official dataset (613 trajectories, 500 Workato workflow + 113 DeepSWE coding) is \
+unpublished as of 2026-08-13: mlcommons/endpoints@7935df4 ships an empty datasets/ dir and \
+its README says "MLCommons storage (link TBD)". No run has ever happened, so there are NO \
+metrics here and none may be guessed in. The scorer is a Rust port of the upstream inline \
+scorer at that same commit, pinned by executed-upstream parity fixtures \
+(crates/metrale-plugin/assets/mlperf-agentic/parity_fixtures.json). || CHECKPOINT CAVEAT: \
+MLCommons specifies Qwen/Qwen3.6-35B-A3B (BF16). This entry serves the official FP8 \
+sibling -- rules-legal quantization under MLPerf closed-division 8.1, but NOT the named \
+checkpoint, and its accuracy validity is unproven until the official three-part gate is \
+cleared. || CONTEXT, NEVER FLOORS: MLPerf's own thresholds for this model are inline \
+accuracy >= 55.86 pct, OSL per-turn mean 355-434 tokens, SWE-bench Verified >= 67.5 pct \
+(200 instances). They are FULL-DATASET, temp-1.0, official-client numbers; this subset \
+draw on an FP8 checkpoint with a pinned seed is a different distribution, so writing any \
+of them as a floor here would gate against a number nobody measured. The first measured \
+run on frozen main becomes the baseline, exactly like the echolp gate's history. || \
+SAMPLING IS IMMUTABLE AND STOCHASTIC: official params are temp 1.0 / top_k 20 / top_p \
+0.95 / repetition 1.0 / presence 1.5 / max_new_tokens 8192 / preserve_thinking true, and \
+submitters may not add or remove any. Every other accuracy gate in this file runs temp 0; \
+this leg is therefore the repo's first stochastic gate candidate. The leg pins seed 42 \
+(MLPerf specifies no seed, so this adds no violation) but a seeded temp-1.0 run is still \
+not bitwise reproducible across engines -- the calibration protocol must quantify the \
+spread before any floor is written, and if the noise cannot fit the 5 pct schema cap the \
+draw is too small or the gate must average repeats. || BEFORE FIRST MEASUREMENT, in \
+order: (1) dataset ships -> record its full-file SHA256 as expected_sha256 here and in \
+the leg params; (2) calibration run on frozen main (generous draw) measures s/turn, OSL, \
+per-domain spread, and the context-exclusion set for the served max_seq_len; (3) freeze \
+the first-K draw + its draw fingerprint (recorded in the gate record's \
+dataset_fingerprint field); (4) >= 3 repeats size the noise; (5) only then write \
+status = "measured" floors. || NOT COVERED BY THIS LEG regardless of dataset: the \
+SWE-bench Verified leg (live mini-swe-agent + Docker service; a workflow, not a leg -- \
+without it no result is a valid official submission and every report must say "inline + \
+OSL only"); KV salting (enable_salt, blake2b -- needs a dep, wire at calibration); tool \
+delays; the official concurrency/Pareto scenario shape (per-user vs per-system tok/s \
+curve via the upstream client, which is the right tool for any official submission run).\
+"""
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "ssm-state-poisoning-gate"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+default = true
+status = "measured"
+note = """\
+SSM State Poisoning Gate — mandatory since 2026-08-11. Replays a fixed 4-turn \
+script 12 times against one prefix-cached server at temperature 0 and demands \
+byte-identical transcripts every round. Metrale Engine is bitwise-deterministic at batch \
+1, so ANY divergence is accumulated engine-state corruption — the exact class \
+the batch4 stack shipped (Marconi SSM-snapshot restore poisoned runs 8/9 of the \
+agentic gate into early-EOS). It is REQUIRED, not a promotion candidate, \
+because the bug it exists to catch already landed once.
+
+The zero-tolerance thresholds are DEFINITIONS of the invariant, not measured \
+performance: `collapsed` and `unmeasured` must be 0 — same footing as the \
+agentic gate's exact `iterations` pin. (`invariant` is deliberately NOT pinned \
+to `rounds`: healthy restore jitter means most rounds are Jittered, not \
+Invariant, and a note claiming otherwise once contradicted the gate's own \
+verdict rule.) They are belt-and-suspenders with the run verdict (which itself \
+fails on any collapse, any unmeasured round, any zero-cache replay, and any \
+reference round that misses the script's semantic anchors), enforcing the \
+invariant at the record level too. `rounds` is pinned at exactly 12, the N the \
+invariant was written for: the incident poisoned rounds 8-9 of 10, so the gate \
+carries margin past that. `min_cached_prompt_tokens` is the vacuity \
+attestation — see its own comment below.
+
+`sum_wall_s` is the only genuinely measured-style number — a BLOWUP DETECTOR, \
+not a perf gate (identical philosophy to the agentic Σwall). Generous pending \
+the first recorded run; ratchet after measurement, never to the best.
+
+Self-start applies `ssm_cache_slots = "256"` from the \
+[benchmarks.serve_overrides] table below (the flagship recipe's pinned \
+value; recorded in the gate record's serve_overrides, and demanded on the \
+record by check_record). The bf16head recipe leaves the Marconi snapshot \
+pool at its default 16, which evicts \
+under this multi-turn load — replays then restore from DRIFTING anchors \
+(different replay geometry, legitimately different output), which is \
+pool-churn noise, not the poisoned-restore-content class this gate polices. \
+Pinning the pool tests restore CONTENT without the noise. Same footing as \
+the agentic gate's norm.rs: normalize known bookkeeping variance so the \
+measurement is repeatable, never hide signal. The first unpinned run on \
+main (2026-08-12, sha 7dd4cc33bc) proved the churn: replays 2-12 diverged \
+with restore anchors drifting 992→1040→1088→1152 and 33 'no SSM snapshot — \
+recomputing' events in the serve log.
+
+★ THINKING IS DISABLED VIA THE SERVE CONFIG for this gate — the baseline \
+declares `disable_thinking = "true"` in [benchmarks.serve_overrides] below, \
+so a `--pull-request-gate` run applies BOTH deltas with no operator flags \
+and the run record is reproducible hands-free (the recipe carries \
+`disable_thinking: false` in its defaults precisely so the override is \
+accepted; the record discloses it). The serve is therefore NOT \
+byte-identical to the flagship config the other gates certify — the \
+override is the one delta. History of how this landed (2026-08-15): the \
+recipe serves thinking-on (MODEL.toml thinking_default=true, budget 768), \
+under which the #513 reference anchors are unsatisfiable — the budget \
+forces `</think>` mid-reasoning and the answer misses 'exactly one line' / \
+'3 numbered lines' (measured at 62a89527fb, the first post-#513 run; every \
+pre-#513 PASS predates the anchors). A first fix pinned per-request \
+`chat_template_kwargs.enable_thinking:false` in probe.rs; that path \
+DEGENERATES to a ~2-token stop on qwen3_6_moe and was reverted — probe \
+bodies now carry no chat_template_kwargs at all (probe_tests pins this). \
+Turn-1's space-drop half of the failure was the api/strip.rs streaming \
+regression (#473), fixed separately. Nothing under test is lost by \
+thinking-off: the gate polices the PREFILL restore of the shared document \
+prefix, and thinking tokens are post-prefill output the template strips \
+from replayed history anyway.\
+"""
+
+[benchmarks.serve_overrides]
+disable_thinking = "true"
+ssm_cache_slots = "256"
+
+[benchmarks.metrics.rounds]
+min = 12.0
+max = 12.0
+
+# The POISONING bar: zero tolerance for a collapsed replay. This is the
+# definition of the invariant the gate exists to police — a restored prefix
+# must never produce degenerate output (early-EOS or runaway). Same footing
+# as the agentic gate's exact `iterations` pin.
+[benchmarks.metrics.collapsed]
+max = 0.0
+
+# Zero tolerance for an unmeasured round too: a transport error means the
+# invariant was not proven for that round.
+[benchmarks.metrics.unmeasured]
+max = 0.0
+
+# `jittered` is deliberately NOT bounded: restore-anchor selection varies
+# between rounds on a healthy engine (clean main jitters 11/12 replays —
+# 2026-08-12, sha a1c8000d44), and bounding it would fail healthy builds.
+# It is recorded for the record, not gated.
+
+# The vacuity attestation: the minimum turn-1 `cached_tokens` the server
+# reported across the replay rounds. Every replay's first turn is a
+# cross-round restore of the shared ~1.5K-token prefix, so on a caching
+# server this is far above zero (the 2026-08-12 run on sha 7dd4cc33bc
+# restored from anchors 992-1152). The floor of 1 is a DEFINITION, not a
+# measurement: it distinguishes "the restore path ran" from "prefix caching
+# was off and the gate replayed against a cold engine" — the configuration
+# under which this gate once returned a green PASS proving nothing.
+#
+# ★ RATCHETED 2026-09-11, 1.0 -> 900.0, discharging this comment's own
+# instruction to "ratchet toward the observed anchor scale after the first
+# recorded run that carries this metric". That condition was met 54 runs ago:
+# EVERY passing record carrying the metric reads exactly 1026.0 — 54 of 54,
+# zero variance, across four weeks and three checkpoint-config generations.
+# The floor of 900.0 sits ~12% under that invariant, which is margin for a
+# different anchor scale rather than for noise; there is no noise to cover.
+#
+# The one record that does not read 1026 is 2026-08-15-d4c00509b7, which reads
+# 0 — a FAIL whose reference round never ran (rounds 0). That is the vacuity
+# case this bound exists for, and it confirms the bound catches it. What 1.0
+# could not catch is the case in between: a server caching a handful of tokens
+# rather than a real anchor would have passed a floor of 1 while proving as
+# little as the cold engine did.
+[benchmarks.metrics.min_cached_prompt_tokens]
+min = 900.0
+
+[benchmarks.metrics.sum_wall_s]
+# The blowup detector, not a perf gate. The ceiling of 200.0 replaces 1200.0
+# as of 2026-09-11, discharging the entry note's "generous pending the first
+# recorded run; ratchet after measurement, never to the best".
+#
+# Measured on THIS entry's pinned instrument (disable_thinking = "true",
+# ssm_cache_slots = "256"): 54 passing records spanning 75.8 to 114.4 s, in
+# three levels — ~110-114 (2026-08-15 to 08-23), ~82-85 (08-23 onward) and
+# 75.8-76.6 on 09-08, the same f9fd8ca43 step the decode floor records. 200.0
+# is 1.75x the worst of them, so it is not drawn near the best.
+#
+# ★ Three older records read 306.8 / 320.8 / 321.4 and are NOT the basis: they
+# predate the disable_thinking pin, so they measured thinking-on generation —
+# roughly 3x the work — and check_record would refuse them against this
+# baseline in any case. A ceiling drawn to cover them would have to be 400+,
+# which is a ceiling for an instrument this entry no longer serves.
+#
+# What 200.0 is sized to catch: one round hanging to the 300 s request timeout
+# takes the sum past 300 on its own, and a uniform 50% slowdown lands near 170.
+# Both fail. The superseded 1200.0 caught neither, and nothing said so.
+max = 200.0
+
+# --- vision-fidelity -------------------------------------------------------
+# Vision models only. This gate is declared on the three targets that ship a
+# vision tower and have a BENCH.toml; a text-only target has no entry and the
+# gate simply does not apply to it.
+#
+# The bounds are ABSOLUTE and take no noise term, like the cross-contamination
+# gate's. Vision-token count is arithmetic over the patch grid -- there is no
+# run-to-run variance for a tolerance to absorb, so any movement is a real
+# change in preprocessing. That is the property that makes this gate worth
+# requiring: the 2026-08-14 resolution-cap defect silently reduced every image
+# above 1280px to about a tenth of its permitted area, and every capability
+# check passed throughout, because a downscaled picture is still recognisably
+# what it is.
+#
+#   integrity_passed  = 10  the INTEGRITY floor, and the legs a single
+#                           well-formed request cannot reach. Every one of
+#                           them fails as a FLUENT ANSWER TO THE WRONG INPUT
+#                           rather than an error, which is the class this
+#                           repo keeps rediscovering:
+#                             heterogeneous-concurrency  four DIFFERENT
+#                               requests in flight (one text-only), each
+#                               scored against its own input. Identical
+#                               requests cannot test the per-request offsets
+#                               into the shared ViT output buffer, because
+#                               every offset is then interchangeable.
+#                             prefix-cache-isolation     same prompt text,
+#                               different image, back to back. Guards the
+#                               predicate that keeps vision prompts out of
+#                               the prefix cache — it silently missed the
+#                               VIDEO pad token until 2026-08-14.
+#                             long-prompt-splice         a prompt past the
+#                               single-chunk budget, which leaves the batched
+#                               co-dispatch encode for a second splice in a
+#                               different file. Measured 81 vs 7082 prompt
+#                               tokens, so it really does cross over.
+#                             media-in-history           the image in an
+#                               earlier turn, not in the message asking the
+#                               question. The #165 path.
+#                             exif-orientation-pinned    PINS current
+#                               behaviour rather than judging it: EXIF
+#                               orientation is IGNORED, measured 2026-08-14.
+#                               A rotated phone photo reaches the model
+#                               sideways. Whether to honour the tag is a
+#                               product decision; that it must not change by
+#                               accident is not.
+#                             stream-blocking-parity     the SAME request
+#                               streamed and not. Every other leg sets
+#                               stream:true, so the blocking path — which
+#                               assembles its own response — was never run.
+#                               Both must answer correctly AND agree on
+#                               prompt_tokens; a difference means the two
+#                               paths built different prompts from identical
+#                               bytes.
+#                             multi-choice-image         n=2 with an image.
+#                               The blocking path gives only choice 0 the
+#                               pixels (the encode is shared), which is
+#                               correct and is also index-conditional code
+#                               nothing ran.
+#                             image-on-tool-result       the image arriving
+#                               on a role:"tool" message — the OTHER call
+#                               site of collect_message_images, and the case
+#                               #165 exists for.
+#                             thinking-on-vision         the DEFAULT config
+#                               for these checkpoints, which every other leg
+#                               turns off. Thinking lengthens the prompt and
+#                               so moves which prefill chunk the pad run lands
+#                               in. Asserted as a DIFFERENCE between two
+#                               images so the unknown <think> cost cancels.
+#   integrity_measured = 10 a skipped integrity leg is not a passed one.
+#   geometry_matched  = 14  the CORRECTNESS floor, and the one that moves when
+#                           preprocessing changes. Rung 09 (1600x900) is the
+#                           ONLY rung above the retired 1280px clamp: under the
+#                           clamp it is 920 tokens, un-downscaled it is 1400.
+#                           The other eight fit under either regime and so
+#                           cannot tell the two apart -- without rung 09 this
+#                           gate could not fail on the defect it exists for.
+#   geometry_asserted = 14  the MEASUREMENT floor, which is a DIFFERENT failure.
+#                           A cell the server cannot serve reports UNMEASURED,
+#                           which is not a mismatch -- so without this floor an
+#                           encoder-capacity regression would turn every cell
+#                           UNMEASURED and still read as PASS. Both are kept
+#                           because neither implies the other.
+#   probes_passed     = 3   capability, all three.
+#   control_held      = 1   the no-image control MUST hold. The non-vacuity
+#                           requirement expressed as a threshold: if the control
+#                           answers as though it saw a picture, the probes are
+#                           not evidence and the run is VACUOUS.
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "vision-fidelity"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+label = "Qwen3.6-35B-A3B (FP8, bf16 head)"
+default = true
+status = "measured"
+note = """\
+REFERENCE RUN 2026-08-14, dgx-00, binary feat/video-support @ 5a22d7ce: PASS, 14/14 geometry \
+cells matched, 3/3 probes, 10/10 integrity legs, control held, 14.7 s. Geometry was IDENTICAL across all \
+three vision targets (49/121/192/220/576/576/920/405/1400/1/128/49/49/49 merged \
+tokens) -- token \
+count is a property of the preprocessor rather than the checkpoint, so agreement \
+across a dense NVFP4, an unsloth NVFP4 and an FP8 MoE is evidence the arithmetic is \
+right rather than a coincidence. Ships preprocessor_config.json, so it resolved 16.7M \
+px before the resolver fix as well; clamped to the encoder's 16384-patch ceiling, and \
+the boot log says so rather than silently ignoring the checkpoint."""
+
+[benchmarks.metrics.geometry_matched]
+min = 14.0
+
+[benchmarks.metrics.geometry_asserted]
+min = 14.0
+
+[benchmarks.metrics.integrity_passed]
+min = 10.0
+
+[benchmarks.metrics.integrity_measured]
+min = 10.0
+
+[benchmarks.metrics.probes_passed]
+min = 3.0
+
+[benchmarks.metrics.control_held]
+min = 1.0
+
+# --- video-fidelity --------------------------------------------------------
+# The third video target. Declared on 2026-08-15, after the reordering defect
+# that had held it back was ROOT-CAUSED AND FIXED rather than after a re-run
+# that happened to come out green.
+#
+# What was wrong: the request path carried media as two lists, one per
+# modality, from the wire parse all the way to the rendered markers. A request
+# sending `video_url` then `image_url` was therefore shown the IMAGE first,
+# and nothing errored -- the marker count, the pad runs and the encoder rows
+# all still agreed with each other, just about a different order than the
+# caller wrote. Media is now one tagged, ordered sequence end to end.
+#
+# Why this target and not the other two: `video-before-image` is the only leg
+# that arranges the items in that order, and the stronger dense checkpoints
+# recovered from being told "the video came first" while seeing the still
+# first. The A3B (~3B active) did not, and answered with the image's palette.
+# The weakest target was the only honest witness -- which is the argument for
+# declaring the gate here rather than only where it was comfortable.
+#
+# ★ REQUIRES FFMPEG ON THE SERVER for every container except GIF, and the
+# serve must carry `--video-allow-ffmpeg` — the recipe this entry names pins
+# `video_allow_ffmpeg: true` (added 2026-08-15). Legs needing it SKIP rather
+# than fail at the benchmark level, but the gate thresholds demand all 13
+# legs. See qwen3.8-27b's entry for what each leg asserts.
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+gate = "video-fidelity"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+label = "Qwen3.6-35B-A3B (FP8, bf16 head)"
+default = false
+status = "measured"
+note = """\
+REFERENCE RUN 2026-08-15, dgx-00, binary feat/video-support: PASS, 13/13 legs, 0 \
+skipped, control held. The same gate scored 12/13 before the media-ordering fix, \
+failing `video-before-image` with the still's palette; it now reports "video read \
+correctly when it precedes the image (288 prompt tokens)" -- the same 288 the dense \
+targets record, so the fix reordered the items without moving the geometry. \
+group-proportionality 1s=67 2s=116 4s=214 tokens (49 tok/group, 18 overhead), MP4 and \
+GIF both 214, image+video 286, two-videos 437, video-in-history 249, C=1/2/4 all \
+correct on one geometry. `default = false`: qwen3.8-27b owns this gate's default \
+serve."""
+
+[benchmarks.metrics.legs_passed]
+min = 13.0
+
+[benchmarks.metrics.legs_skipped]
+max = 0.0
+
+[benchmarks.metrics.control_held]
+min = 1.0

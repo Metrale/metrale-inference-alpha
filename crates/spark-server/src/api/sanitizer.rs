@@ -1,0 +1,320 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+#![allow(unused_imports, dead_code)]
+
+use axum::extract::State;
+use axum::extract::rejection::JsonRejection;
+use axum::http::StatusCode;
+use axum::response::sse::{Event, KeepAlive};
+use axum::response::{IntoResponse, Json, Response, Sse};
+use futures::StreamExt;
+use std::sync::Arc;
+use tokio_stream::wrappers::ReceiverStream;
+
+use crate::AppState;
+use crate::openai::{
+    ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, CompletionChunk,
+    CompletionRequest, CompletionResponse, ModelInfo, ModelListResponse, Usage,
+};
+use crate::tool_parser;
+
+// Sibling-cluster items hoisted from the original `api.rs`. These uses
+// give every sub-file access to helpers that the un-split file took for
+// granted via single-module visibility.
+use super::chat::chat_completions_inner;
+use super::compact::{compact_messages, openai_error_response, openai_error_response_with_param};
+use super::completions::not_supported;
+use super::inference_impl::{extract_thinking, strip_stop_sequences, tokenize_stop_sequences};
+use super::inference_types::{
+    GrammarSpec, InferenceRequest, InferenceResponse, StreamEvent, TokenLogprobs,
+};
+use super::strip::strip_thinking_tags;
+
+// Re-export sibling helpers via crate::api::* for short paths.
+use super::inference_types::*;
+
+/// Longest suffix of `buf` that is a byte-prefix of ANY leak marker —
+/// the only bytes that could still fuse with a future chunk into a marker
+/// match. Everything before that suffix is marker-incompatible and safe to
+/// emit immediately. Bounded by `tag_max - 1` (a full marker would have
+/// matched in the scan above). Markers are ASCII, so byte comparison is
+/// exact; a hold that lands mid-char is rounded UP by the caller's
+/// char-boundary cut, which only ever holds MORE, never less.
+fn marker_prefix_hold(buf: &str, markers: &tool_parser::LeakMarkers, tag_max: usize) -> usize {
+    let b = buf.as_bytes();
+    let max_k = b.len().min(tag_max.saturating_sub(1));
+    for k in (1..=max_k).rev() {
+        let suffix = &b[b.len() - k..];
+        let hit = markers
+            .orphan_open
+            .iter()
+            .chain(markers.close.iter())
+            .chain(markers.envelope_open.iter())
+            .chain(markers.envelope_close.iter())
+            .any(|m| m.as_bytes().starts_with(suffix));
+        if hit {
+            return k;
+        }
+    }
+    0
+}
+
+pub fn sanitize_content_chunk(
+    text: &str,
+    tag_scan_buf: &mut String,
+    suppressing_param_leak: &mut bool,
+    inside_envelope: &mut bool,
+    markers: &tool_parser::LeakMarkers,
+) -> String {
+    // Fast-path: parser opted out of sanitization (default for Hermes,
+    // Gemma4, Mistral, BareJson). Pass the text straight through without
+    // buffering, so no tail-retention latency penalty for those deployments.
+    if markers.orphan_open.is_empty() && markers.envelope_open.is_empty() {
+        return text.to_string();
+    }
+    // Keep enough trailing bytes buffered that a partial tag straddling
+    // a chunk boundary can fuse with the next chunk.
+    let tag_max: usize = markers
+        .orphan_open
+        .iter()
+        .chain(markers.close.iter())
+        .chain(markers.envelope_open.iter())
+        .chain(markers.envelope_close.iter())
+        .map(|t| t.len())
+        .max()
+        .unwrap_or(0);
+
+    tag_scan_buf.push_str(text);
+    let mut out = String::new();
+    loop {
+        if *suppressing_param_leak {
+            let earliest = markers
+                .close
+                .iter()
+                .filter_map(|t| tag_scan_buf.find(t).map(|p| (p, t.len())))
+                .min_by_key(|(p, _)| *p);
+            match earliest {
+                Some((pos, len)) => {
+                    tag_scan_buf.drain(..pos + len);
+                    *suppressing_param_leak = false;
+                }
+                None => {
+                    if tag_scan_buf.len() > tag_max.saturating_sub(1) {
+                        let keep = tag_max.saturating_sub(1);
+                        let drop_to = tag_scan_buf.len() - keep;
+                        let cut = tag_scan_buf
+                            .char_indices()
+                            .map(|(i, _)| i)
+                            .take_while(|&i| i <= drop_to)
+                            .last()
+                            .unwrap_or(0);
+                        tag_scan_buf.drain(..cut);
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+
+        // F73 (2026-04-29): match envelope markers first so an
+        // envelope_open (e.g. `<minimax:tool_call>`) takes
+        // precedence over a stray-looking inner `<invoke ...>`. Inside
+        // an envelope, orphan_open is suppressed-skip — the inner
+        // tags are part of the legitimate (if mangled) tool call.
+        let earliest_env_open = markers
+            .envelope_open
+            .iter()
+            .filter_map(|t| tag_scan_buf.find(t).map(|p| (p, t.len())))
+            .min_by_key(|(p, _)| *p);
+        let earliest_env_close = markers
+            .envelope_close
+            .iter()
+            .filter_map(|t| tag_scan_buf.find(t).map(|p| (p, t.len())))
+            .min_by_key(|(p, _)| *p);
+        // Inside an envelope, skip BOTH orphan_open and orphan_close
+        // matching — the inner `<invoke>...<parameter>...</parameter>
+        // </invoke>` content is legitimate and must pass through
+        // unchanged. Orphan close tags only get dropped when they
+        // appear outside any envelope (true stray fragments).
+        let (earliest_open, earliest_close) = if *inside_envelope {
+            (None, None)
+        } else {
+            (
+                markers
+                    .orphan_open
+                    .iter()
+                    .filter_map(|t| tag_scan_buf.find(t).map(|p| (p, t.len())))
+                    .min_by_key(|(p, _)| *p),
+                markers
+                    .close
+                    .iter()
+                    .filter_map(|t| tag_scan_buf.find(t).map(|p| (p, t.len())))
+                    .min_by_key(|(p, _)| *p),
+            )
+        };
+        // Action variants: (pos, len, kind) where kind selects the
+        // state transition. Tie-break: envelope > orphan > close at
+        // the same position so an envelope_open consumes its bytes
+        // before any orphan-suppression triggers.
+        #[derive(Copy, Clone)]
+        enum ActKind {
+            EnvelopeOpen,
+            EnvelopeClose,
+            OrphanOpen,
+            OrphanClose,
+        }
+        let mut best: Option<(usize, usize, ActKind)> = None;
+        let consider = |cand: Option<(usize, usize)>,
+                        kind: ActKind,
+                        best: &mut Option<(usize, usize, ActKind)>| {
+            if let Some((p, l)) = cand {
+                match best {
+                    None => *best = Some((p, l, kind)),
+                    Some((bp, _, _)) if p < *bp => *best = Some((p, l, kind)),
+                    _ => {}
+                }
+            }
+        };
+        consider(earliest_env_open, ActKind::EnvelopeOpen, &mut best);
+        consider(earliest_env_close, ActKind::EnvelopeClose, &mut best);
+        consider(earliest_open, ActKind::OrphanOpen, &mut best);
+        consider(earliest_close, ActKind::OrphanClose, &mut best);
+
+        match best {
+            Some((pos, tag_len, kind)) => {
+                let before: String = tag_scan_buf.drain(..pos).collect();
+                out.push_str(&before);
+                match kind {
+                    ActKind::EnvelopeOpen => {
+                        // Emit the envelope_open bytes — they're
+                        // legitimate content the user should see —
+                        // and switch state.
+                        let env_bytes: String = tag_scan_buf.drain(..tag_len).collect();
+                        out.push_str(&env_bytes);
+                        *inside_envelope = true;
+                    }
+                    ActKind::EnvelopeClose => {
+                        let env_bytes: String = tag_scan_buf.drain(..tag_len).collect();
+                        out.push_str(&env_bytes);
+                        *inside_envelope = false;
+                    }
+                    ActKind::OrphanOpen => {
+                        tag_scan_buf.drain(..tag_len);
+                        *suppressing_param_leak = true;
+                        tracing::warn!(
+                            "orphan tool-call leak in content stream; suppressing until close"
+                        );
+                    }
+                    ActKind::OrphanClose => {
+                        tag_scan_buf.drain(..tag_len);
+                        // Stray close outside suppression — silently dropped.
+                    }
+                }
+                continue;
+            }
+            None => {
+                // Hold back ONLY the longest suffix that is a byte-prefix of
+                // some marker — the only bytes that can still fuse with a
+                // future chunk into a match. The old rule held a flat
+                // `tag_max - 1` bytes regardless of content, which withheld
+                // the FIRST ~tag_max bytes of EVERY stream until enough
+                // later tokens arrived to push them past the window —
+                // measured 250-500 ms of first-delta latency on every
+                // response ("An" is not a prefix of "<tool_call>", yet it
+                // waited for 3-5 more decode steps). Marker-incompatible
+                // tails are safe to emit immediately; the straddle-fusion
+                // guarantee only ever needed the compatible suffix.
+                let buf_len = tag_scan_buf.len();
+                let hold = marker_prefix_hold(tag_scan_buf, markers, tag_max);
+                if buf_len <= hold {
+                    break;
+                }
+                let commit_to = buf_len - hold;
+                // Floor to a char boundary. The previous `char_indices()`
+                // walk could never select `buf_len` itself (char_indices
+                // yields char STARTS only), so the final character of the
+                // buffer was unconditionally withheld — invisible under the
+                // old flat holdback, wrong the moment hold can be 0.
+                let mut cut = commit_to;
+                while cut > 0 && !tag_scan_buf.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                let emit: String = tag_scan_buf.drain(..cut).collect();
+                out.push_str(&emit);
+                break;
+            }
+        }
+    }
+    // NOTE: no final `scrub_tool_tags` pass here. The state machine above
+    // searches the WHOLE buffer every iteration, so a complete marker can
+    // never be committed to `out` outside an envelope — a trailing scrub
+    // would be dead code there. Inside a recognized envelope the inner
+    // `<invoke …>…</invoke>` tags are the legitimate F73 payload the
+    // downstream parser extracts, so scrubbing them would break the
+    // minimax envelope pass-through. Desync tails that end-of-stream dumps
+    // leave in `tag_scan_buf` are scrubbed by `flush_content_sanitizer`.
+    out
+}
+
+// Repetition-loop watchdog. Accumulates up to ~8 KB of recent
+// post-detector content in `loop_scan_buf` and returns `true` when the
+// most recent non-trivial line appears ≥ 4× in the tail — a signal the
+// model is stuck in a degenerate prose loop. Conservative: ignores
+// lines shorter than 15 trimmed chars, code-fence openers, and already
+// triggered flags.
+//
+// MUST operate on post-detector Content only. Tool-call parameter
+// values flow through the detector as structured chunks (not Content)
+// — running this on raw delta would truncate a tool call whose arg
+// legitimately repeats a short line (e.g. Rust source with
+// `self.error.clear();` per method), leaving the client with an
+// incomplete tool call.
+//
+// Window bumped 3 KB → 8 KB (2026-04-25, claude-export.txt
+// failure): the export's "I'll create the project files and verify
+// everything works:" phrase repeated 4× at end-of-stream, but earlier
+// instances rolled out of the 3 KB window because each repetition was
+// preceded by ~3 KB of source-dump prose. 8 KB keeps multi-paragraph
+// repetitions in view across larger interstitials.
+//
+// Fuzzy comparison + substring scan (2026-04-25): the same export
+// had its 4th repeat begin mid-line ("…everything works:        let
+// body ="), defeating exact-line equality. We now compare lines
+// using trimmed + lowercased + whitespace-collapsed equality, AND
+// for ≥30-char candidate lines also count substring occurrences in
+// the buffer (catches mid-line continuations of an otherwise
+// repeating phrase).
+//
+// ── F7 (2026-04-26): cross-turn tool-arg-path stall guard ──
+//
+// Live evidence from `/workspace/metrale-opencode-dump-fix28.jsonl`
+// showed the model writing the same `Cargo.toml` 7 times across 17
+// turns when cargo wasn't installed and F6 (is_error capture) made
+// it correctly recognise but futilely retry. F1-F5 catch per-
+// response loops; F7 catches the per-conversation pattern by
+// scanning message history before the request reaches the
+// scheduler. At ≥3 same-bucket hits, append a system-reminder; at
+// ≥5, escalate to a stop-tool-calls directive (the request still
+// goes through, but the model is told plainly to respond in text).
+
+// F14 (2026-04-26): raised from 3 → 4. AR2's survey: Gemini-CLI
+// uses 5-consecutive, Anthropic's documented per-turn ceiling is
+// ~10. Metrale Engine at 3 was too aggressive — false-positives on
+// legitimate "build / fix / build" cycles. 4 sits between the
+// production references while still preventing the fix28
+// 7-rewrite scenario.
+pub const F7_STALL_WARN_THRESHOLD: u32 = 4;
+pub const F7_STALL_REFUSE_THRESHOLD: u32 = 5;
+const F7_BASH_COMMAND_PREFIX_LEN: usize = 80;
+const F7_OTHER_ARG_FALLBACK_LEN: usize = 80;
+
+/// Per-(tool_name, primary_arg) hit counts across the conversation.
+pub type F7StallBuckets = std::collections::HashMap<(String, String), u32>;
+
+// The tool-description helpers live in `sanitizer/toolinfo.rs`. They are
+// re-exported rather than moved behind a path change, because ~15 call sites
+// across the API layer say `sanitizer::classify_tool`, and this split is a
+// file-size decision rather than an interface one.
+mod toolinfo;
+
+pub use toolinfo::{ToolKind, classify_tool, extract_bash_final_action, primary_arg_for_tool};

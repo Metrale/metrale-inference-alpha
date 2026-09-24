@@ -1,0 +1,55 @@
+/* =============================================================================
+   The fallback faces Urbanist and IBM Plex Mono swap in over.
+
+   The faces themselves are in static/fonts/type.css, a sheet src/app.html
+   attaches after first paint (that file says why: the Lighthouse gate demands
+   100 and web fonts in the bundle cost every page a point). So the first paint
+   is always in a fallback, and the fallback has to occupy exactly the space
+   the web font will.
+
+   These families do that. They are local Arial and Courier New, scaled with
+   size-adjust so their average advance equals the web font's, and given the
+   web font's ascent and descent, so a line of text is the same width and
+   height before and after the swap: the first paint is the largest paint and
+   nothing moves.
+
+   The numbers come from the font files, the way next/font computes them:
+   average advance over English letter frequencies, the web font divided by the
+   fallback, with the web font instantiated at the weight the fallback stands
+   in for (the method is under Type in site/BRANDING.md). Urbanist's
+   ascent is 0.95 em and its descent 0.25 em with no line gap. Plex Mono and
+   Courier New share a 0.6 em advance, so that pair needs no scaling at all.
+   Arial, Helvetica and Liberation Sans share their metrics, as do Courier New
+   and Liberation Mono, so one set of numbers covers Windows, macOS and Linux.
+   If none is installed the family is skipped and the system stack in the
+   tokens takes over.
+
+   The token file names the families (web-shared/metrale-tokens.css). The blog
+   ships neither this file nor the fonts and keeps working on its system stack.
+   ========================================================================== */
+@font-face {
+  font-family: 'Urbanist Fallback';
+  font-weight: 100 500;
+  src: local('Arial'), local('Helvetica'), local('Liberation Sans');
+  size-adjust: 99.41%;
+  ascent-override: 95.57%;
+  descent-override: 25.15%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: 'Urbanist Fallback';
+  font-weight: 600 900;
+  src: local('Arial Bold'), local('Arial-BoldMT'), local('Helvetica Bold'), local('Helvetica-Bold'), local('Liberation Sans Bold');
+  size-adjust: 94.38%;
+  ascent-override: 100.65%;
+  descent-override: 26.49%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: 'Plex Mono Fallback';
+  src: local('Courier New'), local('Liberation Mono'), local('Courier');
+  size-adjust: 99.98%;
+  ascent-override: 102.52%;
+  descent-override: 27.5%;
+  line-gap-override: 0%;
+}

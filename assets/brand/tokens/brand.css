@@ -1,0 +1,24 @@
+:root {
+  --metrale-ground: #0E1318;
+  --metrale-ink: #F7F7F9;
+  --metrale-ink-2: #D9D9DE;
+  --metrale-violet: #9F8DD8;
+  --metrale-lavender: #CDBFF1;
+  --metrale-cyan: #6FD9EC;
+  --metrale-cyan-2: #5A96BD;
+  --metrale-gold: #E4C070;
+  --metrale-gold-2: #AE8A3F;
+  --metrale-product: #8A8F99;
+  --metrale-gray-text: #8A8F99;
+  --metrale-font: Urbanist, "Helvetica Neue", Helvetica, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --metrale-ground: #FFFFFF;
+    --metrale-ink: #15181F;
+    --metrale-ink-2: #15181F;
+    --metrale-product: #6B7079;
+    --metrale-gray-text: #6B7079;
+  }
+}

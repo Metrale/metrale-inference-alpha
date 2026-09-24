@@ -1,0 +1,64 @@
+name: TUI threading contract
+
+# The dashboard's render loop runs on its own OS thread and must never poll a
+# future. Its only interaction with async work is `try_recv` on a channel.
+#
+# That rule was previously stated in prose in two module docs — and they
+# contradicted each other: `recipe/fetch.rs` said "no spawn_blocking, no
+# block_on, no future in this file", while `tui/chat.rs` and
+# `metrale-plugin/src/executor.rs` legitimately DO spawn tokio tasks and hand
+# results back over a std channel. Prose that disagrees with itself is not a
+# contract. This is the version a machine can check.
+#
+# What is forbidden is not async — it is BLOCKING THE RENDER THREAD ON IT.
+# `block_on` and `block_in_place` are the two ways to do that by accident.
+
+# Least privilege: this job only reads the checkout to grep it. Without an
+# explicit block the GITHUB_TOKEN inherits the repository default, which
+# CodeQL flags (actions/missing-workflow-permissions) — and it was right to,
+# since nothing here writes anything. Matches ci.yml.
+permissions:
+  contents: read
+
+# Only the newest commit on a ref is worth checking; superseded runs otherwise
+# sit in the queue holding runner slots that the newest commit is waiting for.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  # Manually runnable. During the 2026-08-06 Actions incident, webhook triggers
+  # were throttled to aid recovery, so pushes stopped creating runs at all --
+  # and with no dispatch trigger there was no way to ask for one. A check that
+  # can only be started by an event you do not control is a check you cannot
+  # get a verdict from when you most need it.
+  workflow_dispatch:
+  # No path filter on pull_request: this check joins the required set, and a
+  # path-filtered required check never reports on PRs outside its paths,
+  # leaving them permanently "expected" and unmergeable. The job is one grep
+  # over two directories — running it on every PR costs seconds.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/spark-server/src/tui/**'
+      - 'crates/spark-server/src/recipe/**'
+  # Merge queue: queue commits fire none of the events above, and this check
+  # is required — without this trigger the entry hangs until timeout.
+  # Unfiltered for the same reason as pull_request.
+  merge_group:
+
+jobs:
+  no-blocking-on-the-render-thread:
+    runs-on: >-
+      ${{ vars.USE_METRALE_UBUNTU_RUNNERS == '1'
+          && (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && (vars.PR_CHEAP_RUNNER || 'ubuntu-latest')
+          || 'ubuntu-latest' }}
+    name: No block_on under tui/ or recipe/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the render thread never blocks on a future
+        shell: bash
+        run: bash .github/scripts/check-no-block-on.sh

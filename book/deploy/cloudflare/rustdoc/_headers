@@ -1,0 +1,15 @@
+# Cloudflare Pages control file for docs.dev.metrale.ai (rustdoc).
+#
+# Same rule as the book's _headers: Pages concatenates a header a later rule
+# re-declares, so no two rules below match the same path.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/*.html
+  Cache-Control: public, max-age=300
+
+# rustdoc's content-hashed bundle: the filename carries the digest.
+/static.files/*
+  Cache-Control: public, max-age=31536000, immutable
