@@ -262,7 +262,6 @@ jobs:
             esac
           }
           check index.html     'Metrale Engine, pure Rust inference'
-          check engine.html    'Metrale Engine, pure Rust inference'
           check control.html   'Control plane'
           check diligence.html 'Verification steps'
           exit "$fail"

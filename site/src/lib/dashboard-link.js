@@ -2,9 +2,9 @@
 //
 // dashboard-link.js — the benchmark dashboard's deep link.
 //
-//   /engine#bench=concurrency&subject=qwen36-35b-a3b&c=64
+//   /#bench=concurrency&subject=qwen36-35b-a3b&c=64
 //
-// A hash, not a query string: /engine is prerendered and touching
+// A hash, not a query string: the page is prerendered and touching
 // `url.searchParams` during prerender is a build error, while the hash never
 // reaches the prerenderer (the deck made the same call). This module is pure —
 // the component reads `location` and writes with `$app/navigation` — and it

@@ -35,12 +35,11 @@
   // Route-aware: a hardcoded canonical meant /control emitted two of them,
   // which is the same as emitting none.
   //
-  // Canonicals are extensionless. Cloudflare Pages pretty-URLs /engine (200)
-  // and 308s /engine.html → /engine, so a canonical ending in .html names a
-  // redirect. adapter-static still writes engine.html as the file.
-  const marketingPage = $derived(['/', '/index.html'].includes(page.url.pathname));
-  const enginePage = $derived(['/engine', '/engine.html'].includes(page.url.pathname));
-  const canonical = $derived(marketingPage ? SITE : `${SITE.replace(/\/$/, '')}${page.url.pathname.replace(/\.html$/, '')}`);
+  // Canonicals are extensionless. Cloudflare Pages pretty-URLs /control (200)
+  // and 308s /control.html → /control, so a canonical ending in .html names a
+  // redirect. adapter-static still writes control.html as the file.
+  const homePage = $derived(['/', '/index.html'].includes(page.url.pathname));
+  const canonical = $derived(homePage ? SITE : `${SITE.replace(/\/$/, '')}${page.url.pathname.replace(/\.html$/, '')}`);
 
   const SITE = 'https://dev.metrale.ai/';
 
@@ -96,7 +95,7 @@
       },
       {
         '@type': 'FAQPage',
-        '@id': `${SITE}engine#faq`,
+        '@id': `${SITE}#faq`,
         isPartOf: { '@id': `${SITE}#site` },
         mainEntity: faq.items.map((item) => ({
           '@type': 'Question',
@@ -114,7 +113,7 @@
   // (Writing that tag literally in this comment would end THIS block, too.)
   const ldjson = $derived(JSON.stringify({
     ...graph,
-    '@graph': graph['@graph'].filter(entity => entity['@type'] !== 'FAQPage' || enginePage)
+    '@graph': graph['@graph'].filter(entity => entity['@type'] !== 'FAQPage' || homePage)
   }).replace(/</g, '\\u003c'));
 </script>
 
@@ -130,8 +129,7 @@
 
 <!-- The ambient chevron field: one fullscreen triangle, one fragment shader,
      the same code blog.dev.metrale.ai renders. It paints the page ground
-     itself, so `body`'s background sits behind it rather than beside it. The
-     front page shows it through its hero, where the kit's mark stands.
+     itself, so `body`'s background sits behind it rather than beside it.
 
      It must stay a DIRECT child of the layout root. A `transform`, `filter`,
      `perspective`, `will-change` or `contain: paint` on any ancestor would

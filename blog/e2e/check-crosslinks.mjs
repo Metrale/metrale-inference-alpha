@@ -26,7 +26,7 @@ const walk = (dir) =>
     return statSync(p).isDirectory() ? walk(p) : p.endsWith('.html') ? [p] : [];
   });
 
-// Fragments belong to a document. An id on engine.html cannot make /#verified
+// Fragments belong to a document. An id on control.html cannot make /#verified
 // work, even though both files ship in the same site artifact.
 const sitePages = new Map();
 let idCount = 0;
@@ -35,8 +35,8 @@ for (const f of walk(siteDir)) {
   const path = `/${relative(siteDir, f).split(sep).join('/')}`;
   sitePages.set(path, ids);
   if (path === '/index.html') sitePages.set('/', ids);
-  // Cloudflare Pages pretty-URLs /engine from engine.html (200) and 308s
-  // /engine.html → /engine. Fragment checks must accept both forms.
+  // Cloudflare Pages pretty-URLs /control from control.html (200) and 308s
+  // /control.html → /control. Fragment checks must accept both forms.
   if (path.endsWith('.html')) sitePages.set(path.slice(0, -'.html'.length), ids);
   idCount += ids.size;
 }

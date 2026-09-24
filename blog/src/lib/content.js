@@ -96,8 +96,8 @@ export const footerCols = [
     links: [
       { text: 'dev.metrale.ai', href: MAIN_SITE },
       { text: 'Documentation', href: DOCS_SITE },
-      { text: 'Benchmarks', href: `${MAIN_SITE}/engine#verified` },
-      { text: 'Download', href: `${MAIN_SITE}/engine#run` }
+      { text: 'Benchmarks', href: `${MAIN_SITE}/#verified` },
+      { text: 'Download', href: `${MAIN_SITE}/#run` }
     ]
   },
   {

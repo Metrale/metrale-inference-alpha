@@ -342,7 +342,7 @@
               <p>
                 An agent is running, but it has not seen this browser before. Run
                 <code class="mono">metralectl agent token</code> and paste the value into the
-                launch dialog on the <a href="/engine#models">engine page</a> — that is where the token
+                launch dialog on the <a href="/#models">front page</a> — that is where the token
                 field lives, not here. This page notices on its own once you have; it keeps
                 looking. This is separate from pairing machines to each other.
               </p>

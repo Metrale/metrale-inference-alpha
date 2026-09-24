@@ -20,10 +20,9 @@
 // =============================================================================
 
 // --- canonical links ---------------------------------------------------------
-// Public developer URL. adapter-static still writes engine.html; Cloudflare
-// Pages pretty-URLs /engine (200) and 308s /engine.html → /engine. Vite
-// preview serves /engine from that file too. Do not put .html in hrefs.
-export const ENGINE = '/engine';
+// Extensionless. adapter-static still writes control.html; Cloudflare Pages
+// pretty-URLs /control (200) and 308s /control.html → /control. Vite preview
+// serves /control from that file too. Do not put .html in hrefs.
 export const CONTROL = '/control';
 export const githubUrl = 'https://github.com/Metrale/metrale-inference-alpha';
 export const discordUrl = 'https://discord.gg/RQcGakU2jW';
@@ -121,7 +120,7 @@ export const announcement = {
   // fraction of a percent wider or narrower than Urbanist on any one sentence.
   // A row that fits by a few pixels in one face wraps in the other, so it gains
   // or loses a line when the brand face lands and shoves the hero with it:
-  // with 5px of slack this row cost /engine a 0.31 layout shift and the
+  // with 5px of slack this row cost the front page a 0.31 layout shift and the
   // Lighthouse performance 100.
   note: 'Sparkrun has been retired: we now ship metralectl, our own control plane for enterprise fleet management and telemetry. In active development.',
   // A third row rather than a longer second one, for the same reason the note
@@ -137,11 +136,11 @@ export const announcement = {
 // --- nav (SSOT for both the desktop bar and the mobile drawer) ---------------
 export const nav = {
   links: [
-    { text: 'Verified', href: `${ENGINE}#verified` },
-    { text: 'News', href: `${ENGINE}#news` },
-    { text: 'Hardware', href: `${ENGINE}#hardware` },
-    { text: 'Models', href: `${ENGINE}#models` },
-    { text: 'Start Metrale Engine', href: `${ENGINE}#run` },
+    { text: 'Verified', href: '/#verified' },
+    { text: 'News', href: '/#news' },
+    { text: 'Hardware', href: '/#hardware' },
+    { text: 'Models', href: '/#models' },
+    { text: 'Start Metrale Engine', href: '/#run' },
     { text: 'Control', href: CONTROL },
     { text: 'Blog', href: blogUrl }
   ],

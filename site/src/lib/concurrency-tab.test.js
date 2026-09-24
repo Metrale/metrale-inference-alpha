@@ -545,7 +545,7 @@ describe('the comparison state, decided once', () => {
 
 describe('the dashboard wires the hash to the subject', () => {
   const open = (hash) => {
-    globalThis.location = { hash, pathname: '/engine', search: '' };
+    globalThis.location = { hash, pathname: '/', search: '' };
     try {
       return html(Dashboard, { onclose: () => {} });
     } finally {

@@ -1,0 +1,9 @@
+# Cloudflare Pages redirects. Evaluated before static assets, so a rule here
+# wins even when a file exists at the source path. Each spelling needs its own
+# line: Pages matches the source exactly, so /engine does not cover /engine/.
+#
+# The engine page moved to the root. Old links, bookmarks and indexed URLs
+# land on the same content, permanently.
+/engine / 301
+/engine/ / 301
+/engine.html / 301

@@ -115,7 +115,6 @@ model that has no recipe. Run any of them with `metralectl run <id>`.
 - Benchmark results: https://github.com/Metrale/metrale-inference-alpha/blob/main/bench/ladder38/RESULTS.md
 - Discord: https://discord.gg/RQcGakU2jW
 - Site: https://dev.metrale.ai
-- Developer page: https://dev.metrale.ai/engine
 - Documentation: https://book.dev.metrale.ai — full book, also at /llms.txt
 - Engineering blog: https://blog.dev.metrale.ai — also at /llms.txt
 

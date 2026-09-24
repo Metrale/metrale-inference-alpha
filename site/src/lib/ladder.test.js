@@ -83,7 +83,7 @@ test('the shipped ladder still supports the claim the copy makes', () => {
 });
 
 test('C=128 is 1.333× against matched MTP, not 1.225× against unmatched nospec', () => {
-  // Live /engine used to print 1.225× because the headline denominator was
+  // The live page used to print 1.225× because the headline denominator was
   // "whichever vLLM is faster at this rung". At C=128 that is nospec (390.42),
   // a different fingerprint. The published claim is 478.11 / 358.57 = 1.333×.
   const row = (real.rows ?? []).find((r) => r.c === 128);

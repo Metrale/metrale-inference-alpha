@@ -24,21 +24,15 @@ the component draws anything of its own. Nothing is redrawn.
   half), `--m-cyan-hi` and `-lo` (the bar), `--m-gold-hi` and `-lo` (the
   swash). The gradients keep the kit's directions, so the theme swap costs no
   second file and no second request.
-- **Front page header**: the wordmark, 236 px (196 px on mobile). **Footer**:
-  253 px. **`/engine` and `/control` nav**: 140 px, the floor. **Blog
-  header and footer**: 152 px.
-- **Front page hero**: the kit's `mark`, drawn large over the chevron field the
-  root layout paints behind every page. It is decorative (`aria-hidden`); the
-  header names the brand. The page makes no hero image request at all.
+- **Front page and `/control` nav**: the wordmark at 140 px, the floor.
+  **Blog header and footer**: 152 px.
 - **The book**: `book/theme/metrale.js` puts the on-dark wordmark in mdBook's
   menu bar with "Engine docs" beside it, and `book/theme/css/wordmark.css`
   places it. `lockup.mjs` writes that script with the master inlined (mdBook
   has no bundler); the lockup test fails if it falls behind.
 - **Favicons and icons**: the kit's own cuts in `static/`: the app icon on the
   ground as `favicon.svg`, PNGs at 16, 32, 48, 180, 192, 512 and 1024, the
-  maskable 512, and `favicon.ico`. The blog carries the same set. The engine
-  illustration on the front page uses `static/brand/mark-compact.svg`, a link
-  to `assets/brand/svg/mark-compact.svg`.
+  maskable 512, and `favicon.ico`. The blog carries the same set.
 - **Social card**: `static/og-image.png` (and the blog's) is the kit's
   `assets/brand/social/og-image-dark.png`, the wordmark on the ground. The
   GitHub social preview is in `assets/brand/social/`, uploaded by hand.
@@ -94,17 +88,8 @@ Helvetica Neue, as the kit's blog does. The book links the same faces through
 
 ## The pages
 
-The homepage introduces the engine and links to `/engine` for the complete
-benchmarks, recipes, installation, and chat tools. `/control` and `/diligence`
-retain their existing functionality. Existing homepage fragments for verified
-performance, models, and getting started remain useful summaries. Other
-technical fragments forward to the matching engine section, with ordinary
-links available when JavaScript is disabled.
-
-The performance highlight is calculated from `ladder.generated.json`, including
-its fastest published baseline at the highest measured concurrency. It does not
-contain independent throughput numbers or assume future results will show an
-improvement.
-
-UI icons are Lucide icon data with its ISC/MIT notice retained in
-`src/lib/components/marketing/icons.LICENSE`.
+The front page is the engine page: benchmarks, recipes, installation and the
+chat tools, with its sections reachable as `/#verified`, `/#news`,
+`/#hardware`, `/#models` and `/#run`. `/engine` is a permanent redirect to
+`/` (`static/_redirects`). `/control` and `/diligence` retain their existing
+functionality.
