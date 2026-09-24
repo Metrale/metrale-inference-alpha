@@ -81,6 +81,13 @@ does not describe the run that produced it."""
 # activations). The bfcl recipe (bfcl-subset, kat-equality-gate) stays
 # W4A16 as the accuracy reference.
 w4a4_downcast = "true"
+# `--w4a4-downcast-wide`: the same per-row W4A4 GEMV numerics at 33..=64 rows
+# (the C=17..32 verify batches on GDN qkvz/out_proj and attention q/k/v/o),
+# opt-in on top of `--w4a4-downcast` and enabled together with it: on for
+# every gate that carries `w4a4_downcast`, off (engine default) everywhere
+# `w4a4_downcast` is off. Requires `--w4a4-downcast`; the engine ignores it
+# otherwise, with a warning.
+w4a4_downcast_wide = "true"
 
 
 [benchmarks.metrics.followed_directions]
@@ -657,6 +664,13 @@ prefill_codispatch = "true"
 # activations). The bfcl recipe (bfcl-subset, kat-equality-gate) stays
 # W4A16 as the accuracy reference.
 w4a4_downcast = "true"
+# `--w4a4-downcast-wide`: the same per-row W4A4 GEMV numerics at 33..=64 rows
+# (the C=17..32 verify batches on GDN qkvz/out_proj and attention q/k/v/o),
+# opt-in on top of `--w4a4-downcast` and enabled together with it: on for
+# every gate that carries `w4a4_downcast`, off (engine default) everywhere
+# `w4a4_downcast` is off. Requires `--w4a4-downcast`; the engine ignores it
+# otherwise, with a warning.
+w4a4_downcast_wide = "true"
 
 [benchmarks.serve_env]
 # The METRALE_* levers the ladder is measured under — the published dense
@@ -1509,6 +1523,13 @@ dflash_gamma = "8"
 # activations). The bfcl recipe (bfcl-subset, kat-equality-gate) stays
 # W4A16 as the accuracy reference.
 w4a4_downcast = "true"
+# `--w4a4-downcast-wide`: the same per-row W4A4 GEMV numerics at 33..=64 rows
+# (the C=17..32 verify batches on GDN qkvz/out_proj and attention q/k/v/o),
+# opt-in on top of `--w4a4-downcast` and enabled together with it: on for
+# every gate that carries `w4a4_downcast`, off (engine default) everywhere
+# `w4a4_downcast` is off. Requires `--w4a4-downcast`; the engine ignores it
+# otherwise, with a warning.
+w4a4_downcast_wide = "true"
 
 [benchmarks.param_overrides]
 # ★ NO LONGER THE PLAIN GATE'S INSTRUMENT. Until 2026-09-21 this said "isl
@@ -1785,6 +1806,13 @@ ceiling. Run at --max-seq-len 32768 for this record."""
 # activations). The bfcl recipe (bfcl-subset, kat-equality-gate) stays
 # W4A16 as the accuracy reference.
 w4a4_downcast = "true"
+# `--w4a4-downcast-wide`: the same per-row W4A4 GEMV numerics at 33..=64 rows
+# (the C=17..32 verify batches on GDN qkvz/out_proj and attention q/k/v/o),
+# opt-in on top of `--w4a4-downcast` and enabled together with it: on for
+# every gate that carries `w4a4_downcast`, off (engine default) everywhere
+# `w4a4_downcast` is off. Requires `--w4a4-downcast`; the engine ignores it
+# otherwise, with a warning.
+w4a4_downcast_wide = "true"
 
 
 [benchmarks.metrics.geometry_matched]
