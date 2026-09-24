@@ -48,7 +48,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token || github.token }}
           REPO: ${{ github.repository }}
-          WANT: metrale-macos-burst
+          # The LINUX command runner, not the macOS burst Mac. These two jobs
+          # manage different variables for different runners; a rebrand
+          # find/replace once collapsed both onto the burst label, which routed
+          # every certification command onto macOS the moment the Mac came
+          # online. FALLBACK below is ubuntu-latest precisely because this job
+          # is about the Linux queue.
+          WANT: metrale-cmd
           FALLBACK: ubuntu-latest
         run: |
           set -uo pipefail
