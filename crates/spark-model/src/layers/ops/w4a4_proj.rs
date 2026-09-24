@@ -72,6 +72,12 @@ struct W4a4State {
     /// Activation-reuse twins (`METRALE_W4A4_MX_NT`), bit-identical to mx16/mx32.
     mx16_nt2: KernelHandle,
     mx32_nt4: KernelHandle,
+    /// Persistent activation-staged entries (`METRALE_W4A4_MX_PS`),
+    /// bit-identical to mx16/mx32.
+    mx16_ps: KernelHandle,
+    mx32_ps: KernelHandle,
+    /// Streaming multiprocessors: the persistent entries' grid.
+    sms: u32,
     aq: DevicePtr,
     a_scale: DevicePtr,
     a_gs: DevicePtr,
@@ -112,6 +118,85 @@ fn mx_nt() -> u32 {
     )
 }
 
+/// `METRALE_W4A4_MX_PS` = 1 (default) | 0. At 1, a 9..=32-row launch whose
+/// whole activation stripe fits in shared memory and whose weight has at
+/// least [`PS_MIN_TILES_PER_SM`] 16-row tiles per SM runs the persistent
+/// activation-staged entry (`w4a4_gemv_mx{16,32}_ps`): one CTA per SM pulls
+/// 16-row tiles from a counter and reads the activations from shared memory,
+/// so they leave L2 once per SM instead of once per tile. Bit-identical to
+/// the one-tile kernels. 0 routes those launches back to
+/// [`METRALE_W4A4_MX_NT`](mx_nt)'s kernels. It only acts when the tile
+/// factor is not 1, so `METRALE_W4A4_MX_NT=1` stays a full revert.
+fn mx_ps() -> bool {
+    static PS: OnceLock<bool> = OnceLock::new();
+    *PS.get_or_init(
+        || match std::env::var("METRALE_W4A4_MX_PS").ok().as_deref() {
+            None | Some("") | Some("1") => true,
+            Some("0") => false,
+            Some(v) => panic!("METRALE_W4A4_MX_PS={v}: expected 0 or 1"),
+        },
+    )
+}
+
+/// Largest dynamic shared memory one CTA may opt in to on GB10 (sm_121).
+pub const PS_SMEM_MAX: u32 = 101_376;
+/// The persistent entries need this many 16-row tiles per SM. Below it the
+/// once-per-launch staging is not amortised (dgx1, M=32: k/v 1024x5120 runs
+/// +28% time, the 6144-row z projection -16% energy at +2% time).
+pub const PS_MIN_TILES_PER_SM: u32 = 8;
+
+/// PURE: 8-token column blocks of the persistent entry serving `m` rows
+/// (`w4a4_gemv_mx16_ps` or `w4a4_gemv_mx32_ps`).
+pub fn ps_column_blocks(m: u32) -> u32 {
+    if m <= 16 { 2 } else { 4 }
+}
+
+/// PURE: the host side of the persistent entries' launch contract
+/// (`w4a4_gemv_mx_ps.cuh`): dynamic shared memory for `mb` column blocks with
+/// `sst` k128 chunks staged per warp. 8 warps x sst x mb x (512 B of
+/// fragments + 64 B of scales), plus the 2-block reduction buffer.
+pub fn ps_smem_bytes(mb: u32, sst: u32) -> u32 {
+    8 * sst * mb * 576 + 2 * 4096
+}
+
+/// PURE: k128 chunks in one warp's stripe (chunks c = warp mod 8).
+pub fn ps_stripe_chunks(k: u32) -> u32 {
+    (k / 128).div_ceil(8)
+}
+
+/// How one W4A4 GEMV launch is shaped.
+#[derive(Clone, Copy, Debug)]
+enum MxLaunch {
+    /// Grid ceil(N / rows_per_cta).
+    Tiles {
+        kernel: KernelHandle,
+        rows_per_cta: u32,
+    },
+    /// Grid #SMs, `smem` bytes of dynamic shared memory, `sst` staged chunks.
+    Persistent {
+        kernel: KernelHandle,
+        sst: u32,
+        smem: u32,
+    },
+}
+
+/// PURE: the launch for an `m`-row [`n`, `k`] projection.
+fn mx_plan(s: &W4a4State, m: u32, n: u32, k: u32, nt: u32, ps: bool) -> MxLaunch {
+    if ps && nt != 1 && m > 8 {
+        let kernel = if m <= 16 { s.mx16_ps } else { s.mx32_ps };
+        let sst = ps_stripe_chunks(k);
+        let smem = ps_smem_bytes(ps_column_blocks(m), sst);
+        if smem <= PS_SMEM_MAX && n.div_ceil(16) >= PS_MIN_TILES_PER_SM * s.sms {
+            return MxLaunch::Persistent { kernel, sst, smem };
+        }
+    }
+    let (kernel, rows_per_cta) = mx_pick(s, m, nt);
+    MxLaunch::Tiles {
+        kernel,
+        rows_per_cta,
+    }
+}
+
 /// PURE: (kernel, rows per CTA) for an `m`-row launch at tile factor `nt`.
 fn mx_pick(s: &W4a4State, m: u32, nt: u32) -> (KernelHandle, u32) {
     match (m, nt) {
@@ -150,11 +235,17 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
         h("w4a4_gemv_mx32"),
     );
     let (mx16_nt2, mx32_nt4) = (h("w4a4_gemv_mx16_nt2"), h("w4a4_gemv_mx32_nt4"));
-    let state = if [quant, mx8, mx16, mx32, mx16_nt2, mx32_nt4]
+    let (mx16_ps, mx32_ps) = (h("w4a4_gemv_mx16_ps"), h("w4a4_gemv_mx32_ps"));
+    let state = if [quant, mx8, mx16, mx32, mx16_nt2, mx32_nt4, mx16_ps, mx32_ps]
         .iter()
         .all(|k| k.0 != 0)
     {
-        tracing::info!("w4a4 projection: METRALE_W4A4_MX_NT={}", mx_nt());
+        let sms = gpu.sm_count()?;
+        tracing::info!(
+            "w4a4 projection: METRALE_W4A4_MX_NT={} METRALE_W4A4_MX_PS={} ({sms} SMs)",
+            mx_nt(),
+            u8::from(mx_ps())
+        );
         let (m, k) = (W4A4_MAX_M as usize, W4A4_MAX_K as usize);
         Some(W4a4State {
             quant,
@@ -163,6 +254,9 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             mx32,
             mx16_nt2,
             mx32_nt4,
+            mx16_ps,
+            mx32_ps,
+            sms,
             aq: gpu.alloc(m * k / 2)?,
             a_scale: gpu.alloc(m * k / 16)?,
             a_gs: gpu.alloc(m * 4)?,
@@ -316,10 +410,17 @@ fn proj(
             *last = Some(want);
         }
         drop(last);
-        let (mx, rows_per_cta) = mx_pick(&s, m, mx_nt());
-        KernelLaunch::new(gpu, mx)
-            .grid([div_ceil(n, rows_per_cta), 1, 1])
+        let (mx, grid, smem, sst) = match mx_plan(&s, m, n, k, mx_nt(), mx_ps()) {
+            MxLaunch::Tiles {
+                kernel,
+                rows_per_cta,
+            } => (kernel, div_ceil(n, rows_per_cta), 0, None),
+            MxLaunch::Persistent { kernel, sst, smem } => (kernel, s.sms, smem, Some(sst)),
+        };
+        let launch = KernelLaunch::new(gpu, mx)
+            .grid([grid, 1, 1])
             .block([256, 1, 1])
+            .shared_mem(smem)
             .arg_ptr(s.aq)
             .arg_ptr(s.a_scale)
             .arg_ptr(s.a_gs)
@@ -329,8 +430,11 @@ fn proj(
             .arg_ptr(output)
             .arg_u32(m)
             .arg_u32(n)
-            .arg_u32(k)
-            .launch(stream)?;
+            .arg_u32(k);
+        match sst {
+            Some(sst) => launch.arg_u32(sst).launch(stream)?,
+            None => launch.launch(stream)?,
+        }
         if audit_enabled()
             && !s.audit_ref.is_null()
             && (n as usize) <= AUDIT_MAX_N
