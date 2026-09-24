@@ -52,7 +52,9 @@
 // Grid: (ceil(N/16), 1, 1), block 256 (8 warps split K over k64 blocks,
 // fixed-order reduction, deterministic). Requires K % 128 == 0.
 // The activation-reuse twins (`_ntX`) take X 16-row tiles per CTA:
-// grid (ceil(N/(16*X)), 1, 1), same block and the same bits.
+// grid (ceil(N/(16*X)), 1, 1), same block and the same bits. The persistent
+// entries (`_ps`) take grid (#SMs, 1, 1), dynamic shared memory and one more
+// argument; see w4a4_gemv_mx_ps.cuh.
 
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
@@ -197,6 +199,9 @@ __device__ __forceinline__ void w4a4_gemv_mx_impl(
 // the weight bytes). Warp w still accumulates exactly the k128 chunks
 // c = w (mod 8) in increasing order and the 8 per-warp partials are still
 // summed in warp order, so every twin is bit-identical to its one-tile kernel.
+// Weight loads are `ld.global.cs` (evict-first): the weights are read once, and
+// keeping them out of L1 leaves it to the weight-scale sectors that 4 warps
+// share (dgx1, M=32: o_proj 5120x6144 -10% time vs plain loads).
 //
 // A separate function, NOT a generalisation of w4a4_gemv_mx_impl: an NT=1
 // instantiation of this body computes the same bits but compiles to fewer
@@ -270,8 +275,8 @@ __device__ __forceinline__ void w4a4_gemv_mx_nt_impl(
             const uint2 z2 = make_uint2(0u, 0u);
             #pragma unroll
             for (int q = 0; q < NT; q++) {
-                wl[u][q] = (live && l0[q]) ? *(const uint4*)(w0[q] + c * 64u) : z4;
-                wh[u][q] = (live && l1[q]) ? *(const uint4*)(w1[q] + c * 64u) : z4;
+                wl[u][q] = (live && l0[q]) ? __ldcs((const uint4*)(w0[q] + c * 64u)) : z4;
+                wh[u][q] = (live && l1[q]) ? __ldcs((const uint4*)(w1[q] + c * 64u)) : z4;
                 sw[u][q] = (live && ls[q]) ? *(const uint2*)(ws[q] + c * 8u) : z2;
             }
             #pragma unroll
@@ -368,6 +373,29 @@ W4A4_ENTRY(w4a4_gemv_mx32, 4, 2)   // M <= 32
 // Activation-reuse twins (`METRALE_W4A4_MX_NT`), bit-identical to mx16/mx32.
 W4A4_NT_ENTRY(w4a4_gemv_mx16_nt2, 2, 4, 2)   // 9..16 rows, 32 rows per CTA
 W4A4_NT_ENTRY(w4a4_gemv_mx32_nt4, 4, 1, 4)   // 17..32 rows, 64 rows per CTA
+// 33..64 rows (`--w4a4-downcast-wide`): the same per-row math as mx8/16/32
+// (bit-identical per row to any of them), 8 token blocks.
+W4A4_NT_ENTRY(w4a4_gemv_mx64, 8, 1, 1)
+W4A4_NT_ENTRY(w4a4_gemv_mx64_nt2, 8, 1, 2)
+
+#include "w4a4_gemv_mx_ps.cuh"
+
+#define W4A4_PS_ENTRY(NAME, MB, KU, RJ)                                                   \
+    __device__ unsigned int NAME##_ctr[2];                                                \
+    extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32, 1) void NAME(                 \
+        const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,       \
+        const float* __restrict__ Ag, const unsigned char* __restrict__ Bq,               \
+        const unsigned char* __restrict__ Bs, const float scale2,                         \
+        __nv_bfloat16* __restrict__ C, unsigned int M, unsigned int N, unsigned int K,    \
+        unsigned int sst) {                                                               \
+        w4a4_gemv_mx_ps_impl<MB, KU, RJ>(Aq, As, Ag, Bq, Bs, scale2, C, M, N, K, sst,     \
+                                         NAME##_ctr);                                     \
+    }
+
+// Persistent activation-staged entries (see w4a4_gemv_mx_ps.cuh), bit-identical
+// to mx16/mx32.
+W4A4_PS_ENTRY(w4a4_gemv_mx16_ps, 2, 2, 2)   // 9..16 rows
+W4A4_PS_ENTRY(w4a4_gemv_mx32_ps, 4, 2, 2)   // 17..32 rows
 
 // ── Per-row dynamic NVFP4 activation quantisation ───────────────────────────
 __device__ __forceinline__ unsigned int w4a4_e2m1_rne(float x) {

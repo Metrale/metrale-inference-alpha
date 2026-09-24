@@ -1264,7 +1264,7 @@ impl Qwen3SsmLayer {
                 (2 * h) as u32,
                 stream,
             )?;
-        } else if (4..=ops::w4a4_proj::proj_max_rows() as usize).contains(&num_tokens)
+        } else if (4..=ops::w4a4_proj::ffn_proj_max_rows() as usize).contains(&num_tokens)
             && self
                 .ffn
                 .try_forward_km(normed2_base, num_tokens as u32, ctx, stream)

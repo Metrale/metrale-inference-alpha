@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! ORACLE for the activation-reuse twins of the W4A4 small-M GEMV
-//! (`w4a4_gemv_mx.cu`: `w4a4_gemv_mx16_nt2`, `w4a4_gemv_mx32_nt4`).
+//! (`w4a4_gemv_mx.cu`: `w4a4_gemv_mx16_nt2`, `w4a4_gemv_mx32_nt4`), its
+//! persistent activation-staged entries (`w4a4_gemv_mx16_ps`,
+//! `w4a4_gemv_mx32_ps`) and the `--w4a4-downcast-wide` entries
+//! (`w4a4_gemv_mx64`, `w4a4_gemv_mx64_nt2`).
 //!
 //! `ops::w4a4_proj` routes 9..=32-row launches to the twins by default
 //! (`METRALE_W4A4_MX_NT=4`). That needs no opt-in only because the twins are
@@ -9,9 +12,15 @@
 //!
 //!   1. ARMED: the quantiser, the one-tile entries and every twin resolve.
 //!   2. At every real dense-27B projection shape and every M the twin serves
-//!      (1..=16 for mx16_nt2, 1..=32 for mx32_nt4), the twin's [M, N] output
-//!      equals the one-tile kernel's bit for bit, and row M (a 0xFFFF
-//!      sentinel) is never written.
+//!      (1..=16 for mx16_nt2, 1..=32 for mx32_nt4, 1..=64 for mx64 and
+//!      mx64_nt2), the twin's [M, N] output equals the one-tile kernel's bit
+//!      for bit, and row M (a 0xFFFF sentinel) is never written. Above 32
+//!      rows the reference is mx32 run on rows [0, 32) and [32, M).
+//!   3. The same for each persistent entry, launched through
+//!      `ops::w4a4_proj`'s launch contract (grid = #SMs, its shared memory),
+//!      at every staging depth that fits: 0, 1 and the whole stripe. Every
+//!      case is a fresh launch, so a tile counter that failed to reset would
+//!      show as unwritten output.
 //!
 //! KNOWN-BAD CONTROL (the gate must FAIL it, or it proves nothing):
 //!   A. one weight byte of row 0 flipped between the two runs: check 2 must
@@ -24,13 +33,16 @@
 //!     --example w4a4_gemv_nt_oracle
 
 use anyhow::Result;
+use spark_model::layers::ops::w4a4_proj::{
+    PS_SMEM_MAX, ps_column_blocks, ps_smem_bytes, ps_stripe_chunks,
+};
 use spark_runtime::cuda_backend::MetraleCudaBackend;
 use spark_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use spark_runtime::kernel_args::{KernelLaunch, div_ceil};
 
 const MODULE: &str = "w4a4_gemv_mx";
 const SCALE2: f32 = 0.37;
-const MAX_M: u32 = 32;
+const MAX_M: u32 = 64;
 /// (name, N, K) of every dense-27B projection the W4A4 path serves.
 const SHAPES: [(&str, u32, u32); 8] = [
     ("ffn gate/up", 17408, 5120),
@@ -62,7 +74,7 @@ struct Twin {
     max_m: u32,
 }
 
-const TWINS: [Twin; 2] = [
+const TWINS: [Twin; 4] = [
     Twin {
         name: "w4a4_gemv_mx16_nt2",
         rows: 32,
@@ -75,6 +87,24 @@ const TWINS: [Twin; 2] = [
         base: "w4a4_gemv_mx32",
         max_m: 32,
     },
+    Twin {
+        name: "w4a4_gemv_mx64",
+        rows: 16,
+        base: "w4a4_gemv_mx32",
+        max_m: 64,
+    },
+    Twin {
+        name: "w4a4_gemv_mx64_nt2",
+        rows: 32,
+        base: "w4a4_gemv_mx32",
+        max_m: 64,
+    },
+];
+
+/// A persistent entry, the one-tile entry it must match, its widest M.
+const PERSISTENT: [(&str, &str, u32); 2] = [
+    ("w4a4_gemv_mx16_ps", "w4a4_gemv_mx16", 16),
+    ("w4a4_gemv_mx32_ps", "w4a4_gemv_mx32", 32),
 ];
 
 struct Case<'a> {
@@ -92,22 +122,60 @@ struct Case<'a> {
 impl Case<'_> {
     /// Output [(m+1) x n] with row m as a 0xFFFF sentinel.
     fn run(&self, kh: KernelHandle, rows_per_cta: u32, m: u32) -> Result<Vec<u16>> {
+        self.run_rows(kh, rows_per_cta, m, &[(0, m)])
+    }
+
+    /// `kh` over each (first row, rows) span of an m-row activation.
+    fn run_rows(
+        &self,
+        kh: KernelHandle,
+        rows_per_cta: u32,
+        m: u32,
+        spans: &[(u32, u32)],
+    ) -> Result<Vec<u16>> {
+        self.launch(kh, div_ceil(self.n, rows_per_cta), 0, None, m, spans)
+    }
+
+    /// A persistent entry serving up to `max_m` rows at staging depth `sst`,
+    /// per the launch contract. The shared memory follows the ENTRY's column
+    /// blocks, not `m`'s: mx32_ps is also checked below 17 rows.
+    fn run_ps(&self, kh: KernelHandle, sms: u32, sst: u32, m: u32, max_m: u32) -> Result<Vec<u16>> {
+        let smem = ps_smem_bytes(ps_column_blocks(max_m), sst);
+        self.launch(kh, sms, smem, Some(sst), m, &[(0, m)])
+    }
+
+    fn launch(
+        &self,
+        kh: KernelHandle,
+        grid: u32,
+        smem: u32,
+        sst: Option<u32>,
+        m: u32,
+        spans: &[(u32, u32)],
+    ) -> Result<Vec<u16>> {
         let bytes = (m as usize + 1) * self.n as usize * 2;
         self.g.copy_h2d(&vec![0xFFu8; bytes], self.c)?;
-        KernelLaunch::new(self.g, kh)
-            .grid([div_ceil(self.n, rows_per_cta), 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(self.aq)
-            .arg_ptr(self.a_scale)
-            .arg_ptr(self.a_gs)
-            .arg_ptr(self.wq)
-            .arg_ptr(self.ws)
-            .arg_f32(SCALE2)
-            .arg_ptr(self.c)
-            .arg_u32(m)
-            .arg_u32(self.n)
-            .arg_u32(self.k)
-            .launch(0)?;
+        for &(r0, rows) in spans {
+            let r0 = r0 as usize;
+            let launch = KernelLaunch::new(self.g, kh)
+                .grid([grid, 1, 1])
+                .block([256, 1, 1])
+                .shared_mem(smem)
+                .arg_ptr(self.aq.offset(r0 * self.k as usize / 2))
+                .arg_ptr(self.a_scale.offset(r0 * self.k as usize / 16))
+                .arg_ptr(self.a_gs.offset(r0 * 4))
+                .arg_ptr(self.wq)
+                .arg_ptr(self.ws)
+                .arg_f32(SCALE2)
+                .arg_ptr(self.c.offset(r0 * self.n as usize * 2))
+                .arg_u32(rows)
+                .arg_u32(self.n)
+                .arg_u32(self.k);
+            match sst {
+                Some(sst) => launch.arg_u32(sst).launch(0)?,
+                None => launch.launch(0)?,
+            }
+        }
         self.g.synchronize(0)?;
         let mut out = vec![0u8; bytes];
         self.g.copy_d2h(self.c, &mut out)?;
@@ -139,10 +207,16 @@ fn main() -> Result<()> {
         eprintln!("ARMED: w4a4_quant_rows not loaded");
         std::process::exit(2);
     };
-    if resolved.iter().any(|(b, t)| b.is_none() || t.is_none()) {
-        eprintln!("ARMED: a one-tile entry or twin is not loaded");
+    let persistent: Vec<_> = PERSISTENT.iter().map(|(p, b, _)| (h(b), h(p))).collect();
+    if resolved
+        .iter()
+        .chain(&persistent)
+        .any(|(b, t)| b.is_none() || t.is_none())
+    {
+        eprintln!("ARMED: a one-tile entry, twin or persistent entry is not loaded");
         std::process::exit(2);
     }
+    let sms = g.sm_count()?;
 
     let (k_max, n_max) = (17408usize, 17408usize);
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
@@ -203,7 +277,12 @@ fn main() -> Result<()> {
                     continue;
                 }
                 let (base, twin) = (base.expect("armed"), twin.expect("armed"));
-                let want = case.run(base, 16, m)?;
+                // mx32 serves at most 32 rows: split the reference above that.
+                let want = if m <= 32 {
+                    case.run(base, 16, m)?
+                } else {
+                    case.run_rows(base, 16, m, &[(0, 32), (32, m - 32)])?
+                };
                 let got = case.run(twin, t.rows, m)?;
                 let d = mismatches(&want, &got, m, n);
                 cases += 1;
@@ -228,14 +307,48 @@ fn main() -> Result<()> {
                     }
                 }
             }
+            for ((name, _, max_m), (base, ps)) in PERSISTENT.iter().zip(&persistent) {
+                if m > *max_m {
+                    continue;
+                }
+                let (base, ps) = (base.expect("armed"), ps.expect("armed"));
+                let want = case.run(base, 16, m)?;
+                let full = ps_stripe_chunks(k);
+                let mut depths = vec![0, 1, full];
+                depths.retain(|&d| ps_smem_bytes(ps_column_blocks(*max_m), d) <= PS_SMEM_MAX);
+                depths.dedup();
+                for sst in depths {
+                    let got = case.run_ps(ps, sms, sst, m, *max_m)?;
+                    let d = mismatches(&want, &got, m, n);
+                    cases += 1;
+                    if d != 0 {
+                        bad += 1;
+                        pass = false;
+                        println!("  DIFF {label} M={m} {name} sst={sst}: {d} elements");
+                    }
+                }
+                if m == *max_m {
+                    let mut flipped = wq_host[..64].to_vec();
+                    flipped[0] ^= 0x77;
+                    g.copy_h2d(&flipped, wq)?;
+                    let got = case.run_ps(ps, sms, 0, m, *max_m)?;
+                    g.copy_h2d(&wq_host[..64], wq)?;
+                    if mismatches(&want, &got, m, n) != 0 {
+                        control_tripped = true;
+                    } else {
+                        pass = false;
+                        println!("  CONTROL A did not trip: {label} {name}");
+                    }
+                }
+            }
         }
-        println!("{label} N={n:5} K={k:5}: {bad} differing (M, twin) cases");
+        println!("{label} N={n:5} K={k:5}: {bad} differing (M, kernel) cases");
         g.free(wq)?;
         g.free(ws)?;
     }
     pass &= control_tripped;
     println!(
-        "{cases} (shape, M, twin) cases vs the one-tile kernels; control A tripped: {control_tripped}; {}",
+        "{cases} (shape, M, kernel[, depth]) cases vs the one-tile kernels; control A tripped: {control_tripped}; {}",
         if pass { "PASS" } else { "FAIL" }
     );
     std::process::exit(if pass { 0 } else { 1 });

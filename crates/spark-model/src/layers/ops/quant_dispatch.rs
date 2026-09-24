@@ -213,7 +213,10 @@ pub fn w4a16_gemv_batchm(
     // The handle's template caps the rows: batch16 SILENTLY truncates above 16
     // (rows 16.. never written). batch32 (MAX_M=32) is handed out only for
     // 17..=32 rows under `--w4a4-downcast`, as the W4A4 path's fallback.
-    debug_assert!(m <= 32, "w4a16_gemv_batchm caps at M=32 (batch32; m={m})");
+    // A hard check, not a debug_assert: under `--w4a4-downcast-wide` the tier
+    // table hands a nonzero handle out for 33..=64 rows (the W4A4 path serves
+    // those), so a W4A16 caller reaching here with m > 32 must fail loudly.
+    anyhow::ensure!(m <= 32, "w4a16_gemv_batchm caps at M=32 (batch32; m={m})");
     // Tensor-core sibling first (same arguments, its own geometry): the
     // CUDA-core tiers below cost 50-60% more GPU-rail energy per launch at
     // M>=2 for the same weight stream. See `gemv_tc`.

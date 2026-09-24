@@ -185,6 +185,9 @@ impl W4a16BatchmTiers {
     pub fn kernel(&self, m: u32) -> KernelHandle {
         let edge = crate::layers::ops::w4a4_proj::proj_max_rows();
         if m > W4A16_BATCHM_WIDTHS[W4A16_BATCHM_WIDTHS.len() - 1] && m <= edge {
+            // 33..=64 exist only under `--w4a4-downcast-wide`, whose W4A4
+            // path serves every launch (`w4a4_proj::proj` refuses, rather
+            // than mis-serves, a 33+-row W4A16 fallback).
             return if m <= 16 { self.wide } else { self.wide32 };
         }
         select_tier(m, self.present(), exact_m_tiers_enabled())

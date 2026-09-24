@@ -38,8 +38,10 @@ use spark_runtime::kernel_args::{KernelLaunch, div_ceil};
 
 use crate::weight_map::QuantizedWeight;
 
-/// Rows the widest entry (`w4a4_gemv_mx32`) covers.
+/// Rows the narrow entries (`w4a4_gemv_mx32`) cover.
 pub const W4A4_MAX_M: u32 = 32;
+/// Rows the wide entries (`w4a4_gemv_mx64*`, `--w4a4-downcast-wide`) cover.
+pub const W4A4_WIDE_MAX_M: u32 = 64;
 /// Largest K the scratch is sized for (every 27B projection is <= 17408).
 pub const W4A4_MAX_K: u32 = 32768;
 
@@ -63,6 +65,30 @@ pub fn w4a4_downcast_enabled() -> bool {
     *W4A4_DOWNCAST.get_or_init(|| false)
 }
 
+/// `--w4a4-downcast-wide`: THE one reader. Same publication rules as
+/// [`W4A4_DOWNCAST`]; the serve publishes `downcast && wide`.
+static W4A4_WIDE: OnceLock<bool> = OnceLock::new();
+
+/// Publish `--w4a4-downcast-wide`. Returns the value in force.
+pub fn set_w4a4_wide_from_cli(on: bool) -> bool {
+    let _ = W4A4_WIDE.set(on);
+    *W4A4_WIDE.get().expect("just set")
+}
+
+/// `--w4a4-downcast-wide` in force (and `--w4a4-downcast` with it)?
+pub fn w4a4_wide_enabled() -> bool {
+    w4a4_downcast_enabled() && *W4A4_WIDE.get_or_init(|| false)
+}
+
+/// Widest row count the W4A4 projection path serves right now.
+pub fn w4a4_max_m() -> u32 {
+    if w4a4_wide_enabled() {
+        W4A4_WIDE_MAX_M
+    } else {
+        W4A4_MAX_M
+    }
+}
+
 #[derive(Clone, Copy)]
 struct W4a4State {
     quant: KernelHandle,
@@ -72,6 +98,15 @@ struct W4a4State {
     /// Activation-reuse twins (`METRALE_W4A4_MX_NT`), bit-identical to mx16/mx32.
     mx16_nt2: KernelHandle,
     mx32_nt4: KernelHandle,
+    /// Persistent activation-staged entries (`METRALE_W4A4_MX_PS`),
+    /// bit-identical to mx16/mx32.
+    mx16_ps: KernelHandle,
+    mx32_ps: KernelHandle,
+    /// Streaming multiprocessors: the persistent entries' grid.
+    sms: u32,
+    /// 33..=64 rows under `--w4a4-downcast-wide` (zero handles otherwise).
+    mx64: KernelHandle,
+    mx64_nt2: KernelHandle,
     aq: DevicePtr,
     a_scale: DevicePtr,
     a_gs: DevicePtr,
@@ -92,36 +127,11 @@ fn audit_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("METRALE_W4A4_PROJ_AUDIT").is_some_and(|v| !v.is_empty()))
 }
 
-/// `METRALE_W4A4_MX_NT` = 4 (default) | 1. At 4 the 9..=32-row W4A4 GEMV
-/// runs the activation-reuse twins: 17..=32 rows take 4 16-row weight tiles
-/// per CTA, 9..=16 rows take 2, and each warp feeds its
-/// activation fragments to every tile from registers, so the activation
-/// matrix is re-read from L2 that many times less. Bit-identical to the
-/// one-tile kernels (same per-warp chunk order, warp-order reduction). 1 is
-/// the kill switch: the historical one-tile kernels, unchanged code.
-/// dgx1 ABBA vs 178a1246 (GPU-rail J/token): C=8 -6.1% at +0.8% tok/s,
-/// C=16 -9.1% at -2.6% tok/s.
-fn mx_nt() -> u32 {
-    static NT: OnceLock<u32> = OnceLock::new();
-    *NT.get_or_init(
-        || match std::env::var("METRALE_W4A4_MX_NT").ok().as_deref() {
-            None | Some("") | Some("4") => 4,
-            Some("1") => 1,
-            Some(v) => panic!("METRALE_W4A4_MX_NT={v}: expected 1 or 4"),
-        },
-    )
-}
-
-/// PURE: (kernel, rows per CTA) for an `m`-row launch at tile factor `nt`.
-fn mx_pick(s: &W4a4State, m: u32, nt: u32) -> (KernelHandle, u32) {
-    match (m, nt) {
-        (0..=8, _) => (s.mx8, 16),
-        (9..=16, 1) => (s.mx16, 16),
-        (9..=16, _) => (s.mx16_nt2, 32),
-        (_, 1) => (s.mx32, 16),
-        _ => (s.mx32_nt4, 64),
-    }
-}
+// `w4a4_proj.rs` is loaded via `#[path = "ops/w4a4_proj.rs"]`, so the
+// explicit `#[path]` is required to nest the submodule under this file.
+#[path = "w4a4_proj/mx_plan.rs"]
+mod mx_plan;
+pub use mx_plan::*;
 
 fn cache() -> &'static Mutex<Vec<(usize, Option<W4a4State>)>> {
     static CACHE: OnceLock<Mutex<Vec<(usize, Option<W4a4State>)>>> = OnceLock::new();
@@ -150,12 +160,28 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
         h("w4a4_gemv_mx32"),
     );
     let (mx16_nt2, mx32_nt4) = (h("w4a4_gemv_mx16_nt2"), h("w4a4_gemv_mx32_nt4"));
-    let state = if [quant, mx8, mx16, mx32, mx16_nt2, mx32_nt4]
+    let (mx16_ps, mx32_ps) = (h("w4a4_gemv_mx16_ps"), h("w4a4_gemv_mx32_ps"));
+    let state = if [quant, mx8, mx16, mx32, mx16_nt2, mx32_nt4, mx16_ps, mx32_ps]
         .iter()
         .all(|k| k.0 != 0)
     {
-        tracing::info!("w4a4 projection: METRALE_W4A4_MX_NT={}", mx_nt());
-        let (m, k) = (W4A4_MAX_M as usize, W4A4_MAX_K as usize);
+        let sms = gpu.sm_count()?;
+        tracing::info!(
+            "w4a4 projection: METRALE_W4A4_MX_NT={} METRALE_W4A4_MX_PS={} ({sms} SMs) wide={} (max rows {}, ffn {})",
+            mx_nt(),
+            u8::from(mx_ps()),
+            w4a4_wide_enabled(),
+            w4a4_max_m(),
+            ffn_proj_max_rows()
+        );
+        let (m, k) = (w4a4_max_m() as usize, W4A4_MAX_K as usize);
+        let wide = |f: &str| {
+            if w4a4_wide_enabled() {
+                h(f)
+            } else {
+                KernelHandle(0)
+            }
+        };
         Some(W4a4State {
             quant,
             mx8,
@@ -163,6 +189,11 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             mx32,
             mx16_nt2,
             mx32_nt4,
+            mx16_ps,
+            mx32_ps,
+            sms,
+            mx64: wide("w4a4_gemv_mx64"),
+            mx64_nt2: wide("w4a4_gemv_mx64_nt2"),
             aq: gpu.alloc(m * k / 2)?,
             a_scale: gpu.alloc(m * k / 16)?,
             a_gs: gpu.alloc(m * 4)?,
@@ -197,20 +228,25 @@ fn state(gpu: &dyn GpuBackend) -> Option<W4a4State> {
 /// arm deliberately keeps the W4A16 edge.
 pub fn proj_max_rows() -> u32 {
     if w4a4_downcast_enabled() {
-        W4A4_MAX_M
+        w4a4_max_m()
     } else {
         super::gemv_tc::narrow_gemv_max_rows()
     }
 }
 
-/// PURE: may the W4A4 path serve this launch?
-pub fn w4a4_route(m: u32, n: u32, k: u32, enabled: bool) -> bool {
-    enabled
-        && (1..=W4A4_MAX_M).contains(&m)
-        && n > 0
-        && k > 0
-        && k.is_multiple_of(64)
-        && k <= W4A4_MAX_K
+/// Row edge of the two dense-FFN narrow arms: [`proj_max_rows`], but never
+/// past 32. `--w4a4-downcast-wide` leaves the 33..=64-row dense FFN on its
+/// W4A4 MMQ (a real tiled GEMM with shared-memory activation reuse), which
+/// measured cheaper there than the GEMV twin: dgx1 C=32, GPU-rail J/token
+/// 0.192 with the FFN on the MMQ vs 0.203 with it on `mx64_nt2`.
+pub fn ffn_proj_max_rows() -> u32 {
+    proj_max_rows().min(W4A4_MAX_M)
+}
+
+/// PURE: may the W4A4 path serve this launch? `wide` = `--w4a4-downcast-wide`.
+pub fn w4a4_route(m: u32, n: u32, k: u32, enabled: bool, wide: bool) -> bool {
+    let max_m = if wide { W4A4_WIDE_MAX_M } else { W4A4_MAX_M };
+    enabled && (1..=max_m).contains(&m) && n > 0 && k > 0 && k.is_multiple_of(64) && k <= W4A4_MAX_K
 }
 
 /// The projection launcher: W4A4 FP4 MMA when opted in and prepared, else
@@ -298,7 +334,7 @@ fn proj(
     stream: u64,
     same_input: bool,
 ) -> Result<()> {
-    if w4a4_route(m, n, k, w4a4_downcast_enabled())
+    if w4a4_route(m, n, k, w4a4_downcast_enabled(), w4a4_wide_enabled())
         && let Some(s) = state(gpu)
     {
         let want: QuantKey = (key(gpu), input.0, m, k, stream);
@@ -316,10 +352,21 @@ fn proj(
             *last = Some(want);
         }
         drop(last);
-        let (mx, rows_per_cta) = mx_pick(&s, m, mx_nt());
-        KernelLaunch::new(gpu, mx)
-            .grid([div_ceil(n, rows_per_cta), 1, 1])
+        let (mx, grid, smem, sst) = match mx_plan(&s, m, n, k, mx_nt(), mx_ps()) {
+            MxLaunch::Tiles {
+                kernel,
+                rows_per_cta,
+            } => (kernel, div_ceil(n, rows_per_cta), 0, None),
+            MxLaunch::Persistent { kernel, sst, smem } => (kernel, s.sms, smem, Some(sst)),
+        };
+        anyhow::ensure!(
+            mx.0 != 0,
+            "w4a4: no kernel for {m} rows (--w4a4-downcast-wide kernels missing)"
+        );
+        let launch = KernelLaunch::new(gpu, mx)
+            .grid([grid, 1, 1])
             .block([256, 1, 1])
+            .shared_mem(smem)
             .arg_ptr(s.aq)
             .arg_ptr(s.a_scale)
             .arg_ptr(s.a_gs)
@@ -329,8 +376,11 @@ fn proj(
             .arg_ptr(output)
             .arg_u32(m)
             .arg_u32(n)
-            .arg_u32(k)
-            .launch(stream)?;
+            .arg_u32(k);
+        match sst {
+            Some(sst) => launch.arg_u32(sst).launch(stream)?,
+            None => launch.launch(stream)?,
+        }
         if audit_enabled()
             && !s.audit_ref.is_null()
             && (n as usize) <= AUDIT_MAX_N
@@ -361,6 +411,10 @@ fn proj(
         }
         return Ok(());
     }
+    anyhow::ensure!(
+        m <= W4A4_MAX_M,
+        "w4a4: {m} rows reached the W4A16 fallback, which covers at most {W4A4_MAX_M}"
+    );
     super::w4a16_gemv_batchm(gpu, batch_kernel, input, weight, output, m, n, k, stream)
 }
 
