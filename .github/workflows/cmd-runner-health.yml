@@ -151,18 +151,28 @@ jobs:
           org_online=$(count_runners "orgs/$ORG") || org_online=UNKNOWN
           case "$org_online" in ''|*[!0-9]*) org_online=UNKNOWN ;; esac
 
-          # A positive count from either scope proves a runner is there. Zero
-          # proves absence only when BOTH scopes answered -- a scope that
-          # errored could be hiding the runner, and guessing "offline" would
-          # move the Metal job off a Mac that is actually available.
-          if [ "$repo_online" != UNKNOWN ] && [ "$org_online" != UNKNOWN ]; then
-            online=$((repo_online + org_online))
-          elif [ "$repo_online" != UNKNOWN ] && [ "$repo_online" -gt 0 ]; then
-            online=$repo_online
-          elif [ "$org_online" != UNKNOWN ] && [ "$org_online" -gt 0 ]; then
-            online=$org_online
-          else
+          # Only a total blackout is UNKNOWN. If EITHER scope answered, trust
+          # what it said and treat the unreadable scope as empty.
+          #
+          # The stricter rule -- zero proves absence only when BOTH scopes
+          # answered -- assumed both are readable. They are not: listing
+          # repository runners needs administration:read, which the
+          # certification App does not have, so repo_online is permanently
+          # UNKNOWN. Combined with org:0 when the Mac is Off, that rule never
+          # cleared the label, and every Metal job queued against a label
+          # nobody answers.
+          #
+          # The two failure directions are not symmetric. Guessing "offline"
+          # wrongly sends a job to macos-14: slower, still correct. Guessing
+          # "online" wrongly sends it to a runner that never answers: queued
+          # until it is cancelled. For a runner that is Off by design most of
+          # the time, fail toward the hosted runner.
+          if [ "$repo_online" = UNKNOWN ] && [ "$org_online" = UNKNOWN ]; then
             online=UNKNOWN
+          else
+            r=$repo_online; [ "$r" = UNKNOWN ] && r=0
+            o=$org_online;  [ "$o" = UNKNOWN ] && o=0
+            online=$((r + o))
           fi
           echo "scopes -- repo:$repo_online org:$org_online -> $online"
 
