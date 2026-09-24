@@ -4,7 +4,6 @@
       "staticDistDir": "./site/build",
       "url": [
         "http://localhost/index.html",
-        "http://localhost/engine.html",
         "http://localhost/control.html",
         "http://localhost/diligence.html"
       ],

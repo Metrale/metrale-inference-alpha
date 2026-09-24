@@ -418,7 +418,7 @@ describe('the Cost tab', () => {
   test('the dashboard opens it from a deep link and hides the global model select', () => {
     // BenchmarkDashboard reads location.hash at first render (SSR runs no
     // effects, so nothing writes it back).
-    globalThis.location = { hash: '#bench=cost&subject=qwen38-27b', pathname: '/engine', search: '' };
+    globalThis.location = { hash: '#bench=cost&subject=qwen38-27b', pathname: '/', search: '' };
     let d;
     try {
       d = text(html(Dashboard, { onclose: () => {} }));

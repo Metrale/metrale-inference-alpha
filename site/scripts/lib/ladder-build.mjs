@@ -336,7 +336,7 @@ export function buildLadder(manifest, { subject, rawOf, harnessRepoSha256 }) {
   }
   out.concurrencies = subj.rungs.map((r) => r.c);
   // ★ THE PUBLISHED TABLE USES FULL-LADDER LEGS ONLY. `out.rows` is what
-  // ConcurrencyLadder, Verified and marketing.js render -- the per-rung
+  // ConcurrencyLadder and Verified render -- the per-rung
   // "Metrale Engine vs vLLM" claim -- so a leg that stops partway would either break
   // the row or, worse, silently enter `ratio_vs_fastest` at the rungs it does
   // have and change a published ratio at some rungs but not others.

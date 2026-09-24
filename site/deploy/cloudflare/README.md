@@ -40,6 +40,10 @@ from:
 
 ## Redirect rules
 
+Path redirects live in `static/_redirects` and ship with the build; Pages
+evaluates them before static assets. `/engine` (and its `.html` and trailing
+slash spellings) is a 301 to `/`, where that page now lives.
+
 `_redirects` host rules do not fire on these projects, and a hostname attached
 to a Pages project never reaches the zone's ruleset engine. A hostname that
 must redirect (for example a `www.` alias) therefore stays OFF the Pages

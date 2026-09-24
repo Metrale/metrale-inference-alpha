@@ -123,7 +123,6 @@ push(
   `- Benchmark results: ${ladder.results_doc_url}`,
   `- Discord: ${discordUrl}`,
   '- Site: https://dev.metrale.ai',
-  `- Developer page: https://dev.metrale.ai${data.ENGINE}`,
   '- Documentation: https://book.dev.metrale.ai — full book, also at /llms.txt',
   '- Engineering blog: https://blog.dev.metrale.ai — also at /llms.txt',
   '',

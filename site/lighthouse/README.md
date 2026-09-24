@@ -1,6 +1,6 @@
 # Lighthouse gate
 
-`index.html` must score **100 on all four categories**. That is the marketing
+`index.html` must score **100 on all four categories**. That is the front
 page and there is no excuse for anything less.
 
 `control.html` must score 100 on performance, accessibility and SEO, and is held

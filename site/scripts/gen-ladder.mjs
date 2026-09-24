@@ -46,7 +46,7 @@ const OUT = resolve(LIB, 'ladder.generated.json');
 const OUT_ALL = resolve(LIB, 'ladders.generated.json');
 
 // The subject whose ladder is ALSO written as ladder.generated.json: the
-// marketing claim on Verified/Home/the deck is the dense campaign. Explicit,
+// marketing claim on Verified/the deck is the dense campaign. Explicit,
 // not "the first subject" — a reordered list must not move the claim.
 export const PUBLISHED_SUBJECT = 'qwen38-27b';
 

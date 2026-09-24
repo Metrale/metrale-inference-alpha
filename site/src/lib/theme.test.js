@@ -83,7 +83,7 @@ test('when storage is unreadable the page still falls to dark', () => {
 });
 
 test('the boot script fetches nothing: no hero image is queued on any page', () => {
-  for (const pathname of ['/', '/index.html', '/engine']) {
+  for (const pathname of ['/', '/index.html', '/control']) {
     for (const stored of ['dark', 'light', null]) {
       expect(runBootScript({ stored, pathname }).preloads).toHaveLength(0);
     }
