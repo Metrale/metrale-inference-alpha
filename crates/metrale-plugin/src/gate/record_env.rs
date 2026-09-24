@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! What a gate record discloses about the ENVIRONMENT its server ran under:
-//! the three scheduler controls with their defaults filled in (`perf_env`),
-//! and the whole `METRALE_*` lever set the gate applied (`serve_env`).
+//! the co-dispatch timing controls with their defaults filled in
+//! (`perf_env`), and the whole `METRALE_*` lever set the gate applied
+//! (`serve_env`).
 //!
 //! Split out of `record.rs` at the 500-line cap. The `PERF_CONTROLS` table
 //! and `resolve_perf_env` are an exact piecewise move; `with_serve_env` is
@@ -15,14 +16,49 @@ use super::record::GateRecord;
 /// The scheduler performance controls a gate record discloses, each with the
 /// default the scheduler applies when it is unset.
 ///
+/// ★ `METRALE_PREFILL_CODISPATCH` itself is NOT here since G22 (2026-09-23).
+/// It became the `--prefill-codispatch` flag, which a flag-driven serve never
+/// writes back to the environment, so resolving it here disclosed the table
+/// default `0` for serves running `--prefill-codispatch true` — every
+/// concurrency-sweep record from 6c75c09da4 on. The flag is disclosed from the
+/// resolved serve instead (`record_serve::PREFILL_CODISPATCH` in
+/// `serve_resolved`), and a recipe that still declares the legacy variable has
+/// it disclosed in `serve_env`. The two timing controls stay: the scheduler
+/// still reads them from the environment only.
+///
 /// Kept beside the record rather than imported from the scheduler because
 /// `metrale-plugin` does not depend on `spark-server`. That is a real duplication
 /// and `perf_env_defaults_match_the_scheduler` pins it: if a default moves in
 /// `scheduler::mod_helpers`, that test is what fails.
-const PERF_CONTROLS: [(&str, &str); 3] = [
-    ("METRALE_PREFILL_CODISPATCH", "0"),
+///
+/// `METRALE_NO_W4A16_TC` is a PRESENCE kill switch (any non-empty value, `0`
+/// included, turns the tensor-core small-M NVFP4 GEMV off), so its default is
+/// the literal `unset`, the one value under which the tensor-core path ran.
+/// `METRALE_W4A16_TC_WIDE` is the opposite polarity: an OPT-IN (any non-empty
+/// value) that widens the tensor-core row edge from 8 to 16, so `unset` means
+/// it did NOT run. `record_env_tests` pins both rules against
+/// `layers/ops/gemv_tc.rs`. The W4A4 activation downcast is NOT here: it is
+/// the `--w4a4-downcast` flag, disclosed in `serve_resolved`
+/// (`record_serve::W4A4_DOWNCAST`).
+///
+/// `METRALE_NO_MTP_TC` is the same kind of PRESENCE kill switch as
+/// `METRALE_NO_W4A16_TC`, for the MTP drafter's tensor-core BF16 GEMV: default
+/// `unset` (the path ran), any set value disclosed verbatim.
+/// `tc_mtp_switch_default_matches_the_lever` pins that rule against
+/// `layers/ops/dense_gemv_tc.rs`.
+///
+/// `METRALE_NO_BORROW_STREAK_LIMIT` is the same kind of PRESENCE kill switch,
+/// for the steady-state CUDA-graph borrow guard (a batch that keeps
+/// borrowing a wider graph captures its own after 8 steps): default `unset`
+/// (the guard ran). `borrow_streak_switch_default_matches_the_lever` pins it
+/// against `model/trait_impl/borrow_streak.rs`.
+const PERF_CONTROLS: [(&str, &str); 6] = [
     ("METRALE_PREFILL_CODISPATCH_WINDOW_MS", "100"),
     ("METRALE_PREFILL_CODISPATCH_SETTLE_MS", "10"),
+    ("METRALE_NO_W4A16_TC", "unset"),
+    ("METRALE_W4A16_TC_WIDE", "unset"),
+    ("METRALE_NO_MTP_TC", "unset"),
+    ("METRALE_NO_BORROW_STREAK_LIMIT", "unset"),
 ];
 
 /// Resolve the `PERF_CONTROLS` table through `lookup`, substituting each
@@ -52,9 +88,10 @@ impl GateRecord {
     /// `from_run` reads the co-dispatch controls off THIS process's
     /// environment, which was exact while every gate served in-process. A
     /// leased server is a child that was given the declared set on top of
-    /// the inherited environment, so a declared `METRALE_PREFILL_CODISPATCH=1`
-    /// the harness does not itself carry would otherwise be disclosed as `0`
-    /// — the record contradicting the server. The applied set answers first;
+    /// the inherited environment, so a declared
+    /// `METRALE_PREFILL_CODISPATCH_WINDOW_MS=50` the harness does not itself
+    /// carry would otherwise be disclosed as `100` — the record contradicting
+    /// the server. The applied set answers first;
     /// the process environment still answers for anything it does not name,
     /// which after `serve_env::reconcile` can only be the defaults.
     #[must_use]
