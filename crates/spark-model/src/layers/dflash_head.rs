@@ -1,0 +1,1076 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! DFlash block-diffusion draft head implementing [`DraftProposer`].
+//!
+//! Block-diffusion drafter (Z Lab, arXiv 2602.06036): a small Qwen3-architecture
+//! transformer (8 layers, hidden=2048, GQA 32:4, head_dim=128) that emits γ=16
+//! tokens **in a single forward pass** via bidirectional in-block attention.
+//! Conditioned on five intermediate hidden states captured from the target
+//! model at `target_layer_ids` (e.g., `[1, 10, 19, 28, 37]` for
+//! Qwen3.6-35B-A3B-DFlash), projected through a single `fc` layer at model
+//! entry — NOT per-layer KV injection (early plan was wrong; cf. vLLM
+//! `qwen3_dflash.py`).
+//!
+//! Phase 1 deliverable: type + trait wiring. The actual γ-block forward kernel
+//! (`inferspark_dflash_block_attn_fp8`) lands in Phase 2; until then `propose()`
+//! returns the bonus token repeated `num_drafts` times so the verify path
+//! degenerates to single-token decode (acceptance ~100% but no speedup).
+
+use parking_lot::Mutex;
+use std::any::Any;
+
+use anyhow::Result;
+use spark_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use spark_runtime::kv_cache::PagedKvCache;
+
+use crate::speculative::{DraftProposer, ProposerState};
+use crate::weight_map::{DenseWeight, QuantizedWeight};
+
+/// Kernel handles for the DFlash γ-block forward chain. All resolved once
+/// at `BlockDiffusionDraftHead::from_weights` against the active GPU backend
+/// (which compiles target-specific PTX at startup); subsequent
+/// `propose()` calls just `KernelLaunch::new(...).launch(stream)`.
+pub struct DflashKernels {
+    pub rms_norm: KernelHandle,
+    pub residual_rms_norm: KernelHandle,
+    pub dense_gemv: KernelHandle,
+    pub dense_gemm: KernelHandle,
+    /// NVFP4 GEMM for the final logits when the shared lm_head is NVFP4
+    /// (e.g. Holo): a BF16 `dense_gemm` on NVFP4-packed bytes reads garbage
+    /// (and ~4× OOB → CUDA-700). `.0 == 0` when the target lm_head is BF16.
+    pub w4a16_gemm: KernelHandle,
+    pub dense_gemm_pipelined: KernelHandle,
+    pub rope_qwen3: KernelHandle,
+    pub reshape_cache_fp8: KernelHandle,
+    /// BF16 KV cache writeback. Used by Phase 2 `precompute_ctx_kv` and
+    /// the per-layer γ-block `reshape_and_cache` call to populate the
+    /// drafter's BF16 paged cache before each `prefill_attention_paged_dflash`.
+    pub reshape_cache_bf16: KernelHandle,
+    pub prefill_attn_dflash_fp8: KernelHandle,
+    /// BF16 paged-attention dispatcher for the DFlash γ-block.
+    /// Calls `inferspark_prefill_paged` with `causal_mask_enabled=0`,
+    /// reading BF16 K/V from the per-layer paged cache pool. Phase 2
+    /// (Option B) drafter attention runs through this kernel; the FP8
+    /// variant above is retained for a future quality-validated FP8 KV
+    /// path. See `ops::prefill_attention_paged_dflash`.
+    pub prefill_attn_dflash_bf16: KernelHandle,
+    /// Phase 5 (CUDA graph) variant of `prefill_attn_dflash_bf16` that reads
+    /// `kv_len` and `q_offset` from device pointers instead of taking them as
+    /// kernel scalar args. Used by the graph-captured forward_block path so a
+    /// single graph instance can be replayed across steps with different
+    /// dynamic values written to the indirect-args buffer pre-launch.
+    /// Resolves to kernel `inferspark_prefill_paged_indirect`.
+    pub prefill_attn_dflash_bf16_indirect: KernelHandle,
+    pub silu_mul: KernelHandle,
+    pub residual_add: KernelHandle,
+    pub argmax: KernelHandle,
+    pub batched_embed: KernelHandle,
+    /// Phase 2 Option B: builds `[count]` i32 slot indices on-device
+    /// from a host-provided block_table. Used by propose.rs to populate
+    /// the slot_mapping passed to reshape_and_cache and precompute_ctx_kv.
+    pub fill_slots: KernelHandle,
+    /// Non-paged prefill attention (used for the γ-block self-attention
+    /// when there's no persistent K/V cache to walk).
+    pub prefill_attn: KernelHandle,
+    /// Phase G — BF16 → FP8 E4M3 per-row weight quantization. Used at
+    /// model load time to convert the seven dense-GEMM drafter weights
+    /// (q/k/v/o/gate/up/down) when `METRALE_DFLASH_DRAFTER_FP8=1`. Never
+    /// on the hot path.
+    pub quantize_bf16_to_fp8: KernelHandle,
+    /// Phase G — Row-scaled BF16 × FP8 → BF16 GEMM. Consumes the
+    /// `Fp8DenseWeight` (FP8 weight + per-row f32 scale) produced at
+    /// load time by `quantize_bf16_to_fp8`. Wraps
+    /// `kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu fp8_gemm_t_row_scaled`.
+    /// Replaces `dense_gemm_bf16` on the seven dense-GEMM call sites in
+    /// `forward_block_layer_pre_attn` / `_post_attn` when
+    /// `self.quant == DflashQuantization::Fp8Weights`.
+    pub fp8_gemm_n128_row_scaled: KernelHandle,
+    /// Phase G — Row-scaled BF16 × FP8 → BF16 GEMV (M=1) for the
+    /// lm_head fall-back. At γ=16 vs vocab=248320 the row-scaled GEMM
+    /// wastes 75% of its M_TILE; the GEMV in a γ-loop is faster.
+    pub dense_gemv_fp8w: KernelHandle,
+    /// Phase G — Small-M (M≤16) row-scaled FP8 GEMM. Drop-in replacement
+    /// for `fp8_gemm_n128_row_scaled` when M=γ=16. Single warp per CTA,
+    /// no wasted M_TILE rows. Used by the lm_head GEMM.
+    pub fp8_gemm_n128_row_scaled_m16: KernelHandle,
+    /// Register-tiled batched row-scaled FP8 GEMV (M<=8, T=2 outputs per
+    /// thread) — the FP8 twin of `w4a16_gemv_batch8_rt2`. Preferred over
+    /// BOTH tile GEMMs above at M<=8 (they pad 87%/50% of their M-tile;
+    /// ~100 GB/s measured vs 180+ for the rt family, nsys 2026-08-19).
+    /// `.0 == 0` on targets without the `fp8_gemv_rt` module → tile path.
+    /// Kill-switch: METRALE_NO_DFLASH_FP8_RT=1. provenance-id:
+    /// 526f6e616c6420522e205374657369616b
+    pub fp8_gemv_rt2: KernelHandle,
+    /// MAX_M=16 sibling of `fp8_gemv_rt2` for the γ>8 propose window
+    /// (2026-08-29: STEP_TIMING measured propose 18.2ms rt2 vs 38.0ms tile
+    /// fallback at flag 9 — the entire γ>8 step tax). `.0 == 0` on stale
+    /// kernel builds → tile path, exactly as before.
+    /// provenance-id: 526f6e616c6420522e205374657369616b
+    pub fp8_gemv_rt2_16: KernelHandle,
+    /// DFlash2 two-tap grouped dynamic conv (`kernels/gb10/common/dflash2.cu`).
+    /// `.0 == 0` on targets without the module (DFlash2 then refuses to arm).
+    pub dflash2_conv2: KernelHandle,
+    /// DFlash2 per-row destructive top-16 over drafter logits.
+    pub dflash2_topk16: KernelHandle,
+    /// DFlash2 candidate-selector chain walk (single launch, whole block).
+    pub dflash2_selector_walk: KernelHandle,
+}
+
+/// Cross-sequence batch descriptor for one drafter forward.
+///
+/// Rows are seq-major: sequence `i` owns `[i*gamma, (i+1)*gamma)` in every
+/// scratch buffer, and its drafts land in band `i`. Only attention, the KV
+/// slot writes and the selector's chain seed are per-sequence; every
+/// weight-bearing op runs once over all `n * gamma` rows, which is the whole
+/// point of batching.
+pub(super) struct DflashBatch<'a> {
+    pub last_tokens: &'a [u32],
+    pub positions: &'a [usize],
+    /// Per-sequence drafter block table device pointers.
+    pub block_tables: Vec<DevicePtr>,
+    /// Per-sequence populated ctx slot counts (drives kv_len / q_offset).
+    pub ctx_counts: Vec<u32>,
+}
+
+/// Per-step scratch buffers for the γ-block forward.
+///
+/// Sized for `n_attn_slots = ctx_window + γ` rows, where ctx_window is the
+/// max number of past target positions the drafter attends to per step. The
+/// first `ctx_window` slots hold post-`fc` projected target context (K/V
+/// only — Q is zero-padded); the next γ slots hold the noise tokens.
+///
+/// At γ=16 and ctx_window=γ=16: 32 rows × 2048 BF16 × ~10 buffers = ~1.3 MB
+/// per head. lm_head logits buffer is the largest single alloc:
+/// 32 × 248320 × 2 = 15 MB.
+pub struct DflashScratch {
+    pub stream_buf: DevicePtr,
+    pub norm_buf: DevicePtr,
+    pub q_buf: DevicePtr,
+    pub k_buf: DevicePtr,
+    pub v_buf: DevicePtr,
+    pub attn_out: DevicePtr,
+    pub mlp_intermediate: DevicePtr,
+    pub mlp_up: DevicePtr,
+    pub stream_acc: DevicePtr,
+    /// `[ctx_window, draft_hidden]` BF16 — fc-projected + hidden_norm'd
+    /// ctx for the most recent `ctx_window` target positions.
+    pub fc_proj: DevicePtr,
+    /// Phase 2 (Option B) scratch for `precompute_ctx_kv`: fused KV
+    /// GEMM output, shape `[max_new_ctx, L * 2 * kv_dim]` BF16.
+    /// `max_new_ctx` = `ctx_window` (worst case: first propose runs
+    /// precompute over the entire prefix).
+    pub fused_kv_out: DevicePtr,
+    /// Phase 2 scratch: i32 slot mapping for the per-layer
+    /// `reshape_and_cache` calls. Sized `[ctx_window]`.
+    pub slot_mapping_dev: DevicePtr,
+    /// Batched ctx precompute staging: the uncommitted ctx rows of EVERY
+    /// sequence in a batched propose, gathered contiguously so the fc + fused
+    /// KV GEMMs stream their 370 MB of weights ONCE per step instead of once
+    /// per sequence. `[PRECOMPUTE_BATCH_ROWS, L_t * h_t]` BF16.
+    pub precompute_in: DevicePtr,
+    /// Phase 5 (CUDA graph) scratch: 8 bytes (`[u32 kv_len, u32 q_offset]`)
+    /// holding the per-call dynamic values that the indirect paged-attention
+    /// kernel reads at entry. Host writes via `copy_h2d` BEFORE entering the
+    /// captured region so the graph itself sees a stable device pointer.
+    pub option_b_indirect_args_dev: DevicePtr,
+    /// Phase E.2: pinned host buffer (`γ × 4` bytes) for the per-propose
+    /// draft-token D2H copy. Allocated once at construction via
+    /// `gpu.alloc_host_pinned`; the async D2H lands here without touching
+    /// the system pageable allocator each call.
+    ///
+    /// Wrapped in `AtomicPtr` to keep `DflashScratch: Send + Sync` (the
+    /// proposer is stored as `Arc<dyn DraftProposer>` which requires both
+    /// auto-traits). Reads via `Ordering::Relaxed` are safe: the pointer
+    /// itself never changes after construction; we only need atomic
+    /// access for the Send/Sync bound, not for any actual concurrency.
+    pub draft_tokens_host_pinned: std::sync::atomic::AtomicPtr<u8>,
+    /// Phase E.2: CUDA event recorded against the draft-tokens D2H so the
+    /// host can block on completion just before reading the pinned buffer,
+    /// without a full `cuStreamSynchronize`. Created once at construction.
+    pub draft_tokens_event: u64,
+    pub logits: DevicePtr,
+    pub draft_tokens_dev: DevicePtr,
+    /// `[ctx_window + γ]` i32 positions. First ctx_window are
+    /// historical target positions (decoded indices); last γ are
+    /// the to-be-predicted noise positions.
+    pub position_ids: DevicePtr,
+    /// DSpark Markov scratch: `[1, markov_rank]` BF16 latent for the
+    /// prev-token gather (`markov_w1[prev]`). `DevicePtr(0)` when the
+    /// drafter has no Markov head.
+    pub markov_embed: DevicePtr,
+    /// DSpark Markov scratch: `[vocab]` BF16 full-vocab bias
+    /// (`markov_w2 @ markov_embed`), residual-added onto one logits row
+    /// per sequential step. `DevicePtr(0)` when no Markov head.
+    pub markov_bias: DevicePtr,
+    /// DSpark confidence scratch: `[γ]` BF16 per-row acceptance logits
+    /// (`AcceptRatePredictor` output). Read back host-side after the
+    /// draft-token D2H to pick the confident prefix length.
+    /// `DevicePtr(0)` when the drafter has no confidence head.
+    pub conf_out: DevicePtr,
+
+    // ── DFlash2 scratch (DevicePtr(0) on non-DFlash2 drafters) ──
+    /// `[γ, 2*kernel*groups]` BF16 — dynamic conv kernels for one conv
+    /// site (kernel_projection GEMM output at prepare; the finish
+    /// application reads its slice after the sublayer). Reused
+    /// sequentially by both conv sites of every layer.
+    pub conv_dyn: DevicePtr,
+    /// `[γ, hidden]` BF16 — convolved-hidden staging (prepare writes here,
+    /// the sublayer GEMMs read from here; finish stages here before the
+    /// residual add).
+    pub conv_tmp: DevicePtr,
+    /// `[γ, 16]` f32 — selector top-16 unary logits per row.
+    pub sel_vals: DevicePtr,
+    /// `[γ, 16]` u32 — selector top-16 candidate token ids per row.
+    pub sel_idx: DevicePtr,
+    /// `[γ, selector_rank]` BF16 — H(h_t) context-gate projections.
+    pub sel_hproj: DevicePtr,
+}
+
+/// Drafter-side weight precision. Defaults to BF16. **Phase G (2026-05-28)**
+/// adds `Fp8Weights`, gated by env var `METRALE_DFLASH_DRAFTER_FP8`. The
+/// historical SM12.x acceptance collapse note applied to drafter FP8 KV
+/// cache (different concern — bidirectional attention math); Phase G
+/// targets weight FP8 only, so the risk surface is dynamic-range loss
+/// in MLP intermediate activations, which per-row scales mitigate.
+/// `--mtp-quantization fp8` is still not honored for the DFlash drafter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DflashQuantization {
+    Bf16,
+    /// Weight-only FP8: q/k/v/o/gate/up/down BF16 → FP8 E4M3 with per-row
+    /// f32 scales at model load. Activations stay BF16; KV cache stays
+    /// BF16. GEMMs use `fp8_gemm_n128` (BF16 × FP8 → BF16).
+    Fp8Weights,
+}
+
+/// Per-drafter-layer Qwen3-style weights. Phase 1 is BF16-only; **Phase G**
+/// (2026-05-28) adds optional FP8 weight fields populated at model load
+/// when `METRALE_DFLASH_DRAFTER_FP8=1`. The BF16 fields are always present
+/// (Fp8 path falls back to them for any GEMM whose Fp8 weight is None).
+#[allow(dead_code)]
+pub struct DflashLayer {
+    // Norms
+    pub input_layernorm: DenseWeight,
+    pub post_attention_layernorm: DenseWeight,
+    // Attention (Qwen3: per-head Q/K RMSNorm)
+    pub q_proj: DenseWeight,
+    pub k_proj: DenseWeight,
+    pub v_proj: DenseWeight,
+    pub o_proj: DenseWeight,
+    pub q_norm: DenseWeight,
+    pub k_norm: DenseWeight,
+    // MLP
+    pub gate_proj: DenseWeight,
+    pub up_proj: DenseWeight,
+    pub down_proj: DenseWeight,
+
+    // Phase G — optional FP8 mirrors of the seven dense-GEMM weights.
+    // Populated at load time when `METRALE_DFLASH_DRAFTER_FP8=1`, consumed
+    // by forward_block_layer_pre_attn / _post_attn when self.quant ==
+    // DflashQuantization::Fp8Weights. None when BF16 path is active.
+    pub q_proj_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+    pub k_proj_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+    pub v_proj_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+    pub o_proj_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+    pub gate_proj_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+    pub up_proj_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+    pub down_proj_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+
+    // DFlash2 grouped dynamic causal convs (None on DFlash1/DSpark).
+    /// `attention_conv.base_kernel` `[2 applications, kernel_size, hidden]`.
+    pub attention_conv_base: Option<DenseWeight>,
+    /// `attention_conv.kernel_projection.weight` `[2*kernel*groups, hidden]`.
+    pub attention_conv_proj: Option<DenseWeight>,
+    /// `mlp_conv.base_kernel`, same shape as attention_conv_base.
+    pub mlp_conv_base: Option<DenseWeight>,
+    /// `mlp_conv.kernel_projection.weight`, same shape as attention_conv_proj.
+    pub mlp_conv_proj: Option<DenseWeight>,
+}
+
+/// Per-sequence DFlash drafter state. One paged KV cache per drafter layer
+/// (8 typical), shared block table across layers since attention shape is
+/// identical layer-to-layer for a vanilla Qwen3 architecture. Mirrors
+/// `MtpProposerState` in spirit; the multi-layer cache keeps it distinct.
+pub struct DflashProposerState {
+    /// Block table for the drafter's KV cache (shared across all drafter layers).
+    pub block_table: Vec<u32>,
+    /// Current logical sequence length in the drafter's KV cache. Tracks how
+    /// many target-aligned positions have been written via
+    /// `precompute_and_store_context_kv`.
+    pub seq_len: usize,
+    /// Drafts produced in the last `propose()` call. `after_verify` consults
+    /// this to know how many KV positions to roll back when the accept
+    /// prefix is shorter than γ.
+    pub last_num_drafted: usize,
+    /// Whether the prompt-time `precompute_and_store_context_kv` has been
+    /// called. The first `propose()` after model build needs to run prefill
+    /// over the full prompt's captured hiddens; subsequent steps incrementally
+    /// append the latest accepted tokens' projections.
+    pub prefill_done: bool,
+    /// Multi-token accumulator for captured target hidden states. Layout:
+    /// `[max_ctx_len, 5 * target_hidden]` BF16 packed. The scheduler appends
+    /// the model's `dflash_hidden_save` (latest decoded position's 5 hiddens)
+    /// into slot `ctx_len` after each successful verify. `propose()` reads
+    /// the full populated prefix and projects all positions through `fc`
+    /// at forward time. Sized for `max_seq_len` total positions; not
+    /// circular — fail-fast if exceeded (drafter can't handle longer
+    /// context than allocated).
+    pub ctx_hidden_acc: DevicePtr,
+    /// Number of populated slots in `ctx_hidden_acc`. Capped at `max_ctx_len`.
+    pub ctx_len: usize,
+    /// Drafts accepted in the verify that immediately preceded this propose.
+    /// Set by `after_verify` so propose can label row-0 with its TRUE position.
+    pub last_num_accepted: usize,
+    /// EAGLE-fix one-shot: when set, the next `propose()` skips its internal
+    /// decode-append because the verify step (K=2 accept) already appended
+    /// row 0 + row 1 in EAGLE order before calling propose. Consumed (reset to
+    /// false) by propose. Set on the EAGLE-fix path, which is DEFAULT-ON
+    /// (`METRALE_DFLASH_EAGLE_FIX=0` is the kill switch, not `=1` the opt-in ,
+    /// see verify_k2_step.rs and verify_dflash_step.rs, both `!= Some("0")`).
+    pub skip_next_decode_append: bool,
+    /// Allocation cap for `ctx_hidden_acc` (in slot count). Mirrors the
+    /// `max_seq_len` build arg so we can clamp without re-fetching it.
+    pub max_ctx_len: usize,
+    /// Width (bytes) of one `ctx_hidden_acc` slot — `5 * target_hidden * bf16`.
+    /// Stored to avoid re-deriving on every append.
+    pub ctx_slot_bytes: usize,
+
+    // ─── Phase 2 Option B fields (paged KV cache for ctx) ───────────────
+    /// Device-side block table for the drafter's paged KV cache. Allocated
+    /// once at first propose with enough u32 slots to cover `max_seq_len`
+    /// at block_size=16. Read by `prefill_attention_paged_dflash` to map
+    /// logical block indices to physical pool block indices. Mirrors the
+    /// host-side `block_table` Vec, copied to GPU after each `alloc_block`.
+    pub block_table_dev: Option<DevicePtr>,
+    /// Number of paged-cache slots populated with ctx K/V for this sequence.
+    /// Distinct from `ctx_len` (which counts target_hidden_acc slots). The
+    /// drafter writes one ctx K/V slot per accepted target token; the
+    /// γ-block then attends over `[0..ctx_count_drafter+γ)`. Bumped by γ
+    /// per propose (γ slots written for the noise rows) and trimmed in
+    /// `after_verify` by `(γ - num_accepted)`.
+    pub ctx_count_drafter: usize,
+    /// Cap for `ctx_count_drafter`. Mirrors `block_table.len() * block_size`.
+    pub max_ctx_count_drafter: usize,
+    /// Phase I — incremental ctx precompute watermark. Number of ctx slots
+    /// `[0..ctx_committed)` whose K/V is already valid in the paged cache
+    /// from a prior propose. Each step we only precompute the new tail
+    /// `[ctx_committed..ctx_len)` instead of rebuilding the whole prefix
+    /// (the old O(ctx_len²) waste — see design doc §18). Reset to the
+    /// current `ctx_len` on any rewind so stale slots can't be read.
+    /// `0` forces a full rebuild (first propose, or the debug escape hatch).
+    pub ctx_committed: usize,
+    /// Phase I (v2) — per-slot TRUE absolute decoded position, stamped once
+    /// when a ctx slot is appended and never recomputed. Indexed by ctx
+    /// slot (parallel to `ctx_hidden_acc` slots, len == `ctx_len`). This is
+    /// the vLLM convention: a cached token's rope position is fixed at
+    /// insert time, so committed slots never go stale when later accepts
+    /// shift the live `position`. Replaces the sliding `absolute_start_pos
+    /// + i` formula in `precompute_ctx_kv`. Prefill positions are seeded
+    /// `0..prompt_len` in `update_dflash_ctx_len_after_prefill`.
+    pub ctx_positions: Vec<i32>,
+}
+
+impl ProposerState for DflashProposerState {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+/// Block-diffusion draft head. Public API is the [`DraftProposer`] trait.
+///
+/// The drafter shares `embed_tokens` and `lm_head` with the target — these
+/// are NOT in the drafter's safetensors checkpoint (verified against
+/// `z-lab/Qwen3.6-35B-A3B-DFlash` commit 42d3b34). The constructor takes
+/// the target's `embed_tokens_shared` and `lm_head_shared` device pointers
+/// at build time and slots them in alongside the drafter's own `fc`,
+/// `hidden_norm`, `norm`, and per-layer weights.
+#[allow(dead_code)]
+/// Per-block-width propose graph state (see `BlockDiffusionDraftHead::propose_graphs`).
+/// `warmup` counts the eager passes run at a width before its capture
+/// (default target 2, `METRALE_DFLASH_PROPOSE_WARMUP_N`): two eager passes warm
+/// the PTX->SASS cache, ramp GB10 clocks and bring hot weight tiles into L2
+/// before the capture freezes the SASS variants the driver picks.
+#[derive(Default)]
+pub struct ProposeGraphs {
+    pub by_width: std::collections::HashMap<usize, Vec<spark_runtime::gpu::GraphHandle>>,
+    pub warmup: std::collections::HashMap<usize, usize>,
+}
+
+pub struct BlockDiffusionDraftHead {
+    // Drafter-architecture config (mirrors the drafter's HF config.json).
+    pub num_layers: usize,
+    pub hidden_size: usize,
+    pub intermediate_size: usize,
+    pub num_q_heads: usize,
+    pub num_kv_heads: usize,
+    pub head_dim: usize,
+    pub vocab_size: usize,
+    pub draft_vocab_size: usize,
+    /// The drafter's WIDEST block (rows per sequence): the launch `--dflash-gamma`
+    /// or the checkpoint default. Every gamma-sized buffer (scratch bands, the
+    /// paged KV growth, the pinned draft staging) is allocated from THIS. The
+    /// block a given propose actually runs is [`Self::block_g`], which the
+    /// scheduler's gamma resolver moves per step and which never exceeds it.
+    pub gamma: usize,
+    /// ACTIVE block width for the propose in flight, `2..=gamma` (rows per
+    /// sequence, anchor + block_g-1 masks => block_g-1 drafts, verify K =
+    /// block_g). Written by `set_block_g` at the top of every propose from the
+    /// scheduler's `num_drafts`; read by the forward path through `block_g()`
+    /// instead of `gamma`. An atomic only because the head is shared: the
+    /// scheduler proposes one step at a time on one stream, so there is never
+    /// a concurrent writer.
+    /// provenance-id: 526f6e616c6420522e205374657369616b
+    pub(super) block_gamma: std::sync::atomic::AtomicUsize,
+    /// Widest cross-sequence batch the scratch bands can hold.
+    pub(super) max_batch: usize,
+    pub mask_token_id: u32,
+    pub window_size: Option<usize>,
+    /// `target_layer_ids`. Same data as `TransformerModel::dflash_capture_layers`,
+    /// repeated here so the loader is the single source of truth; the model
+    /// reads these to size its capture buffer.
+    pub target_layer_ids: Vec<usize>,
+    /// Target-side hidden_size (used for the `fc` projection input width:
+    /// `target_layer_ids.len() * target_hidden_size`).
+    pub target_hidden_size: usize,
+
+    // === Weights shared with the target ===
+    /// Target's embed_tokens GPU pointer. The drafter's checkpoint has no
+    /// own embeddings — both vocab and embedding dim must match the target
+    /// (Qwen3.6-35B-A3B-DFlash: vocab=248320, hidden=2048 — same as target).
+    pub embed_tokens_shared: DevicePtr,
+    /// Target's lm_head GPU pointer. Used for the drafter's per-position
+    /// argmax over `[γ, vocab]` logits. Valid only when the target lm_head is
+    /// BF16; when `lm_head_nvfp4` is `Some`, the NVFP4 path is used instead.
+    pub lm_head_shared: DevicePtr,
+    /// Target's NVFP4 lm_head (packed + scales), shared with the drafter for
+    /// the final logits GEMM. `Some` when the target ships an NVFP4 lm_head
+    /// (e.g. Holo) — required because a BF16 `dense_gemm` on the NVFP4 buffer
+    /// reads garbage and OOB. `None` → use the BF16 `lm_head_shared`.
+    pub lm_head_nvfp4: Option<QuantizedWeight>,
+    /// Phase G — optional FP8 mirror of the shared lm_head weight,
+    /// `[vocab_size, hidden_size]` FP8 E4M3 + per-row f32 scales.
+    /// Built at model load when `METRALE_DFLASH_DRAFTER_FP8=1`. Owned by
+    /// the drafter (separate allocation from the shared BF16 ptr) since
+    /// it must not mutate the target model's lm_head. `None` on the
+    /// BF16 path.
+    pub lm_head_shared_fp8: Option<crate::weight_map::Fp8DenseWeight>,
+
+    // === Weights from the drafter checkpoint ===
+    /// Hidden-norm applied to the projected target context before mixing
+    /// with the embedded tokens (Qwen3-DFlash convention; see vLLM
+    /// `DFlashQwen3Model.hidden_norm`).
+    pub hidden_norm: DenseWeight,
+    /// Final RMSNorm before LM head.
+    pub norm: DenseWeight,
+    /// `fc` projection — `[draft_hidden, target_layer_ids.len() * target_hidden_size]`
+    /// BF16. Maps the stack of captured target hiddens to drafter's input space
+    /// once at model entry. Replaces the earlier (incorrect) "per-layer KV
+    /// injection" design.
+    pub fc: DenseWeight,
+    /// Optional draft-vocab-id → target-vocab-id remap. `None` when the
+    /// drafter shares vocab with the target (Qwen3.6-35B-A3B-DFlash case:
+    /// vocab_size == draft_vocab_size == 248320).
+    pub draft_id_to_target_id: Option<DevicePtr>,
+    /// Drafter transformer layers (8 for Qwen3.6-35B-A3B-DFlash).
+    pub layers: Vec<DflashLayer>,
+
+    /// Phase 2 (Option B) fused K/V projection across all L drafter layers.
+    /// Shape: `[L × 2 × kv_dim, h]` BF16 — concatenated `[K0; V0; K1; V1; …]`
+    /// (per-layer K then V interleaved). Built once at construction by
+    /// `copy_d2d`-stitching the per-layer `k_proj.weight` and `v_proj.weight`
+    /// pointers from `layers[i]`. Lets `precompute_ctx_kv` derive every
+    /// drafter layer's ctx K/V via a single `dense_gemm` of shape
+    /// `[new_ctx_count, h] × [h, L·2·kv_dim]` instead of 2·L per-layer GEMMs.
+    ///
+    /// `None` until Phase 2 lands the build (stage 1: kernel/dispatcher
+    /// scaffolding; stage 2: this allocation + the precompute_ctx_kv module;
+    /// stage 3: pyref bit-exact diff). Layout (K then V per layer) chosen
+    /// to match vLLM's `_fused_kv_weight` in `qwen3_dflash.py:381-389`.
+    pub fused_kv_weight: Option<DevicePtr>,
+
+    /// Paged FP8 KV cache. One cache holding all `num_layers` drafter layers,
+    /// laid out the same way the target's KV cache is — block-table-keyed,
+    /// `num_layers × num_kv_heads × head_dim` per slot. Allocating a single
+    /// multi-layer cache (vs. one per drafter layer) matches Metrale Engine's existing
+    /// `PagedKvCache` ABI and lets us reuse the existing `reshape_and_cache`
+    /// kernel without per-layer dispatch overhead.
+    pub kv_cache: Mutex<PagedKvCache>,
+
+    /// Per-step scratch buffers (allocated once at construction, reused).
+    pub scratch: DflashScratch,
+
+    /// All kernel handles needed by `propose()` and the eventual prefill
+    /// projection (`precompute_and_store_context_kv`).
+    pub kernels: DflashKernels,
+
+    /// Per-sequence ctx accumulator capacity (mirrors model's `max_seq_len`).
+    /// Used by `alloc_state` to size each new sequence's `ctx_hidden_acc`.
+    pub max_seq_len: usize,
+
+    /// Pre-computed yarn inv_freq table (`[head_dim/2]` f32 on GPU).
+    /// Drafter rope_scaling: factor=64, beta_fast=32, beta_slow=1,
+    /// original_max_position_embeddings=4096 (per drafter config.json).
+    pub yarn_inv_freq: DevicePtr,
+
+    /// rope_theta (10000000 for Qwen3.6-DFlash). Stored to pass into the
+    /// rope_yarn kernel each step.
+    pub rope_theta: f32,
+
+    /// rotary_dim. Drafter uses full-rotation (rotary_dim = head_dim = 128).
+    pub rotary_dim: usize,
+
+    /// RMSNorm epsilon (drafter inherits Qwen3 default 1e-6).
+    pub rms_norm_eps: f32,
+
+    /// Max number of past target positions injected into the drafter's K/V
+    /// per step. Default γ — drafter sees at most γ ctx + γ noise = 2γ
+    /// attention positions per step. ctx_window=0 disables ctx conditioning
+    /// (degraded quality, ablation only).
+    pub ctx_window: usize,
+
+    // === Phase D (CUDA graph capture) → Phase F (piecewise) ===
+    /// Per-subgraph captured handles. `None` until warm-up completes and
+    /// the first capture pass lands; on the capture pass we fill this
+    /// `Vec` with `2 × num_layers + 1` handles laid out as
+    /// `[pre_0, post_0, pre_1, post_1, ..., pre_{N-1}, post_{N-1}, tail]`.
+    /// Slot index = `layer_idx * 2 + half` for the layer halves
+    /// (half = 0 for pre_attn, 1 for post_attn) and `num_layers * 2` for
+    /// the tail (final norm + lm_head + argmax). `GraphHandle(0)` is the
+    /// "empty capture" sentinel and means that slot replays eager.
+    ///
+    /// Phase F.2 (2026-05-28): replaces the single full-region capture
+    /// with one capture per subgraph. Attention is NEVER captured —
+    /// it's the natural sync barrier between captured subgraphs
+    /// (vLLM piecewise convention). See design doc §15.
+    ///
+    /// Keyed by the ACTIVE block width (`block_g`): a captured subgraph bakes
+    /// in its row count, so each width the gamma resolver runs gets its own
+    /// capture (once, lazily) and switching widths afterwards costs nothing.
+    pub propose_graphs: Mutex<ProposeGraphs>,
+    /// When set, all `forward_block` calls run eagerly. Mirrors target-model
+    /// `TransformerModel::suppress_graphs` so external code can disable
+    /// graphs at runtime (e.g. while calibrating FP8 KV).
+    pub suppress_graphs: std::sync::atomic::AtomicBool,
+    /// Diagnostic and A/B levers, resolved from the environment ONCE when
+    /// this head was built. `forward_block` and its per-layer helpers read
+    /// these instead of the environment — see [`levers::DFlashLevers`].
+    pub levers: levers::DFlashLevers,
+    /// How many eager warm-up calls we've executed against the graph path.
+    /// Default warmup target is 2 (override via `METRALE_DFLASH_PROPOSE_WARMUP_N`).
+    /// Two eager passes warm the PTX→SASS cache, ramp GB10 clocks to steady
+    /// state, and bring hot weight tiles into L2 before the capture freezes
+    /// SASS variants the driver picks. Shared across all subgraphs — every
+    /// subgraph captures on the same propose call after the warmup target
+    /// is hit.
+    pub propose_warmup_count: std::sync::atomic::AtomicUsize,
+
+    // Quantization mode (BF16 only for Phase 1).
+    pub quant: DflashQuantization,
+
+    // === DSpark heads (optional; None ⇒ plain DFlash behavior) ===
+    /// Markov head rank (0 when the drafter has no Markov head). RadixArk
+    /// Qwen3.8-27B-DSpark: 256.
+    pub markov_rank: usize,
+    /// `markov_w1`: `[vocab, rank]` BF16 prev-token embedding table.
+    pub markov_w1: Option<DenseWeight>,
+    /// `markov_w2`: `[vocab, rank]` BF16 latent→vocab projection
+    /// (`Linear(rank, vocab, bias=False).weight`, `[N, K]` GEMV layout).
+    pub markov_w2: Option<DenseWeight>,
+    /// Confidence head (`AcceptRatePredictor`) weight `[1, hidden(+rank)]`.
+    /// Loaded for the dynamic-K phase; not consumed by the Markov fixup.
+    pub confidence_proj: Option<DenseWeight>,
+    /// Confidence head bias `[1]`.
+    pub confidence_bias: Option<DenseWeight>,
+    /// Whether the confidence input is `[hidden ‖ markov_embed]` (true) or
+    /// hidden only (false). Mirrors `confidence_head_with_markov`.
+    pub confidence_with_markov: bool,
+    /// SpecForge shifted row convention (drafter config
+    /// `dflash_config.projector_type == "dspark"`): row j's output is the
+    /// token at position j+1, so the returned draft vector is rotated right
+    /// by one to line up with Metrale Engine's z-lab-convention verify indexing.
+    /// Overridable for A/B via `METRALE_DSPARK_SHIFT=0|1`.
+    pub shifted_rows: bool,
+
+    // === DFlash2 (None/0 ⇒ plain DFlash behavior) ===
+    /// Conv kernel size (2) — taps per conv application.
+    pub conv_kernel_size: usize,
+    /// Channels per conv group (16).
+    pub conv_group_size: usize,
+    /// Selector codebook rank (256).
+    pub selector_rank: usize,
+    /// Candidates per position for the selector walk (16; the kernels are
+    /// specialized to 16 — other values refuse to arm).
+    pub selector_top_k: usize,
+    /// `candidate_selector.predecessor_codebook` `[vocab, rank]`.
+    pub selector_pred: Option<DenseWeight>,
+    /// `candidate_selector.successor_codebook` `[vocab, rank]`.
+    pub selector_succ: Option<DenseWeight>,
+    /// `candidate_selector.hidden_projection.weight` `[rank, hidden]`.
+    pub selector_hidden_proj: Option<DenseWeight>,
+}
+
+mod dflash2;
+/// Whether the Option-B paged drafter cache is on. Default ON since the 54.5
+/// record config (#649); `METRALE_DFLASH_OPTION_B=0` is the kill switch.
+///
+/// Split into a reader and a pure predicate because the POLARITY is the whole
+/// point and it has already been flipped by accident: a merge on 2026-08-30
+/// took #817's allocator region whole, #817 branched from a tree predating the
+/// flip, and `!= Some("0")` silently became `== Some("1")`. Measured cost of
+/// that one character-class: propose 19.8 -> 618.7 ms and 49.9 -> 5.5 tok/s,
+/// because the legacy path launches one `dense_gemv` per accumulated ctx row
+/// over a 262 MB `fc` weight. Nothing logged a change.
+/// Rows the batched ctx precompute staging holds per step (C=16 at gamma 4
+/// commits ~2-4 rows per sequence per step; 256 covers 16 x 16).
+pub(super) const PRECOMPUTE_BATCH_ROWS: usize = 256;
+
+/// Batched ctx precompute (one fc + fused-KV pass over every sequence's
+/// uncommitted ctx rows) is the default on the batched propose path.
+/// `METRALE_DFLASH_NO_BATCHED_PRECOMPUTE=1` restores the per-sequence loop.
+pub(super) fn batched_precompute_enabled() -> bool {
+    std::env::var("METRALE_DFLASH_NO_BATCHED_PRECOMPUTE")
+        .ok()
+        .as_deref()
+        != Some("1")
+}
+
+/// The predicate itself, pure over the raw value so a test can exercise the
+/// PRODUCTION code rather than a copy of it. `set_var` is unsafe and
+/// process-global, so a test that mutated the environment would race every
+/// other test in this binary.
+pub(super) fn option_b_from(v: Option<&str>) -> bool {
+    v != Some("0")
+}
+
+#[cfg(test)]
+mod option_b_tests {
+    use super::option_b_from;
+
+    #[test]
+    fn option_b_defaults_on_and_only_zero_turns_it_off() {
+        // THE REGRESSION, and the reason this test exists: unset must mean ON.
+        // A bare `--dflash` launch is the record path with no env block (#649).
+        // When a merge turned this into opt-in, the only symptom was a run
+        // nine times slower.
+        assert!(
+            option_b_from(None),
+            "unset must be ON — this is the 9x line"
+        );
+        assert!(option_b_from(Some("1")));
+        // House convention: `=0` is the kill switch, and nothing else is.
+        assert!(!option_b_from(Some("0")));
+        assert!(
+            option_b_from(Some("true")),
+            "only the exact string 0 disables"
+        );
+        assert!(option_b_from(Some("")), "empty is not a kill switch");
+    }
+}
+
+mod forward_block;
+mod forward_block_layer;
+mod forward_block_layer_paged;
+mod from_weights;
+pub mod levers;
+mod markov;
+mod precompute_ctx_kv;
+mod precompute_ctx_kv_batched;
+mod propose;
+
+impl DraftProposer for BlockDiffusionDraftHead {
+    fn block_gamma(&self) -> Option<usize> {
+        Some(self.gamma)
+    }
+
+    fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn ProposerState>> {
+        self.alloc_state_windowed(gpu, usize::MAX)
+    }
+
+    fn alloc_state_for(
+        &self,
+        gpu: &dyn GpuBackend,
+        budget_tokens: usize,
+    ) -> Result<Box<dyn ProposerState>> {
+        self.alloc_state_windowed(gpu, budget_tokens)
+    }
+
+    fn propose(
+        &self,
+        last_token: u32,
+        target_hidden: spark_runtime::gpu::DevicePtr,
+        position: usize,
+        num_drafts: usize,
+        state: &mut dyn ProposerState,
+        ctx: &crate::layer::ForwardContext,
+        stream: u64,
+        draft_embed_target: Option<spark_runtime::gpu::DevicePtr>,
+        grammar_bitmask: Option<&[i32]>,
+        target_hidden_stack: Option<spark_runtime::gpu::DevicePtr>,
+    ) -> Result<Vec<u32>> {
+        self.propose_drafts(
+            last_token,
+            target_hidden,
+            position,
+            num_drafts,
+            state,
+            ctx,
+            stream,
+            draft_embed_target,
+            grammar_bitmask,
+            target_hidden_stack,
+            None,
+        )
+    }
+
+    /// Widest batch one drafter forward can carry. Bounded by the scratch
+    /// bands (`max_batch`); `1` means the batched path cannot run and the
+    /// caller stays on `propose`.
+    fn propose_batch_max(
+        &self,
+        _buffers: &spark_runtime::buffers::BufferArena,
+        _config: &metrale_core::config::ModelConfig,
+    ) -> usize {
+        if !self.dflash2_active() {
+            return 1;
+        }
+        // DEFAULT-ON. `METRALE_DFLASH_BATCH_PROPOSE=<width>` overrides: `1`
+        // (or `0`) disables and restores the per-sequence loop, `N` caps the
+        // batch at N sequences. Numeric rather than boolean because
+        // bisecting the WIDTH against acceptance is what localises a banding
+        // bug — "correct at 2 bands, wrong at 4" is the observation that
+        // found the lm_head tile bound, and an on/off flag cannot ask it.
+        let want = self.levers.batch_propose_width;
+        if want < 2 {
+            return 1;
+        }
+        want.min(self.max_batch.max(1))
+    }
+
+    /// Cross-sequence batched propose: ONE drafter forward over `n * gamma`
+    /// rows instead of `n` forwards.
+    ///
+    /// Per-sequence preparation (ctx append, Option-B block growth, the
+    /// incremental ctx precompute) still runs per sequence — it is cheap,
+    /// touching only the uncommitted ctx tail — and it reuses
+    /// `propose_drafts`' own prep through the `collect_prep` sink so the two
+    /// paths cannot drift. The expensive part, the drafter layers plus an
+    /// lm_head against a 248k vocab, runs ONCE for the whole batch. That is
+    /// the entire win.
+    ///
+    /// Returns `Ok(None)` to decline, and the caller falls back to the
+    /// per-sequence loop — never a wrong answer.
+    fn propose_batch(
+        &self,
+        last_tokens: &[u32],
+        _target_hiddens: &[spark_runtime::gpu::DevicePtr],
+        positions: &[usize],
+        num_drafts: usize,
+        states: &mut [&mut dyn ProposerState],
+        ctx: &crate::layer::ForwardContext,
+        stream: u64,
+        _out_conf: Option<&mut Vec<Vec<f32>>>,
+    ) -> Result<Option<Vec<Vec<u32>>>> {
+        let n = last_tokens.len();
+        if n < 2
+            || n > self.max_batch
+            || positions.len() != n
+            || states.len() != n
+            || !self.dflash2_active()
+        {
+            return Ok(None);
+        }
+
+        // Phase 1 — per-sequence prep, collecting each sequence's paged
+        // descriptor. A sequence that cannot run Option B (drafter block pool
+        // exhausted, say) aborts the WHOLE batch to the per-sequence path
+        // rather than letting the rest draft against a missing band.
+        // Gamma resolver: this step's block width, from the scheduler's draft
+        // count (C>=2 lands on the K=4 write-on-accept verify).
+        self.set_block_g(num_drafts);
+        let mut prep: Vec<(spark_runtime::gpu::DevicePtr, u32)> = Vec::with_capacity(n);
+        for (i, st) in states.iter_mut().enumerate() {
+            let before = prep.len();
+            match self.propose_drafts(
+                last_tokens[i],
+                spark_runtime::gpu::DevicePtr::NULL,
+                positions[i],
+                num_drafts,
+                *st,
+                ctx,
+                stream,
+                None,
+                None,
+                None,
+                Some(&mut prep),
+            ) {
+                Ok(_) if prep.len() == before + 1 => {}
+                Ok(_) => return Ok(None),
+                Err(e) => {
+                    tracing::warn!("DFlash batched propose prep (seq {i}): {e:#} — per-seq path");
+                    return Ok(None);
+                }
+            }
+        }
+
+        // Phase 1b — ONE ctx precompute over every sequence's uncommitted
+        // rows (the prep above deferred it). On failure nothing was
+        // committed, so the per-sequence path recomputes safely.
+        if batched_precompute_enabled()
+            && let Err(e) = self.precompute_ctx_kv_batched(states, ctx, stream)
+        {
+            tracing::warn!("DFlash batched ctx precompute: {e:#} — per-seq path");
+            return Ok(None);
+        }
+
+        // Phase 2 — ONE forward over every band.
+        let batch = DflashBatch {
+            last_tokens,
+            positions,
+            block_tables: prep.iter().map(|p| p.0).collect(),
+            ctx_counts: prep.iter().map(|p| p.1).collect(),
+        };
+        let all = match self.forward_block(
+            last_tokens[0],
+            positions[0],
+            ctx,
+            stream,
+            None,
+            Some(prep[0]),
+            Some(&batch),
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("DFlash batched forward_block: {e:#} — falling back to per-seq");
+                return Ok(None);
+            }
+        };
+        let g = self.block_g();
+        if all.len() < n * g {
+            tracing::warn!(
+                "DFlash batched forward returned {} rows, expected {} — per-seq path",
+                all.len(),
+                n * g
+            );
+            return Ok(None);
+        }
+
+        // Phase 3 — split bands. Row 0 of each band is the anchor echo the
+        // single-sequence path drops too; the rest are that sequence's drafts.
+        let cap = self.levers.draft_cap.unwrap_or(g);
+        let mut out: Vec<Vec<u32>> = Vec::with_capacity(n);
+        for (i, st) in states.iter_mut().enumerate() {
+            let band = &all[i * g..(i + 1) * g];
+            let drafts: Vec<u32> = if self.mask_token_id != 0 {
+                band.iter().skip(1).copied().take(cap).collect()
+            } else {
+                band.iter().copied().take(cap).collect()
+            };
+            if let Some(d) = st.as_any_mut().downcast_mut::<DflashProposerState>() {
+                d.last_num_drafted = drafts.len();
+            }
+            out.push(drafts);
+        }
+        Ok(Some(out))
+    }
+
+    fn after_verify(
+        &self,
+        num_accepted: usize,
+        state: &mut dyn ProposerState,
+        _stream: u64,
+    ) -> Result<()> {
+        let dstate = state
+            .as_any_mut()
+            .downcast_mut::<DflashProposerState>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid DFlash proposer state"))?;
+        // Phase 1: no real KV trim because `propose()` is a stub. Phase 2
+        // adds the rollback that drops `(last_num_drafted - num_accepted)`
+        // tokens from each layer's paged cache.
+        //
+        // Phase I invariant: `ctx_committed` is the watermark of ctx slots
+        // already precomputed into the paged cache. It is monotonic only as
+        // long as `ctx_len` is monotonic (today it is — ctx is append-only
+        // and never rewound here). IF a future rollback ever shrinks the
+        // committed ctx (rewinds `ctx_len`), it MUST also reset
+        // `dstate.ctx_committed = dstate.ctx_len` so the next propose
+        // recomputes the rolled-back tail instead of reading stale K/V.
+        // The `.min(ctx_len)` clamp in propose() is the defensive backstop.
+        let _ = num_accepted;
+        dstate.last_num_drafted = 0;
+        Ok(())
+    }
+
+    fn free_state(&self, gpu: &dyn GpuBackend, state: &mut dyn ProposerState) -> Result<()> {
+        // Phase 2 (Option B) reclaim: return the drafter's lazily-allocated
+        // paged KV blocks to the pool on request completion. Without this the
+        // ~257-block Option-B drafter cache (allocated in propose.rs when
+        // block_table_dev.is_none()) is never freed, so the SECOND request to
+        // a long-lived server starts with zero free drafter blocks and floods
+        // "DFlash Option B: paged KV cache exhausted". Mirrors MtpHead::free_state.
+        let dstate = match state.as_any_mut().downcast_mut::<DflashProposerState>() {
+            Some(s) => s,
+            // Phase 1 / non-DFlash proposer state: nothing allocated, nothing to free.
+            None => return Ok(()),
+        };
+        if !dstate.block_table.is_empty() {
+            self.kv_cache.lock().free_blocks(&dstate.block_table);
+            dstate.block_table.clear();
+        }
+        // Free the per-seq ctx accumulator — the dominant per-request
+        // allocation (`max_seq_len × 5 × target_hidden` BF16; ~320 MB at
+        // max_seq_len=16384). `DevicePtr` has no Drop, so without this every
+        // finished sequence leaks it for the server's lifetime. Guarded on a
+        // non-null pointer so a double free_state is a no-op.
+        if dstate.ctx_hidden_acc.0 != 0 {
+            gpu.free(dstate.ctx_hidden_acc)?;
+            dstate.ctx_hidden_acc = DevicePtr(0);
+        }
+        // Free the device-side block table (lazily allocated in propose.rs).
+        if let Some(bt) = dstate.block_table_dev.take() {
+            gpu.free(bt)?;
+        }
+        // Reset the lazy-alloc guard + watermarks so the NEXT request's first
+        // propose re-allocates fresh blocks and re-precomputes ctx from a clean
+        // slate (propose.rs gates alloc on block_table_dev.is_none()).
+        dstate.max_ctx_count_drafter = 0;
+        dstate.ctx_count_drafter = 0;
+        dstate.ctx_committed = 0;
+        dstate.ctx_positions.clear();
+        dstate.seq_len = 0;
+        dstate.ctx_len = 0;
+        dstate.prefill_done = false;
+        dstate.last_num_drafted = 0;
+        dstate.last_num_accepted = 0;
+        dstate.skip_next_decode_append = false;
+        Ok(())
+    }
+}
+
+/// METRALE_NO_DFLASH_FP8_RT=1 restores the tile-GEMM propose path for A/B
+/// (strict `== "1"`, matching the sibling METRALE_NO_* levers). OnceLock so
+/// the kernel choice is stable across CUDA-graph capture.
+pub(crate) fn fp8_rt_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("METRALE_NO_DFLASH_FP8_RT").as_deref() != Ok("1"))
+}
+
+/// The DFlash context-window bound, in tokens: the most recent target
+/// positions the drafter is allowed to accumulate and attend to.
+///
+/// SINGLE DEFINITION on purpose. Two buffers are sized from it — the
+/// per-sequence ctx accumulator here, and the model-level whole-prompt hidden
+/// capture (`impl_a1`) that feeds `prefill_drafter` — and the drafter cannot
+/// use more prompt than it can store, so capturing past this bound is dead
+/// memory. Letting the two drift is exactly the ceiling-vs-need bug this
+/// bound exists to close.
+///
+/// `METRALE_DFLASH_CTX_CAP=<tokens>`; `0` disables the cap entirely.
+pub fn dflash_ctx_cap() -> usize {
+    std::env::var("METRALE_DFLASH_CTX_CAP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(16384)
+}
+
+impl BlockDiffusionDraftHead {
+    /// Block width (rows per sequence) of the propose in flight. See `block_gamma`.
+    #[inline]
+    pub fn block_g(&self) -> usize {
+        self.block_gamma.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Arm the block width for the next propose from the scheduler's draft
+    /// count: `num_drafts + 1` rows (anchor + masks), clamped to `2..=gamma`
+    /// so a resolver that asks for more than the head was sized for gets the
+    /// widest block rather than an out-of-band scratch write.
+    #[inline]
+    pub(super) fn set_block_g(&self, num_drafts: usize) {
+        let g = (num_drafts + 1).clamp(2, self.gamma.max(2));
+        self.block_gamma
+            .store(g, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Allocate proposer state with the ctx accumulator sized to the smallest
+    /// of: this request's token budget, the METRALE_DFLASH_CTX_CAP window, and
+    /// `--max-seq-len`.
+    fn alloc_state_windowed(
+        &self,
+        gpu: &dyn GpuBackend,
+        budget_tokens: usize,
+    ) -> Result<Box<dyn ProposerState>> {
+        // Per-seq ctx accumulator: `[max_seq_len, 5 * target_hidden] BF16`.
+        // Sized once, re-used across the seq's lifetime; reset on
+        // `free_state`. At max_seq_len=16384 and 5×2048 BF16: 320 MB per
+        // seq — tolerable on a single Spark with max_batch_size=1; for
+        // higher batch we may want to reduce to a smaller working window.
+        let bf16 = 2usize;
+        let ctx_slot_bytes = self.target_layer_ids.len() * self.target_hidden_size * bf16;
+        // WORKING WINDOW, not max_seq_len. This buffer is per SEQUENCE and
+        // scales with the context ceiling: at 128K x 5 layers x 5120 BF16 it
+        // is 6.7 GB EACH, so 8 concurrent sequences ask for 53.7 GB — lazily,
+        // as streams arrive, which is why it OOMs a long way past a clean
+        // boot rather than at startup. Capping the window bounds it to
+        // `cap * ctx_slot_bytes` per sequence (16K -> 839 MB, 8 seqs -> 6.7 GB).
+        //
+        // Correctness: `commit_ctx` already slides a watermark when the
+        // accumulator fills, keeping the NEWEST half and re-stamping
+        // ctx_positions, so a smaller window is an already-exercised path —
+        // the drafter conditions on recent context instead of the whole
+        // history. Raise with METRALE_DFLASH_CTX_CAP=<tokens> (0 = uncapped,
+        // the pre-cap behaviour) if you have the memory and want the drafter
+        // to see further back.
+        let cap = dflash_ctx_cap();
+        let ceiling = if cap == 0 {
+            self.max_seq_len
+        } else {
+            self.max_seq_len.min(cap)
+        };
+        // The request's own reach (prompt + max_tokens) when the caller knows
+        // it: a 2K-token turn has no use for a 16K accumulator, and this
+        // buffer is paid PER SEQUENCE. `+ gamma + 1` covers the draft block
+        // and bonus slot the ctx accumulates past the last emitted token.
+        let window = ceiling.min(budget_tokens.saturating_add(self.gamma + 1));
+        if ceiling < self.max_seq_len {
+            static LOGGED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::info!(
+                    "DFlash ctx window capped to {} of --max-seq-len {} ({} MB/seq instead of \
+                     {} MB): the accumulator is PER SEQUENCE, so the uncapped size is what \
+                     OOMs a high-concurrency long-context serve. Override with \
+                     METRALE_DFLASH_CTX_CAP=<tokens> (0 = uncapped).",
+                    ceiling,
+                    self.max_seq_len,
+                    ceiling * ctx_slot_bytes / (1024 * 1024),
+                    self.max_seq_len * ctx_slot_bytes / (1024 * 1024),
+                );
+            }
+        }
+        let total = window * ctx_slot_bytes;
+        let ctx_hidden_acc = gpu.alloc(total)?;
+        // Initialize to zero so stale data doesn't leak between sequences.
+        gpu.memset(ctx_hidden_acc, 0, total)?;
+        Ok(Box::new(DflashProposerState {
+            block_table: Vec::with_capacity(64),
+            seq_len: 0,
+            last_num_drafted: 0,
+            prefill_done: false,
+            ctx_hidden_acc,
+            ctx_len: 0,
+            last_num_accepted: 0,
+            skip_next_decode_append: false,
+            max_ctx_len: window,
+            ctx_slot_bytes,
+            // Phase 2 Option B: lazily allocated on first propose when
+            // METRALE_DFLASH_OPTION_B=1. None until then to keep alloc_state
+            // cheap for sequences that never use Option B.
+            block_table_dev: None,
+            ctx_count_drafter: 0,
+            max_ctx_count_drafter: 0,
+            ctx_committed: 0,
+            ctx_positions: Vec::new(),
+        }))
+    }
+}

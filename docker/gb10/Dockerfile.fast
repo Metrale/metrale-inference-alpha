@@ -1,0 +1,16 @@
+# Fast-path: layer a pre-built met binary on top of the previous alpha image.
+# Avoids the multi-minute Cargo dep fetch + release build by reusing the
+# existing Ubuntu + CUDA runtime layers from the last alpha.
+#
+# Build (host must have `target/release/met` already built):
+#   cargo build --release -p spark-server
+#   cp target/release/met spark-fastbin
+#   docker build -f docker/gb10/Dockerfile.fast -t metrale-gb10:alpha-2.14 .
+#
+# The `target/` directory is in .dockerignore, so we stage the binary as
+# `spark-fastbin` at the repo root for the build context.
+
+FROM metrale-gb10:fix42
+
+COPY spark-fastbin /usr/local/bin/met
+COPY jinja-templates/ /jinja-templates/

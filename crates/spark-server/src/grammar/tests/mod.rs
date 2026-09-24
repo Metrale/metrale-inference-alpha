@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Test-only helpers and per-area test sub-modules.
+
+use super::*;
+use crate::tool_parser::ToolDefinition;
+
+mod cold_compile;
+mod engine_state;
+mod gemma4_required;
+mod minimax;
+mod misc;
+mod native_prewarm;
+mod parallel_calls;
+mod param_key_constraint;
+mod poolside;
+mod prewarm_ordering;
+mod qwen3_coder_required;
+mod sanitize;
+mod tools_basic;
+mod value_entry;
+
+/// Build a minimal vocabulary for testing.
+/// Contains basic ASCII + JSON structural tokens.
+pub(crate) fn test_vocab() -> Vec<String> {
+    let mut vocab = Vec::new();
+    // Token 0..127: single ASCII characters
+    for i in 0u8..128 {
+        vocab.push(String::from(i as char));
+    }
+    // Token 128: <tool_call>
+    vocab.push("<tool_call>".to_string());
+    // Token 129: </tool_call>
+    vocab.push("</tool_call>".to_string());
+    // Token 130: <eos>
+    vocab.push("<eos>".to_string());
+    vocab
+}
+
+pub(crate) fn test_tool_defs() -> Vec<ToolDefinition> {
+    vec![ToolDefinition {
+        tool_type: "function".to_string(),
+        function: crate::tool_parser::FunctionDefinition {
+            name: "get_weather".to_string(),
+            description: Some("Get weather for a location".to_string()),
+            parameters: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City name"
+                    }
+                },
+                "required": ["location"]
+            })),
+        },
+    }]
+}

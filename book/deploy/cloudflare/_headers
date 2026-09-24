@@ -1,0 +1,29 @@
+# Cloudflare Pages equivalent of book/deploy/nginx/book.dev.metrale.ai.conf.
+#
+# Cache-Control is NOT on `/*`: Pages concatenates a header a later rule
+# re-declares rather than replacing it, and a browser reads the first max-age —
+# so a catch-all silently caps every override. Every rule below is scoped so no
+# two match the same path. rustdoc is its own site (docs.dev.metrale.ai) with
+# its own control file, rustdoc/_headers.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+
+/
+  Cache-Control: public, max-age=300
+/*.html
+  Cache-Control: public, max-age=300
+
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+/FontAwesome/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# mdBook's own stylesheets are NOT hashed, so they must revalidate.
+/css/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300

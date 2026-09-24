@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Qwen3 attention weight component structs (MLA / compressor / hyper-connection).
+//! Split from `types.rs` (500-LoC cap).
+
+use spark_runtime::gpu::DevicePtr;
+
+use crate::weight_map::{DenseWeight, QuantizedWeight};
+
+/// MLA (Multi-head Latent Attention) weight components for 2-step decode.
+///
+/// Instead of a single Q GEMV: `input × Q_expanded → Q[n_heads*hd]`,
+/// MLA does: `input × wq_a → latent[q_lora]` → `norm` → `latent × wq_b → Q`.
+/// This preserves the latent normalization that's critical for output quality.
+pub struct MlaWeights {
+    pub wq_a: DenseWeight, // [q_lora, h] — Q down-projection (BF16)
+    pub wq_a_nvfp4: Option<QuantizedWeight>, // NVFP4 for fast decode
+    /// Native block-scaled FP8 weight (the checkpoint ships these projections as
+    /// FP8-E4M3 + 128×128 block scales). Used by the decode GEMV (w8a16_gemv) so
+    /// the hot path reads 1 byte/elem instead of the BF16-dequant's 2 — lossless
+    /// (the in-kernel dequant keeps F32 precision before the BF16 activation MAC).
+    pub wq_a_fp8: Option<crate::weight_map::Fp8Weight>,
+    pub wq_b: DenseWeight, // [n_heads*hd, q_lora] — Q up-projection (BF16)
+    pub wq_b_nvfp4: Option<QuantizedWeight>, // NVFP4 for fast decode
+    pub wq_b_fp8: Option<crate::weight_map::Fp8Weight>,
+    pub q_a_norm: DenseWeight,                // [q_lora] — RMS norm weight
+    pub wkv_a: DenseWeight,                   // [kv_lora, h] — KV down-projection (BF16)
+    pub wkv_a_nvfp4: Option<QuantizedWeight>, // NVFP4 for fast decode
+    pub wkv_a_fp8: Option<crate::weight_map::Fp8Weight>,
+    pub wkv_b: DenseWeight, // [n_kv*(nope+v), kv_lora] — KV up-projection (BF16)
+    pub kv_a_norm: DenseWeight, // [kv_lora] — RMS norm weight
+    pub wkv_a_rope: DenseWeight, // [rope, h] — K RoPE projection (BF16)
+    /// Merged wkv_a + wkv_a_rope for prefill: [kv_lora+rope, h] — single GEMM replaces 2
+    pub wkv_a_merged: DenseWeight,
+    pub wo: DenseWeight, // [h, n_heads*v_dim] — O projection BF16 (for prefill accuracy)
+    pub wo_nvfp4: Option<QuantizedWeight>, // O projection NVFP4 (for fast decode GEMV)
+    /// Grouped low-rank O down-projection (wo_a → wo_b) for DeepSeek-V4-Flash.
+    /// When `o_lora_rank > 0`, the decode/prefill paths use wo_a→wo_b instead of `wo`.
+    pub wo_a: DenseWeight, // [o_lora_rank, n_heads*v_dim]
+    pub wo_a_nvfp4: Option<QuantizedWeight>,
+    /// Native block-scaled FP8 wo_a for the grouped decode O-projection. Sliced
+    /// per o_group (block-diagonal) into w8a16_gemv calls.
+    pub wo_a_fp8: Option<crate::weight_map::Fp8Weight>,
+    pub wo_b: DenseWeight, // [h, o_lora_rank]
+    pub wo_b_nvfp4: Option<QuantizedWeight>,
+    pub wo_b_fp8: Option<crate::weight_map::Fp8Weight>,
+    /// Absorbed MLA weights for decode (avoid full K/V expansion, preserve precision).
+    /// W_UK_T: [n_heads, nope, kv_lora] — Q_nope absorption: Q_absorbed = Q_nope @ W_UK_T
+    pub w_uk_t: DenseWeight,
+    /// W_UV: [n_heads, kv_lora, v_dim] — V extraction: v_out = attn_latent @ W_UV
+    pub w_uv: DenseWeight,
+    /// Q rope projection: wq_b_rope[nq*rope, q_lora] — Q_rope = wq_b_rope @ Q_latent
+    /// Extracted from wq_b rows [n*hd+nope .. n*hd+nope+rope] for each head.
+    pub wq_b_rope: DenseWeight,
+    /// Fused Q absorption: `W_QK_absorbed[nq*kv_lora, q_lora]` — Q_absorbed = W_QK @ Q_latent
+    /// Precomputed as: `W_QK[n, lkv, l] = sum_p wq_b_nope[n, p, l] * W_UK[n, p, lkv]`
+    /// Enables single GEMV: `Q_absorbed[nq*kv_lora] = W_QK[nq*kv_lora, q_lora] @ Q_latent[q_lora]`
+    pub w_qk_absorbed: DenseWeight,
+    /// Block-diagonal W_UK for prefill batched GEMM: [nq*kv_lora, nq*nope]
+    /// Single GEMM replaces 32*N per-head GEMV calls for Q absorption in prefill.
+    pub w_uk_block_diag: DenseWeight,
+    /// Block-diagonal W_UV for prefill batched GEMM: [nq*v_dim, nq*kv_lora]
+    /// Single GEMM replaces 32*N per-head GEMV calls for V extraction in prefill.
+    pub w_uv_block_diag: DenseWeight,
+    /// Precomputed YaRN inv_freq table [rotary_dim/2] FP32 on GPU.
+    /// NULL = use standard theta computation in the RoPE kernel.
+    pub yarn_inv_freq: spark_runtime::gpu::DevicePtr,
+    /// Plain θ=10000 inv_freq [rotary_dim/2] FP32 on GPU, NO YaRN. Used for the
+    /// raw-arm Q/K rope on `sliding_attention` layers (compressor==None): the
+    /// reference gives sliding layers the "main" rope (θ=rope_theta=10000, no
+    /// yarn) while CSA/HCA layers use "compress" (θ=compress_rope_theta=160000
+    /// + yarn). Metrale Engine previously applied the single yarn table to every layer.
+    pub main_inv_freq: spark_runtime::gpu::DevicePtr,
+    pub q_lora_rank: usize,
+    pub kv_lora_rank: usize,
+    pub o_lora_rank: usize,
+    pub nope: usize,
+    pub rope: usize,
+    pub v_dim: usize,
+    /// DeepSeek Sparse Attention compressor (CSA ratio-4 / HCA ratio-128).
+    /// `None` for full-attention layers (`compress_ratios[L]` == 0).
+    pub compressor: Option<CompressorWeights>,
+    /// Per-head attention sink logit `[num_q_heads]` BF16 (DeepSeek-V4 s_aux).
+    /// NULL if the checkpoint has no attn_sink for this layer.
+    pub attn_sink: spark_runtime::gpu::DevicePtr,
+}
+
+/// DeepSeek-V4 compressed-attention compressor weights (one per compressed layer).
+/// Produces `n_win = usable/ratio` compressed KV entries that are concatenated to
+/// the raw sliding-window KV before core attention. CSA (ratio 4) uses a 2×ratio
+/// overlap window (Ca/Cb); HCA (ratio 128) uses a single non-overlapping window.
+#[derive(Debug, Clone, Copy)]
+pub struct CompressorWeights {
+    /// kv_proj: [proj_dim, hidden]. proj_dim = 2*head_dim (CSA) or head_dim (HCA).
+    pub wkv: DenseWeight,
+    /// gate_proj: same shape as wkv.
+    pub wgate: DenseWeight,
+    /// kv_norm weight `[head_dim]` — HF-vanilla RMSNorm (loaded exactly).
+    pub norm: DenseWeight,
+    /// position_bias / ape: [ratio, proj_dim] **F32** (checkpoint-native; csa_compress
+    /// indexes it as `const float*`), added to the gate before the per-dim softmax.
+    pub ape: spark_runtime::gpu::DevicePtr,
+    /// compress_rate for this layer (4 = CSA, 128 = HCA).
+    pub ratio: usize,
+    /// proj_dim of wkv/wgate output (2*head_dim for CSA, head_dim for HCA).
+    pub proj_dim: usize,
+    /// true = CSA (2×ratio overlap window); false = HCA (single window).
+    pub is_csa: bool,
+    /// 4b: persistent flat compressed-KV pool (decode reads it; inc-3 appends).
+    /// Layout `[pool_blocks × hd_mla]` FP8-E4M3, each block = one rope'd `comp_k`
+    /// entry quantized at the raw KV arm's scale (k_scale=1.0 for V4) so decode
+    /// reads raw+compressed at one dtype/scale (single online softmax). Flat
+    /// per-seq (V4 serves max_batch=1), NOT paged — mirrors the reference
+    /// `Compressor.kv_cache` contiguous buffer so `block_idx = pos/ratio` matches
+    /// prefill's index set exactly (no ring, no block-table remap).
+    /// Prefill fills blocks `[0, n_win)`; decode appends after.
+    pub pool: spark_runtime::gpu::DevicePtr,
+    /// Capacity in compressed blocks = `max_position_embeddings.div_ceil(ratio)`.
+    pub pool_blocks: usize,
+    /// 4b inc-3: persistent decode-time normed-x ring `[ratio × hidden]` BF16.
+    /// Each decode token's compressor input (`normed`, the layer-input RMSNorm
+    /// output — the SAME tensor prefill's `cache_skip_v4` feeds `wkv`/`wgate`) is
+    /// written to slot `pos % ratio`. At a window boundary the ring holds the
+    /// `ratio` tokens of the just-completed window in order, and decode reruns the
+    /// prefill compress pipeline over it to append one pool block. BF16 (not FP8):
+    /// quantize only at the pool write, so decode's compressor input matches
+    /// prefill's bit-for-bit (fp8-ing the input would add a stage prefill never
+    /// sees and make the golden-vector gate uninterpretable).
+    pub ring: spark_runtime::gpu::DevicePtr,
+    /// 4b inc-3 (CSA only): previous completed window's normed-x `[ratio × hidden]`
+    /// BF16. CSA reads a 2×ratio overlap (prev window's Ca + current window's Cb);
+    /// after each append the ring is copied here to feed the next window's Ca.
+    /// `DevicePtr::NULL` for HCA (no overlap). The first decode window has no valid
+    /// prev (it would be a prefill window absent from the decode ring) → Ca masked.
+    pub prev_win: spark_runtime::gpu::DevicePtr,
+    /// 4b inc-3 (CSA only): concat staging `[2×ratio × hidden]` BF16 = prev_win ‖
+    /// ring, the 2×ratio-token input the CSA compress kernel indexes for one
+    /// overlapped window. `DevicePtr::NULL` for HCA.
+    pub stage: spark_runtime::gpu::DevicePtr,
+}
+
+/// Qwen3.8-Flash-Next's LOW-RANK hyper-connection parameters for one site.
+///
+/// Present instead of — never alongside — the Sinkhorn `hc_fn`/`hc_base`/
+/// `hc_scale` triple above. DeepSeek-V4 mixes the `hc_mult` streams with a
+/// Sinkhorn-normalized matrix; Qwen mixes them through a rank-`rank` pair.
+/// Both share the `[T, hc_mult, H]` highway and `hc_mult`, so the presence of
+/// this struct — not the model name — is what selects the kernel.
+///
+/// All BF16, matching the checkpoint. See `bench/qwen4_exp/ARCHITECTURE.md` §1.
+#[derive(Clone, Copy)]
+pub struct HcLowRank {
+    /// `hc_norm` `[hc_mult*hidden]`. A GROUPED RMSNorm scale: the streams
+    /// normalize independently inside the vector, `group_size = hidden`.
+    pub norm_w: DevicePtr,
+    /// `input_mix_weight_down` `[rank, hc_mult*hidden]`.
+    pub down_w: DevicePtr,
+    /// `input_mix_weight_up` `[hc_mult*hidden, rank]`.
+    pub up_w: DevicePtr,
+    /// `block_inject_weight` `[hc_mult, hc_mult*hidden]`. NULL on the
+    /// model-level mixer, which is built `use_combine=False` and emits no
+    /// injection vector.
+    pub inject_w: DevicePtr,
+    /// `hc_lowrank` (320 on this checkpoint).
+    pub rank: usize,
+}
+
+/// Per-block Manifold-Constrained Hyper-Connection (mHC) parameters for one
+/// site (attention or FFN). All buffers are float32 device pointers, matching
+/// the checkpoint dtype. See `ops::hc_pre` / `ops::hc_post`.
+pub struct HcSiteWeights {
+    /// Mix projection `fn`: `[mix_hc, hc_mult*hidden]` f32, where
+    /// `mix_hc = (2 + hc_mult) * hc_mult`.
+    pub hc_fn: DevicePtr,
+    /// Mix bias `base`: `[mix_hc]` f32.
+    pub hc_base: DevicePtr,
+    /// Mix scale: `[3]` f32 (pre / post / comb scalars).
+    pub hc_scale: DevicePtr,
+    /// Qwen low-rank variant. `Some` => dispatch the low-rank kernels and
+    /// IGNORE `hc_fn`/`hc_base`/`hc_scale` (which are NULL in that case).
+    pub lowrank: Option<HcLowRank>,
+}
+
+/// Both HC sites for a DeepSeek-V4 block: the attention site runs before/after
+/// attention, the FFN site before/after the MoE FFN.
+/// Model-level HC head parameters (final collapse before LM head).
+/// Loaded once, attached to every layer, but only used by the last layer.
+#[derive(Clone)]
+pub struct HcHeadWeights {
+    /// Mix projection `head_fn`: `[hc_mult, hc_mult*hidden]` f32.
+    pub hc_fn: DevicePtr,
+    /// Mix bias `head_base`: `[hc_mult]` f32.
+    pub hc_base: DevicePtr,
+    /// Mix scale: `[1]` f32.
+    pub hc_scale: DevicePtr,
+    /// Qwen low-rank variant of the model-level mixer. `Some` => low-rank
+    /// kernels; its `inject_w` is NULL (`use_combine=False`).
+    pub lowrank: Option<HcLowRank>,
+}
+
+pub struct HcWeights {
+    pub attn: HcSiteWeights,
+    pub ffn: HcSiteWeights,
+    /// Model-level head weights. `Some` on all layers (replicated pointer),
+    /// consumed only by the last layer's `hc_head` call.
+    pub head: Option<HcHeadWeights>,
+    pub hc_mult: usize,
+    pub sinkhorn_iters: usize,
+    pub hc_eps: f32,
+    /// Whether this is model layer 0 — the layer that seeds the highway with
+    /// `hc_expand`.
+    ///
+    /// Carried here rather than derived from `attn_layer_idx`, which counts
+    /// ATTENTION layers. On DeepSeek-V4 every layer is attention and the two
+    /// indices coincide; on a 3:1 GDN:attention interleave they do not, and
+    /// `attn_layer_idx == 0` is model layer 3 — three layers after the
+    /// highway needed seeding.
+    pub is_first_model_layer: bool,
+    /// Whether this is the LAST model layer — the one that collapses the
+    /// highway with `hc_head`.
+    ///
+    /// Same reason. The old guard was `attn_layer_idx + 1 ==
+    /// num_hidden_layers`, i.e. `12 == 48` on this model: never true, so the
+    /// LM head would have read an uncollapsed stream. On Qwen that also means
+    /// an UNNORMALIZED one, since `hyper_connection_mixer` is the model's
+    /// final norm and the checkpoint ships no `model.norm.weight`.
+    pub is_last_model_layer: bool,
+}
+
+/// Which of the four attention projections get an FP8 `[K, N]` transposed twin
+/// built by [`Qwen3AttentionLayer::transpose_fp8_for_prefill`].
+///
+/// [`Qwen3AttentionLayer::transpose_fp8_for_prefill`]:
+///     super::Qwen3AttentionLayer::transpose_fp8_for_prefill
+///
+/// WHY per projection and not one flag (#915): the four are reached by
+/// DIFFERENT prefill chains and only two of them are W8A8-gated.
+///
+/// * **K and V** are read by `prefill/cache_skip_qkv.rs:218` / `:235`, whose
+///   dispatch chain has **no W8A8 arm at all** — and `cache_skip` is the
+///   first-chunk path (`trait_impl/prefill_inner.rs:138`, `seq_len_start == 0`)
+///   taken by every request. Their twins are never dead.
+/// * **Q** on that chain is behind `METRALE_ATTN_PREFILL_Q_T=1`
+///   (`cache_skip_qkv.rs:142`); otherwise it is reached only after the W8A8
+///   arm in `prefill/paged_qkv.rs:220` declines.
+/// * **O** is routed to `prefill/paged_oproj.rs` from both chains, so it is
+///   reached only after the W8A8 arm at `paged_oproj.rs:94` declines.
+///
+/// On 1xH100 (Qwen3.8-27B-FP8) the four cost 100 MiB/layer x 16 layers =
+/// 1,600 MB — the `weight_map/quantized.rs:643` ledger row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Fp8TwinSet {
+    pub q: bool,
+    pub k: bool,
+    pub v: bool,
+    pub o: bool,
+}
+
+impl Fp8TwinSet {
+    pub const NONE: Self = Self {
+        q: false,
+        k: false,
+        v: false,
+        o: false,
+    };
+    /// Every twin — what a loader that has not opted into the #915 plan asks
+    /// for, i.e. the pre-#915 behaviour.
+    pub const ALL: Self = Self {
+        q: true,
+        k: true,
+        v: true,
+        o: true,
+    };
+
+    pub fn any(self) -> bool {
+        self.q || self.k || self.v || self.o
+    }
+}
+
+/// The two `(module, function)` pairs the W8A8 block-scaled prefill arm needs
+/// (`prefill/paged_qkv.rs:220`, `prefill/paged_oproj.rs:94`).
+///
+/// SSOT for three readers that must not drift (#915): `init.rs` resolves the
+/// handles, `Qwen3AttentionLayer::has_w8a8_prefill_kernels` tests them, and
+/// [`w8a8_prefill_kernels_loaded`] asks the BACKEND the same question before
+/// any layer exists — which is what lets preflight predict, pre-load, whether
+/// the Q and O FP8 prefill twins will be built. A name typo'd in one of the
+/// three would mis-predict ~1.5 GB of residency on the 27B in silence.
+pub const W8A8_PREFILL_KERNELS: [(&str, &str); 2] = [
+    (
+        crate::layers::ops::FP8_QUANT_MODULE,
+        crate::layers::ops::FP8_QUANT_ENTRY,
+    ),
+    ("fp8_gemm_t_blockscaled", "fp8_gemm_t_blockscaled"),
+];
+
+/// Whether BOTH [`W8A8_PREFILL_KERNELS`] are loaded for this target, asked of
+/// the backend rather than of a constructed layer.
+///
+/// Same answer `Qwen3AttentionLayer::has_w8a8_prefill_kernels` gives — the
+/// layer just caches the handles `init.rs` already resolved through
+/// `try_kernel`, and `try_kernel` returns `KernelHandle(0)` for an absent
+/// kernel exactly as this does.
+pub fn w8a8_prefill_kernels_loaded(gpu: &dyn spark_runtime::gpu::GpuBackend) -> bool {
+    W8A8_PREFILL_KERNELS
+        .iter()
+        .all(|(module, func)| crate::layers::try_kernel(gpu, module, func).0 != 0)
+}

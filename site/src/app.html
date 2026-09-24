@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script>
+      (function () {
+        // Settle data-theme before first paint. The front page's hero is the
+        // kit's mark, drawn inline from the shared vector definitions, so
+        // there is no hero image to queue here any more.
+        try {
+          var t = localStorage.getItem('metrale-theme');
+          if (t !== 'light' && t !== 'dark') {
+            t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          }
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Metrale Engine is an open source, pure Rust and CUDA LLM inference engine hand tuned for NVIDIA DGX Spark. What ships is what we verify." />
+    <!-- The brand faces (Urbanist, IBM Plex Mono), attached late on purpose.
+         In the bundle, preloaded or not, the font downloads sat on the critical
+         path of the first paint and cost every page a point of Lighthouse
+         performance against a gate that demands 100. So the page paints in
+         fallbacks that occupy the same space as the web fonts
+         (src/styles/fonts.css) and the real faces swap in without moving
+         anything.
+
+         "Late" means after the first contentful paint AND after load, then at
+         idle. Not just after load: on /control load fires at 140 ms and the
+         first paint lands at 320 ms, so a load listener still fetched the
+         fonts ahead of the paint. Once the files are in the visitor's cache
+         the sheet is attached straight away, which costs nothing.
+
+         A second script tag, not the boot script above: theme.test.js runs
+         that one against a handful of fake globals. -->
+    <script>
+      (function () {
+        var href = '%sveltekit.assets%/fonts/type.css';
+        var done = false;
+        function attach() {
+          if (done) return;
+          done = true;
+          var l = document.createElement('link');
+          l.rel = 'stylesheet';
+          l.href = href;
+          document.head.appendChild(l);
+          try {
+            localStorage.setItem('metrale-fonts', '1');
+          } catch (e) {}
+        }
+        var warm = false;
+        try {
+          warm = localStorage.getItem('metrale-fonts') === '1';
+        } catch (e) {}
+        if (warm) return attach();
+
+        var painted = false;
+        var loaded = document.readyState === 'complete';
+        function go() {
+          if (!painted || !loaded) return;
+          if (window.requestIdleCallback) requestIdleCallback(attach, { timeout: 2000 });
+          else setTimeout(attach, 200);
+        }
+        try {
+          new PerformanceObserver(function (list, observer) {
+            if (list.getEntriesByName('first-contentful-paint').length) {
+              observer.disconnect();
+              painted = true;
+              go();
+            }
+          }).observe({ type: 'paint', buffered: true });
+        } catch (e) {
+          painted = true;
+        }
+        if (!loaded)
+          addEventListener('load', function () {
+            loaded = true;
+            go();
+          });
+        // Whatever happens above, the brand typeface still arrives.
+        setTimeout(attach, 5000);
+      })();
+    </script>
+    <noscript><link rel="stylesheet" href="%sveltekit.assets%/fonts/type.css" /></noscript>
+    <!-- Must equal --bg in web-shared/metrale-tokens.css. A meta tag cannot read a
+         custom property, so this is the one unavoidable copy of the ground colour;
+         theme-color.test.js fails the build if the two drift. -->
+    <meta name="theme-color" content="#0E1318" />
+    <meta name="theme-color" content="#0E1318" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+    <!-- Explicit rather than inherited: several engines treat a missing robots
+         directive as a reason to clip snippets and thumbnails. -->
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+
+    <!-- Icons. The SVG wins wherever it is supported; the .ico covers legacy
+         Windows surfaces (pinned sites, jump lists) that ignore SVG entirely;
+         the PNGs are the explicit sizes Safari and older Chrome pick from.
+         apple-touch-icon is the LIGHT-ground cut on purpose: iOS composites
+         transparency onto black, which would swallow the mark. -->
+    <link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%sveltekit.assets%/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="%sveltekit.assets%/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="%sveltekit.assets%/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Metrale" />
+    <link rel="manifest" href="%sveltekit.assets%/site.webmanifest" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Metrale Engine, one inference engine from handheld to datacenter" />
+    <meta property="og:description" content="Open source, pure Rust + CUDA. One engine from edge accelerators to datacenter racks. Verified on DGX Spark (GB10) and running on AMD Strix Halo. Submitted to MLPerf Inference v6.1. Every number is a receipt." />
+    <meta property="og:site_name" content="Metrale" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content="https://dev.metrale.ai/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The Metrale wordmark" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Metrale Engine, one inference engine from handheld to datacenter" />
+    <meta name="twitter:description" content="Open source, pure Rust + CUDA. Verified on DGX Spark. Every number is a receipt." />
+    <meta name="twitter:image" content="https://dev.metrale.ai/og-image.png" />
+    <meta name="twitter:image:alt" content="The Metrale wordmark" />
+
+    <!-- The plain-text brief answer engines read. Generated from the same
+         sources as the page by scripts/gen-llms.mjs. -->
+    <link rel="alternate" type="text/plain" href="%sveltekit.assets%/llms.txt" title="llms.txt" />
+
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

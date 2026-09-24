@@ -1,0 +1,479 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! A server that outlives one gate run, so the next run on this box can
+//! measure against it instead of loading the checkpoint again.
+//!
+//! `met benchmark run --pull-request-gate --serve-reuse` does not serve in
+//! its own process. It looks for the LEASED server — one `met serve`
+//! started by an earlier run of this mode, described in
+//! `<METRALE_HOME>/serve-lease.json` — and takes it if, and only if, it is the
+//! server this run would have started itself: the same binary bytes, the
+//! same recipe rendering with the same overrides, the same `METRALE_*` lever
+//! set (`GET /serve-config`, three digests), and `/v1/models` naming the
+//! checkpoint. Anything else is
+//! stopped and replaced. When the run ends the server is LEFT RUNNING for
+//! the next one; `met benchmark serve-release` (or the campaign driver at
+//! its end) stops it.
+//!
+//! Why the digests and not trust: a gate record is only worth what its serve
+//! config is worth (`bench_selfstart`). A server the caller merely CLAIMS is
+//! right is the one-mistyped-flag failure this mode exists to prevent, one
+//! level up. So the server states what it is, the run states what it needs,
+//! and the record is written only when the two are the same thing.
+//!
+//! Why a lease and not a discovery: a stray `met serve` on a shared box is
+//! never taken, whoever started it and whatever it serves — only the one this
+//! file names, which this mode started. `owner_pid` names the driver that
+//! asked for reuse; a lease whose owner is gone is a campaign that died, and
+//! its server is stopped rather than kept warm for nobody.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, bail};
+use metrale_plugin::serve_identity::{
+    ServeIdentity, argv_fingerprint, env_is_unknown, file_sha256,
+};
+use metrale_plugin::{ArtifactStore, TargetEndpoint, serve_env};
+
+use super::bench_cause;
+use super::bench_selfstart::SelfServed;
+use super::bench_serve_plan::ServePlan;
+
+const POLL: Duration = Duration::from_millis(500);
+/// SIGTERM, then this long, then SIGKILL.
+const STOP_GRACE: Duration = Duration::from_secs(60);
+
+/// The leased server, as written beside the runs it serves.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Lease {
+    pub pid: u32,
+    pub port: u16,
+    pub model: String,
+    pub recipe_id: String,
+    pub argv_sha256: String,
+    pub binary_sha256: String,
+    /// `serve_env::fingerprint` of the lever set the server was started
+    /// under — the recipe's declaration, whole (#1242). Defaults to empty for
+    /// a lease written before the field existed; its server is replaced, as
+    /// one from another binary is.
+    #[serde(default)]
+    pub env_sha256: String,
+    /// The process that asked for the lease (a campaign driver), or the run
+    /// itself when nobody did.
+    pub owner_pid: u32,
+    pub started_at: u64,
+}
+
+/// What this process would want a reused server to be: its own binary, the
+/// plan's rendering on the leased port, and the plan's lever set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Expected {
+    pub argv_sha256: String,
+    pub binary_sha256: String,
+    pub env_sha256: String,
+}
+
+pub fn lease_path(store: &ArtifactStore) -> PathBuf {
+    store.root().join("serve-lease.json")
+}
+
+pub fn log_path(store: &ArtifactStore) -> PathBuf {
+    store.root().join("serve-lease.log")
+}
+
+/// The lease on file, if any. A malformed file is an error, not "no lease":
+/// a server it named may be running.
+pub fn read(store: &ArtifactStore) -> Result<Option<Lease>> {
+    let path = lease_path(store);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?,
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn write(store: &ArtifactStore, lease: &Lease) -> Result<()> {
+    let path = lease_path(store);
+    std::fs::write(&path, serde_json::to_string_pretty(lease)?)
+        .with_context(|| format!("writing {}", path.display()))
+}
+
+/// Read from procfs; where there is none (this binary builds on Windows and
+/// macOS) no pid is ever alive, so a lease is never taken — and never
+/// signalled — there: the feature is inert rather than wrong.
+fn pid_alive(pid: u32) -> bool {
+    cfg!(target_os = "linux") && Path::new(&format!("/proc/{pid}")).exists()
+}
+
+/// [`Expected`] for `plan` on `port`, from this binary.
+///
+/// The lever set is the PLAN's declaration, not this process's environment:
+/// a serve's `METRALE_*` levers do not appear in its argv, so the same
+/// rendering under a different lever set is a different engine, and reusing
+/// it makes the record name a config that never ran. After
+/// `ServePlan::reconcile_env` a child started by this process runs under
+/// exactly the declared set, so the digest computed here is exactly what a
+/// server started now would report.
+fn expected(plan: &ServePlan, port: u16) -> Result<Expected> {
+    let argv = plan.argv(port)?;
+    let mine = std::env::current_exe().context("current_exe")?;
+    Ok(Expected {
+        argv_sha256: argv_fingerprint(&argv[1..]),
+        binary_sha256: file_sha256(&mine)?,
+        env_sha256: serve_env::fingerprint(&plan.serve_env),
+    })
+}
+
+/// Why a leased server is not the one this run needs, or `None` when it is.
+///
+/// Pure: the decision the reuse hinges on, testable without a server.
+pub fn mismatch(
+    lease: &Lease,
+    reported: &ServeIdentity,
+    expected: &Expected,
+    model: &str,
+) -> Option<String> {
+    if reported.pid != lease.pid {
+        return Some(format!(
+            "pid {} answered on port {}, the lease names pid {}",
+            reported.pid, lease.port, lease.pid
+        ));
+    }
+    if reported.binary_sha256 != expected.binary_sha256 {
+        return Some("it was built from another binary".into());
+    }
+    if reported.argv_sha256 != expected.argv_sha256 {
+        return Some(format!(
+            "it serves {} under another rendering (recipe {}, overrides or hermetic set differ)",
+            lease.model, lease.recipe_id
+        ));
+    }
+    // ★ THE ENVIRONMENT IS PART OF THE CONFIG, owner 2026-09-22: "we only allow
+    // server re-use IF the recipes the bench uses are the SAME". The recipe is
+    // already covered above — it renders to flags — but the `METRALE_*` levers
+    // never reach argv, so a server carrying the wrong one is byte-identical
+    // here and used to pass. Refused separately from the rendering so the
+    // message says WHICH half differs; a reader chasing a surprising number
+    // needs that distinction. The server's OWN statement of its levers is what
+    // is compared, never the lease's copy (#1242).
+    if env_is_unknown(&reported.env_sha256) {
+        return Some(
+            "it does not report its METRALE_* serve environment (a server older than the \
+             env digest), so its levers cannot be verified"
+                .into(),
+        );
+    }
+    if reported.env_sha256 != expected.env_sha256 {
+        return Some(format!(
+            "it was started under another METRALE_* serve environment than recipe {} is \
+             measured under (a server carrying levers this run did not declare, or lacking \
+             ones it did; argv and binary match, so this is env-only)",
+            lease.recipe_id
+        ));
+    }
+    if lease.model != model {
+        return Some(format!("it serves {}, this run needs {model}", lease.model));
+    }
+    None
+}
+
+/// Take the leased server if it is the one `plan` would start, else replace
+/// it. Either way the returned server is left running when dropped.
+pub async fn acquire(plan: ServePlan, owner_pid: Option<u32>) -> Result<SelfServed> {
+    // Before the probe: a harness carrying levers the recipe does not declare
+    // gets no server at all, reused or fresh (#1242).
+    let reconciled = plan.reconcile_env()?;
+    let store = ArtifactStore::discover()?;
+    if let Some(lease) = read(&store)? {
+        if pid_alive(lease.pid) {
+            let target = TargetEndpoint::local(lease.port, &plan.model);
+            let verdict = match probe(&target, &lease, &plan).await {
+                Ok(None) => None,
+                Ok(Some(why)) => Some(why),
+                Err(e) => Some(format!("{e:#}")),
+            };
+            match verdict {
+                None => {
+                    eprintln!(
+                        "gate: reusing the leased server (pid {}, port {}, recipe {}) — same binary, \
+                         same rendering",
+                        lease.pid, lease.port, lease.recipe_id
+                    );
+                    let resolved = plan.disclosed(lease.port)?;
+                    return Ok(SelfServed::external(
+                        target,
+                        plan.recipe_id,
+                        plan.requested,
+                        resolved,
+                        reconciled.env,
+                        plan.entry,
+                    ));
+                }
+                Some(why) => {
+                    eprintln!(
+                        "gate: the leased server (pid {}, port {}) is not this run's: {why}; replacing it",
+                        lease.pid, lease.port
+                    );
+                    stop(&lease);
+                }
+            }
+        } else {
+            eprintln!(
+                "gate: the lease names pid {}, which is gone; starting afresh",
+                lease.pid
+            );
+        }
+        let _ = std::fs::remove_file(lease_path(&store));
+    }
+    start(
+        &store,
+        plan,
+        reconciled,
+        owner_pid.unwrap_or_else(std::process::id),
+    )
+    .await
+}
+
+/// Ask the leased server what it is and compare.
+async fn probe(target: &TargetEndpoint, lease: &Lease, plan: &ServePlan) -> Result<Option<String>> {
+    let doc =
+        metrale_plugin::http::get_json(target, "/serve-config", Duration::from_secs(10)).await?;
+    let reported: ServeIdentity = serde_json::from_value(doc).context("parsing /serve-config")?;
+    let want = expected(plan, lease.port)?;
+    if let Some(why) = mismatch(lease, &reported, &want, &plan.model) {
+        return Ok(Some(why));
+    }
+    let models = metrale_plugin::http::list_models(target, Duration::from_secs(10)).await?;
+    if !models.contains(&plan.model) {
+        return Ok(Some(format!(
+            "it is serving {models:?}, not {}",
+            plan.model
+        )));
+    }
+    Ok(None)
+}
+
+/// Start `met serve` as a child in its own process group, record the
+/// lease, and wait for the model.
+///
+/// The child inherits this process's environment — toolchain and harness
+/// variables pass as they always did — plus `reconciled.missing`, the
+/// declared levers this process does not carry. After `reconcile` that makes
+/// the child's lever set exactly the declaration, which is what the lease
+/// and the server's own `env_sha256` both fingerprint.
+async fn start(
+    store: &ArtifactStore,
+    plan: ServePlan,
+    reconciled: serve_env::Reconciled,
+    owner_pid: u32,
+) -> Result<SelfServed> {
+    let port = metrale_plugin::benchmarks::agentic::score::free_port()?;
+    let serve_args = plan.serve_args(port)?;
+    super::bench_selfstart::check_box_is_free_enough(
+        serve_args.gpu_memory_utilization,
+        &plan.recipe_id,
+        plan.limits.memory.min_free_fraction,
+    )?;
+    let argv = plan.argv(port)?;
+    let exe = std::env::current_exe().context("current_exe")?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path(store))
+        .with_context(|| format!("opening {}", log_path(store).display()))?;
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(&argv[1..])
+        .envs(&reconciled.missing)
+        .stdin(std::process::Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("spawning {} serve", exe.display()))?;
+    let lease = Lease {
+        pid: child.id(),
+        port,
+        model: plan.model.clone(),
+        recipe_id: plan.recipe_id.clone(),
+        argv_sha256: argv_fingerprint(&argv[1..]),
+        binary_sha256: file_sha256(&exe)?,
+        env_sha256: serve_env::fingerprint(&reconciled.env),
+        owner_pid,
+        started_at: super::bench_certify::lockfile::now_unix(),
+    };
+    write(store, &lease)?;
+    eprintln!(
+        "gate: serving {} from recipe {} on port {port} as a LEASED server (pid {}); it stays up \
+         after this run — `met benchmark serve-release` stops it",
+        plan.model, plan.recipe_id, lease.pid
+    );
+    eprintln!(
+        "gate: the leased server's METRALE_* serve env is {} ({} handed to the child)",
+        if reconciled.env.is_empty() {
+            "empty".to_string()
+        } else {
+            reconciled
+                .env
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        },
+        reconciled.missing.len()
+    );
+    let target = TargetEndpoint::local(port, &plan.model);
+    let boot_timeout = Duration::from_secs(plan.limits.timing.boot_timeout_s);
+    if let Err(e) = await_serving(
+        &target,
+        &plan.model,
+        &mut child,
+        boot_timeout,
+        &log_path(store),
+    )
+    .await
+    {
+        stop(&lease);
+        let _ = std::fs::remove_file(lease_path(store));
+        return Err(e);
+    }
+    eprintln!("gate: endpoint is serving {}", plan.model);
+    let resolved = plan.disclosed(port)?;
+    Ok(SelfServed::external(
+        target,
+        plan.recipe_id,
+        plan.requested,
+        resolved,
+        reconciled.env,
+        plan.entry,
+    ))
+}
+
+/// The refusal for a leased serve that died during startup, carrying the end
+/// of its own log — the `Error:` / `Caused by:` block that says WHY ("No
+/// memory left for KV cache …"), which until #1242 stayed in a 126 MB file on
+/// another box while the driver printed "returned no record". The block is
+/// indented so this message's own `Error:` line stays the outermost one a
+/// reader of the child's log finds (`bench_cause::final_error_block`).
+///
+/// Pure over the log's tail, so the shape is testable without a serve.
+pub(super) fn exited_before_serving(status: &str, model: &str, log_tail: &str) -> String {
+    match bench_cause::final_error_block(log_tail) {
+        Some(block) => format!(
+            "the leased server exited ({status}) before it began serving {model:?} — \
+             serve-lease.log ends with:\n{}",
+            bench_cause::indented(&block)
+        ),
+        None => format!(
+            "the leased server exited ({status}) before it began serving {model:?} — see \
+             serve-lease.log (its tail carries no `Error:` block)"
+        ),
+    }
+}
+
+/// Block until `/v1/models` names `model`, watching the child so a serve that
+/// dies during startup reports so — with the end of `log` — instead of
+/// timing out.
+async fn await_serving(
+    target: &TargetEndpoint,
+    model: &str,
+    child: &mut std::process::Child,
+    boot_timeout: Duration,
+    log: &Path,
+) -> Result<()> {
+    let deadline = Instant::now() + boot_timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            let tail = bench_cause::tail_of_file(log, bench_cause::TAIL_BYTES)
+                .unwrap_or_else(|e| format!("(serve-lease.log could not be read: {e})"));
+            bail!(
+                "{}",
+                exited_before_serving(&status.to_string(), model, &tail)
+            );
+        }
+        let last = match metrale_plugin::http::list_models(target, Duration::from_secs(5)).await {
+            Ok(models) if models.iter().any(|m| m == model) => return Ok(()),
+            Ok(models) => format!("the endpoint is serving {models:?}"),
+            Err(e) => format!("{e:#}"),
+        };
+        if Instant::now() >= deadline {
+            bail!(
+                "{model:?} did not come up within {}s — {last}",
+                boot_timeout.as_secs()
+            );
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+/// SIGTERM the leased server's process group, wait, SIGKILL what is left.
+pub fn stop(lease: &Lease) {
+    let pid = lease.pid;
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", "--", &format!("-{pid}")])
+        .status();
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    let until = Instant::now() + STOP_GRACE;
+    while pid_alive(pid) && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    if pid_alive(pid) {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .status();
+    }
+}
+
+/// Stop the leased server, if any, and forget the lease. Returns what was
+/// released.
+pub fn release(store: &ArtifactStore) -> Result<Option<Lease>> {
+    let Some(lease) = read(store)? else {
+        return Ok(None);
+    };
+    if pid_alive(lease.pid) {
+        stop(&lease);
+    }
+    std::fs::remove_file(lease_path(store))
+        .with_context(|| format!("removing {}", lease_path(store).display()))?;
+    Ok(Some(lease))
+}
+
+/// Stop a leased server whose owner is gone — a campaign that died left it
+/// resident. Returns what was released.
+pub fn release_if_orphaned(store: &ArtifactStore) -> Result<Option<Lease>> {
+    match read(store)? {
+        Some(l) if !pid_alive(l.owner_pid) => release(store),
+        _ => Ok(None),
+    }
+}
+
+/// `met benchmark serve-release`.
+pub fn release_cmd() -> Result<i32> {
+    let store = ArtifactStore::discover()?;
+    match release(&store)? {
+        Some(l) => {
+            eprintln!(
+                "released the leased server (pid {}, port {}, {})",
+                l.pid, l.port, l.model
+            );
+            Ok(0)
+        }
+        None => {
+            eprintln!("no leased server ({})", lease_path(&store).display());
+            Ok(0)
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "bench_lease_tests.rs"]
+mod tests;

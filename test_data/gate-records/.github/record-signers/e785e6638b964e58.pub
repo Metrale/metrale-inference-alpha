@@ -1,0 +1,4 @@
+# Test fixture signer e785e6638b964e58: signs ONLY test_data/gate-records.
+# Its private key was discarded after signing; it is not in the repo's
+# .github/record-signers registry and can never verify a real record.
+tPR7pKNjGn3cERK3B4BmbPoVaUdQP7hf4uJ8J7RMcfE=

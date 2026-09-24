@@ -1,0 +1,175 @@
+/* =============================================================================
+   Metrale design tokens — the single authoritative copy.
+
+   Imported by all three web properties:
+     site/src/app.css                -> dev.metrale.ai
+     blog/src/app.css                -> blog.dev.metrale.ai
+     book/theme/css/metrale-tokens.css (a symlink to this file) -> book.dev.metrale.ai
+
+   Values come from the brand kit (assets/brand/tokens/brand.json, and the
+   constants in assets/brand/src/geometry.js): the ground #0E1318 is the only
+   dark background the kit allows, the ink ramp is the kit's two inks, and the
+   three hues are the M's own: violet, cyan, gold. Nothing here may be
+   duplicated into a property's stylesheet — a second copy is the thing this
+   file exists to prevent. site/src/lib/brand-tokens.test.js holds the kit's
+   values and these equal.
+   ========================================================================== */
+:root {
+  /* canvas + surfaces — lightness stepped off the ground, hue preserved */
+  --bg: #0E1318;          /* the kit's ground: the only dark background */
+  --bg2: #131922;         /* deeper — alt sections, insets */
+  --card: #181F28;        /* raised card / receipt stock */
+  --card-2: #1E2631;      /* a card on a card */
+  --sunk: #090C10;        /* recessed — terminals, code, filename tabs */
+  /* Hairlines. Solid rather than translucent, because these are used as fills
+     in a few places as well as borders, and a translucent fill over a
+     translucent section composites twice. */
+  --border: #232A34;
+  --border-strong: #2F3742;
+  /* ink — the kit's two inks, then its gray. Contrast on --bg: 17.4 / 13.3 / 5.7,
+     and the gray clears 5.1 on --card, so it may carry small text anywhere. */
+  --t1: #F7F7F9;          /* headings */
+  --t2: #D9D9DE;          /* body */
+  --t3: #8A8F99;          /* metadata */
+  /* The logo's own inks and hues. The lockup (web-shared/components/MetraleLockup.svelte)
+     reads these and nothing else, so it follows the kit and not the text ramp.
+     The M's ink is a soft vertical sheen, hi to lo; on the light ground both are
+     the kit's single dark ink. Violet, cyan and gold are the same on both grounds. */
+  --m-ink-hi: #F7F7F9;
+  --m-ink-lo: #D9D9DE;
+  --m-lavender: #CDBFF1;  /* the M's right half, top */
+  --m-violet: #9F8DD8;    /* the M's right half, bottom */
+  --m-cyan-hi: #6FD9EC;   /* the bar, left */
+  --m-cyan-lo: #5A96BD;   /* the bar, right */
+  --m-gold-hi: #E4C070;   /* the swash, top */
+  --m-gold-lo: #AE8A3F;   /* the swash, bottom */
+  --m-product: #8A8F99;   /* a product name under the wordmark */
+  /* accent + signals
+     The accent is the M's violet. As text on the dark canvas it is the pale
+     end (lavender, 10.9:1); as a fill it is the deep end, and the ink on that
+     fill is the ground, not white: white on this violet is 2.9:1, the ground
+     is 6.5:1. --on-accent is the token every filled button reads. */
+  --accent: #CDBFF1;            /* links, labels, anything read as text */
+  --accent-fill: #9F8DD8;       /* solid backgrounds */
+  --accent-fill-hover: #CDBFF1;
+  --on-accent: #0E1318;         /* text on a filled accent */
+  --accent-deep: #E6DEFA;       /* brighter still: emphasis on a dark canvas */
+  --accent-soft: rgba(159, 141, 216, 0.16);
+  --green: #12B981;             /* verify. A UI signal, not a brand hue: the kit has no green */
+  --green-soft: rgba(18, 185, 129, 0.14);
+  --amber: #E4C070;             /* the kit's gold, as a warning */
+  /* Used as TEXT on dark surfaces, and as a fill only with --bg ink. */
+  --red: #F87171;
+  --red-soft: rgba(248, 113, 113, 0.12);
+  --grad: linear-gradient(135deg, #CDBFF1 0%, #9F8DD8 100%);
+  --bar: linear-gradient(90deg, #CDBFF1, #9F8DD8);
+  --vllm: #3B4350;              /* the other engine's chart series */
+  /* Benchmark chart series. Colour follows the MODEL: which checkpoint owns
+     which slug, and the measured separations, live in
+     site/src/lib/series-colors.js, which carries the same hexes as the var()
+     fallback. series-contrast.test.js pins the two equal and measures each
+     theme's block against its own grounds. The kit draws no chart palette, so
+     these are the engine site's own and outlived the Metrale Engine palette unchanged. */
+  --series-copper: #ee6f2f;
+  --series-steel:  #2f88ee;
+  --series-teal:   #51cdb0;
+  --series-rose:   #cd517a;
+  --series-citron: #d5e88a;
+  --series-sky:    #a1e0f7;
+  /* ---- the mark, as the page's grammar --------------------------------
+     The M is three colours. Each colour is given one fixed meaning and
+     nothing else may use it: violet = engine and speed, cyan = silicon and
+     security, gold = community. Green is the fourth, for governance and a
+     verified result; it is a UI signal the kit does not draw, kept for the
+     meaning it already carries on every page. Sections set --sx to their
+     colour; the ledger rail, chips and chart series read --sx and follow.
+     As TEXT all four clear 4.5:1 on --bg and on --card. As a FILL they carry
+     --bg ink, never white. */
+  --ch-violet: #9F8DD8;
+  --ch-cyan:   #6FD9EC;
+  --ch-green:  #12B981;
+  --ch-gold:   #E4C070;
+  --sx: var(--ch-violet);
+  /* The same four hues, for use as TEXT. Identical to the fill in the dark
+     theme, darkened in the light theme so small text clears WCAG AA on white,
+     on --bg2 and on --card-2. A fill keeps the fill token; only a colour that
+     lands on a glyph reaches for the -text twin. */
+  --ch-violet-text: var(--ch-violet);
+  --ch-cyan-text:   var(--ch-cyan);
+  --ch-green-text:  var(--ch-green);
+  --ch-gold-text:   var(--ch-gold);
+  --sx-text: var(--ch-violet-text);
+  /* type */
+  /* The brand typeface is Urbanist (Google Fonts, OFL): Medium for headings
+     and the wordmark, Regular for body copy. Numbers, labels and code stay in
+     IBM Plex Mono, which the kit does not replace. The @font-face rules that
+     load them live in the property that ships the files
+     (site/static/fonts/type.css). A property that does not ship them falls
+     through to the kit's fallback, Helvetica Neue, which is why it stays. */
+  --font-sans: 'Urbanist', 'Urbanist Fallback', 'Helvetica Neue', Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Plex Mono Fallback', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  /* elevation — on a dark canvas, shadow reads as depth only when it is black */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.30);
+  --shadow: 0 6px 24px rgba(0,0,0,0.42);
+  --shadow-lg: 0 18px 50px rgba(0,0,0,0.55);
+  color-scheme: dark;
+}
+
+/* Light theme. The M's hues stay the kit's own. Ink, ground and accent-as-text
+   invert so body copy and links still clear WCAG AA on paper. */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #FFFFFF;
+  --bg2: #F4F5F7;
+  --card: #FFFFFF;
+  --card-2: #EEF0F3;
+  --sunk: #F0F2F5;
+  --border: #E1E4EB;
+  --border-strong: #C9CDD6;
+  --t1: #15181F;          /* the kit's ink on light */
+  --t2: #3A4049;
+  /* 5.26 on --bg, 4.83 on --bg2, 4.61 on --card-2. The kit's own gray, #6B7079,
+     is 4.9 on white and 4.4 on --card-2, which the accessibility gate reads as
+     a failure wherever it lands on small text. */
+  --t3: #696C72;
+  --m-ink-hi: #15181F;
+  --m-ink-lo: #15181F;
+  --m-product: #6B7079;
+  /* The M's hues as text. Lightness lowered, hue and saturation held, so the
+     mark's colour survives the move to paper. Each clears 4.6:1 on white, on
+     --bg2, on --card-2 and on the 12% tint of its own hue over each of those,
+     which is the chip background (.av-chip-*): the tightest pair is the chip
+     on --card-2, at 4.6. The fill hues above are untouched. */
+  --ch-violet-text: #6C51C4;
+  --ch-cyan-text:   #127384;
+  --ch-green-text:  #0B7350;
+  --ch-gold-text:   #856319;
+  --accent: #6C51C4;
+  --accent-fill: #9F8DD8;
+  --accent-fill-hover: #8A76CC;
+  --on-accent: #15181F;
+  --accent-deep: #4C3A99;
+  --accent-soft: rgba(114, 88, 198, 0.10);
+  /* 5.38 on --bg, 4.61 over its own 12% chip. */
+  --green: #0A7956;
+  --green-soft: rgba(11, 138, 98, 0.12);
+  --amber: #856319;
+  --red: #C92D37;
+  --red-soft: rgba(201, 45, 55, 0.10);
+  --vllm: #C5CAD3;
+  /* Benchmark chart series on paper. The dark set above is one hex per model
+     and three of its six (teal 1.96, citron 1.33, sky 1.45) are under the 3:1
+     non-text floor on white. Same six hue families, lightness lowered: each
+     clears 4.6:1 on white and 4.0:1 on --card-2, and the set holds every
+     separation bar the dark set holds against --accent, --green, --t2, --t3
+     and the fallback grey (figures in site/src/lib/series-colors.js). */
+  --series-copper: #a2672c;
+  --series-steel:  #466dc1;
+  --series-teal:   #2d5b4c;
+  --series-rose:   #832837;
+  --series-citron: #565200;
+  --series-sky:    #005977;
+  --shadow-sm: 0 1px 2px rgba(15, 18, 22, 0.08);
+  --shadow: 0 6px 24px rgba(15, 18, 22, 0.10);
+  --shadow-lg: 0 18px 50px rgba(15, 18, 22, 0.14);
+}

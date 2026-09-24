@@ -1,0 +1,281 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Optional CUTLASS host-wrapper FFI for de-risking GB10 GEMM replacements.
+//!
+//! ★ REFERENCE IMPLEMENTATION — A BENCHMARK TARGET, NOT A DEPENDENCY.
+//!
+//! Metrale Engine ships its OWN kernels. CUTLASS is wrapped here for exactly one
+//! purpose: to be the opponent we measure against and beat. **Nothing in a
+//! default build or a default serve calls a single line of it.**
+//!
+//! Two independent gates keep that true, and BOTH must survive any edit:
+//!
+//!   1. COMPILE TIME — every item in this module is `#[cfg(metrale_cutlass)]`, and
+//!      `build.rs` sets that cfg only when `CUTLASS_HOME` is exported. A build
+//!      without it links no CUTLASS object at all.
+//!   2. RUNTIME — the dispatch arms are opt-in behind `METRALE_CUTLASS_GEMM=1`.
+//!      The default is OFF.
+//!
+//! So the honest reading of a Metrale Engine performance number is that Metrale Engine kernels
+//! produced it, because a default binary cannot reach this code. Export the
+//! env var and you are measuring CUTLASS — label the number that way.
+//!
+//! ★ WHY KEEP IT COMPILED-BUT-DARK. Agentic benchmarking. An optimisation
+//! claim needs a credible opponent: "faster than our own previous commit" is
+//! a far weaker statement than "faster than CUTLASS on this shape". Keeping the
+//! wrapper one env var away lets any agent A/B a shape against the industry
+//! reference on the same box, same checkpoint, same stream — which is the
+//! only comparison worth quoting.
+//!
+//! Do NOT promote any of this to a default path. If a CUTLASS shape beats ours,
+//! the correct response is to make OUR kernel faster and re-measure.
+//!
+//! Split for the ≤500 LoC cap: this root holds the shared FFI `extern` block,
+//! the workspace `Ctx`, and module wiring; the public wrappers live in the
+//! `gemm` (dense BF16 + NVFP4), `grouped` (per-expert MoE), and `pack`
+//! (weight pack / SFB swizzle / transpose) siblings. The public API
+//! (`spark_runtime::cutlass::<fn>`) is preserved via the re-exports below.
+
+#[cfg(metrale_cutlass)]
+use anyhow::{Result, bail};
+
+#[cfg(metrale_cutlass)]
+use std::ffi::c_void;
+#[cfg(metrale_cutlass)]
+use std::sync::OnceLock;
+
+mod gemm;
+mod grouped;
+mod pack;
+
+pub use gemm::{bf16_gemm_act_weight_t, nvfp4_gemm_bf16_act_weight_t};
+pub use grouped::{nvfp4_grouped_down, nvfp4_grouped_gate_up, nvfp4_grouped_gate_up_fused};
+pub use pack::{pack_bf16_weight_to_nvfp4_t, pack_weight_sfb, transpose_nvfp4_packed_kton};
+
+#[cfg(all(test, metrale_cutlass))]
+mod tests;
+
+#[cfg(metrale_cutlass)]
+unsafe extern "C" {
+    pub(crate) fn metrale_cutlass_bf16_gemm_act_weight_t(
+        act: *const c_void,
+        weight: *const c_void,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    pub(crate) fn metrale_cutlass_nvfp4_gemm_bf16_act_weight_t(
+        act: *const c_void,
+        weight_packed_t: *const c_void,
+        weight_scale_t: *const c_void,
+        weight_scale_2: f32,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    pub(crate) fn metrale_cutlass_pack_bf16_weight_to_nvfp4_t(
+        weight_bf16: *const c_void,
+        packed_t: *mut c_void,
+        scale_t: *mut c_void,
+        n: i32,
+        k: i32,
+        stream: *mut c_void,
+    ) -> i32;
+    pub(crate) fn metrale_cutlass_nvfp4_grouped_gate_up(
+        a_bf16: *const c_void,
+        gate_packed_ptrs: *const u64,
+        gate_scale_ptrs: *const u64,
+        gate_scale2_vals: *const f32,
+        up_packed_ptrs: *const u64,
+        up_scale_ptrs: *const u64,
+        up_scale2_vals: *const f32,
+        c_gate_bf16: *mut c_void,
+        c_up_bf16: *mut c_void,
+        expert_offsets_host: *const i32,
+        num_experts: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    pub(crate) fn metrale_cutlass_nvfp4_grouped_gate_up_fused(
+        a_bf16: *const c_void,
+        sorted_token_ids: *const i32,
+        gate_packed_ptrs: *const u64,
+        gate_sfb_ptrs: *const u64,
+        gate_scale2_vals: *const f32,
+        up_packed_ptrs: *const u64,
+        up_sfb_ptrs: *const u64,
+        up_scale2_vals: *const f32,
+        c_gate_bf16: *mut c_void,
+        c_up_bf16: *mut c_void,
+        expert_offsets_host: *const i32,
+        num_experts: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    pub(crate) fn metrale_cutlass_nvfp4_grouped_down(
+        a_bf16: *const c_void,
+        packed_ptrs: *const u64,
+        sfb_ptrs: *const u64,
+        scale2_vals: *const f32,
+        c_bf16: *mut c_void,
+        expert_offsets_host: *const i32,
+        num_experts: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    pub(crate) fn metrale_cutlass_pack_weight_sfb(
+        scale_in: *const c_void,
+        scale_out: *mut c_void,
+        n: i32,
+        k: i32,
+        src_n_major: i32,
+        stream: *mut c_void,
+    ) -> i32;
+    pub(crate) fn metrale_cutlass_transpose_nvfp4_packed_kton(
+        src_packed_t: *const c_void,
+        dst_packed: *mut c_void,
+        n: i32,
+        k: i32,
+        stream: *mut c_void,
+    ) -> i32;
+    #[cfg(test)]
+    pub(crate) fn metrale_cutlass_bf16_gemm_act_weight_t_128x256(
+        act: *const c_void,
+        weight: *const c_void,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    #[cfg(test)]
+    pub(crate) fn metrale_cutlass_bf16_gemm_act_weight_t_256x128(
+        act: *const c_void,
+        weight: *const c_void,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    #[cfg(test)]
+    pub(crate) fn metrale_cutlass_bf16_gemm_act_weight_t_64x128(
+        act: *const c_void,
+        weight: *const c_void,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    #[cfg(test)]
+    pub(crate) fn metrale_cutlass_bf16_gemm_act_weight_t_128x64(
+        act: *const c_void,
+        weight: *const c_void,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    #[cfg(test)]
+    pub(crate) fn metrale_cutlass_bf16_gemm_act_weight_t_64x64(
+        act: *const c_void,
+        weight: *const c_void,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+    ) -> i32;
+    #[cfg(test)]
+    pub(crate) fn metrale_cublaslt_bf16_gemm_act_weight_t_algo(
+        act: *const c_void,
+        weight: *const c_void,
+        out: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
+        workspace: *mut c_void,
+        workspace_size: usize,
+        stream: *mut c_void,
+        algo_index: i32,
+        returned_count: *mut i32,
+    ) -> i32;
+    pub(crate) fn cuMemAlloc_v2(dptr: *mut u64, bytesize: usize) -> i32;
+}
+
+#[cfg(metrale_cutlass)]
+pub(crate) struct Ctx {
+    pub(crate) workspace: u64,
+    pub(crate) ws_size: usize,
+}
+
+#[cfg(metrale_cutlass)]
+unsafe impl Send for Ctx {}
+#[cfg(metrale_cutlass)]
+unsafe impl Sync for Ctx {}
+
+#[cfg(metrale_cutlass)]
+/// STATIC, DELIBERATELY — CUDA host. This is a workspace allocated in THE
+/// process CUDA context (see `metrale_core::cuda_host`, which establishes one
+/// per process) and sized by a fixed budget, not by any model's shapes: the
+/// bounds below are generous upper limits chosen to fit any realistic serving
+/// configuration, so a swap needs no reallocation and re-allocating per model
+/// would churn hundreds of megabytes for no change in what is mapped.
+///
+/// It survives a model swap for the same reason the context does. Nothing in
+/// it is derived from a model — no token ids, no weight pointers, no shapes —
+/// only scratch the library plans within.
+static CTX: OnceLock<Ctx> = OnceLock::new();
+
+#[cfg(metrale_cutlass)]
+pub(crate) fn ctx() -> Result<&'static Ctx> {
+    if let Some(c) = CTX.get() {
+        return Ok(c);
+    }
+    // Shared scratch for all CUTLASS host wrappers. The grouped NVFP4 MoE path
+    // (single-launch kGrouped over up to 256 experts) stages packed-A + SFA +
+    // per-group arrays + the gemm workspace here; at large prefill M the 256-group
+    // gemm workspace alone exceeds the old 64 MB (-> status -2 + an OOB context
+    // corruption). 512 MB by default; override with METRALE_CUTLASS_WORKSPACE_MB.
+    let ws_size = std::env::var("METRALE_CUTLASS_WORKSPACE_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(512)
+        * 1024
+        * 1024;
+    let mut workspace = 0u64;
+    let status = unsafe { cuMemAlloc_v2(&mut workspace, ws_size) };
+    if status != 0 {
+        bail!("cuMemAlloc CUTLASS workspace failed: {status}");
+    }
+    let _ = CTX.set(Ctx { workspace, ws_size });
+    Ok(CTX.get().unwrap())
+}
