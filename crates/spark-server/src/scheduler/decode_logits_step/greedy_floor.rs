@@ -7,7 +7,7 @@
 // that diagnostic observable rather than skipping it with the GPU shortcut.
 pub(super) fn raw_dump_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("AVAROK_DUMP_LOGITS_PATH").is_ok())
+    *ENABLED.get_or_init(|| std::env::var("METRALE_DUMP_LOGITS_PATH").is_ok())
 }
 
 #[derive(Clone, Copy)]

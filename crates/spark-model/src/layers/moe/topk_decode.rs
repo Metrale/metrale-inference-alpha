@@ -42,7 +42,7 @@ impl MoeLayer {
         if use_warp {
             if ctx.stats.once("log:moe_topk_warp_decode") {
                 tracing::info!(
-                    "[avarok] MoE single-sequence decode: Hopper warp top-k selected \
+                    "[metrale] MoE single-sequence decode: Hopper warp top-k selected \
                      (experts=256, top_k=8, BF16 gate, native FP8 experts)"
                 );
             }

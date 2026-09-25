@@ -13,9 +13,9 @@ internal rehearsal until a third party actually operates the client.
 
 ```sh
 docker build -f docker/hopper/Dockerfile \
-  --build-arg AVAROK_TARGET_MODEL=qwen3.6-35b-a3b \
-  --build-arg AVAROK_TARGET_QUANT=nvfp4 \
-  --build-arg AVAROK_GIT_SHA="$(git rev-parse HEAD)" \
+  --build-arg METRALE_TARGET_MODEL=qwen3.6-35b-a3b \
+  --build-arg METRALE_TARGET_QUANT=nvfp4 \
+  --build-arg METRALE_GIT_SHA="$(git rev-parse HEAD)" \
   -t atlas-hopper-moe:private .
 ```
 

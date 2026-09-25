@@ -139,7 +139,7 @@ impl MoeLayer {
         );
         if ctx.stats.once("log:moe_adaptive_fp8_prefill") {
             tracing::info!(
-                "[avarok] Hopper adaptive W8A8 prefill: native-input M16, native-input M64={}, M128={} (non-bit-exact BF16 reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
+                "[metrale] Hopper adaptive W8A8 prefill: native-input M16, native-input M64={}, M128={} (non-bit-exact BF16 reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
                 self.moe_w8a8_native_m64_k.0 != 0,
                 self.moe_w8a8_native_m128_k.0 != 0,
                 self.moe_adaptive_sms,

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::gpu::mock::MockGpuBackend;
-use avarok_core::scope::ModelResource;
+use metrale_core::scope::ModelResource;
 
 fn config() -> ModelConfig {
     let mut c = ModelConfig::qwen3_next_80b_nvfp4();

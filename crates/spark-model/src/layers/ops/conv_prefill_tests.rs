@@ -33,7 +33,7 @@ fn compute_then_commit_preserves_stream_and_input_layout() {
         let (ok, gpu) = run(n, 4, 2, 3, 39);
         assert!(ok);
         let launches = gpu.launches_snapshot();
-        let enabled = std::env::var("AVAROK_CONV1D_TP").ok().as_deref() != Some("0");
+        let enabled = std::env::var("METRALE_CONV1D_TP").ok().as_deref() != Some("0");
         assert_eq!(launches.len(), if enabled { 2 } else { 1 });
         if !enabled {
             continue;

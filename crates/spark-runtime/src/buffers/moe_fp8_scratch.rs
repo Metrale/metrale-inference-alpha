@@ -8,7 +8,7 @@
 
 use super::BufferArena;
 use crate::gpu::DevicePtr;
-use avarok_core::config::ModelConfig;
+use metrale_core::config::ModelConfig;
 
 pub(super) struct Layout {
     pub(super) scale: usize,

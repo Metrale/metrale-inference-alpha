@@ -42,7 +42,7 @@ pub fn conv1d_update_prefill(
         input_stride >= d_inner && output_stride >= d_inner,
         "conv1d prefill strides must cover all channels"
     );
-    let tp = std::env::var("AVAROK_CONV1D_TP").ok().as_deref() != Some("0")
+    let tp = std::env::var("METRALE_CONV1D_TP").ok().as_deref() != Some("0")
         && conv1d_prefill_tp_k.0 != 0
         && conv1d_prefill_commit_k.0 != 0
         && seq_len >= d_conv;
