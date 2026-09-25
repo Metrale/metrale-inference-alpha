@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Hopper short-prefill W8A8: native-input M16 and optional native-input M128.
+//! Hopper short-prefill W8A8: native-input M16 and optional native M64/M128.
 //! Native reductions are not bit-identical to BF16 PM4. The large bucket keeps
 //! BF16 PM4 when its optional Hopper module is absent; other routes are unchanged.
 //! Device routing counts choose the bucket; sparse small buckets fold back into
@@ -21,8 +21,18 @@ pub(super) fn native_m128_kernel(gpu: &dyn GpuBackend) -> KernelHandle {
     crate::layers::try_target_kernel(gpu, "moe_w8a8_native_m128", "pm4_native128")
 }
 
-fn select_large_handle(native: u64, bf16: u64) -> u64 {
-    if native == 0 { bf16 } else { native }
+pub(super) fn native_m64_kernel(gpu: &dyn GpuBackend) -> KernelHandle {
+    crate::layers::try_target_kernel(gpu, "moe_w8a8_native_m64", "pm4_native64")
+}
+
+fn select_large_handle(native64: u64, native128: u64, bf16: u64) -> (u64, u32) {
+    if native64 != 0 {
+        (native64, 128)
+    } else if native128 != 0 {
+        (native128, 256)
+    } else {
+        (bf16, 256)
+    }
 }
 
 #[derive(Debug)]
@@ -122,13 +132,15 @@ impl MoeLayer {
         // Selection is inside the qualified plan; decode/other shapes never
         // reach the optional native large kernel. Keep the original handle as
         // fallback when the target does not ship the module.
-        let large_kernel = KernelHandle(select_large_handle(
+        let (large_kernel, large_threads) = select_large_handle(
+            self.moe_w8a8_native_m64_k.0,
             self.moe_w8a8_native_m128_k.0,
             self.moe_w8a8_grouped_gemm_pm4_k.0,
-        ));
+        );
         if ctx.stats.once("log:moe_adaptive_fp8_prefill") {
             tracing::info!(
-                "[avarok] Hopper adaptive W8A8 prefill: native-input M16, native-input M128={} (non-bit-exact BF16 reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
+                "[avarok] Hopper adaptive W8A8 prefill: native-input M16, native-input M64={}, M128={} (non-bit-exact BF16 reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
+                self.moe_w8a8_native_m64_k.0 != 0,
                 self.moe_w8a8_native_m128_k.0 != 0,
                 self.moe_adaptive_sms,
                 p.threshold
@@ -164,24 +176,24 @@ impl MoeLayer {
                 .arg_ptr(scratch.small_worklist)
                 .arg_ptr(scratch.small_total_tiles)
                 .launch(stream)?;
-            ops::moe_w8a8_grouped_gemm_pm4(
-                ctx.gpu,
-                large_kernel,
-                input,
-                scales,
-                weights.weight_ptrs,
-                weights.scale_ptrs,
-                output,
-                offsets,
-                sorted,
-                256,
-                n,
-                k,
-                scratch.worklist,
-                scratch.total_tiles,
-                p.large_grid,
-                stream,
-            )?;
+            // M64 consumes two virtual halves of each original M128 item;
+            // neither the worklist ABI nor its capacity/grid cap changes.
+            KernelLaunch::new(ctx.gpu, KernelHandle(large_kernel))
+                .grid([p.large_grid, 1, 1])
+                .block([large_threads, 1, 1])
+                .arg_ptr(input)
+                .arg_ptr(scales)
+                .arg_ptr(weights.weight_ptrs)
+                .arg_ptr(weights.scale_ptrs)
+                .arg_ptr(output)
+                .arg_ptr(offsets)
+                .arg_ptr(sorted)
+                .arg_u32(256)
+                .arg_u32(n)
+                .arg_u32(k)
+                .arg_ptr(scratch.worklist)
+                .arg_ptr(scratch.total_tiles)
+                .launch(stream)?;
         }
         Ok(true)
     }
@@ -193,8 +205,11 @@ mod tests {
 
     #[test]
     fn native_large_handle_is_optional_with_original_fallback() {
-        assert_eq!(select_large_handle(0, 17), 17);
-        assert_eq!(select_large_handle(23, 17), 23);
+        assert_eq!(select_large_handle(0, 0, 17), (17, 256));
+        assert_eq!(select_large_handle(0, 23, 17), (23, 256));
+        assert_eq!(select_large_handle(29, 23, 17), (29, 128));
+        assert_eq!(select_large_handle(29, 0, 17), (29, 128));
+        assert_eq!(select_large_handle(0, 0, 0), (0, 256));
     }
     #[test]
     fn qualified_shape_bounds_and_grid_capacity_are_independent() {
