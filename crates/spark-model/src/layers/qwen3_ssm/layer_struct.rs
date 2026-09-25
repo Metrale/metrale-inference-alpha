@@ -271,6 +271,7 @@ pub struct Qwen3SsmLayer {
     pub(super) conv1d_prefill_k: KernelHandle,
     /// Token-parallel prefill conv1d (`causal_conv1d_update_prefill_tp`).
     pub(super) conv1d_prefill_tp_k: KernelHandle,
+    pub(super) conv1d_prefill_commit_k: KernelHandle,
     // Kernels — fused chunk2 path (2-token verification)
     pub(super) gdn_chunk2_k: KernelHandle,
     pub(super) conv1d_chunk2_k: KernelHandle,

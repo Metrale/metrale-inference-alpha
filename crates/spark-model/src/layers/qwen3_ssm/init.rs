@@ -310,7 +310,12 @@ impl Qwen3SsmLayer {
             conv1d_prefill_tp_k: super::super::try_kernel(
                 gpu,
                 "causal_conv1d",
-                "causal_conv1d_update_prefill_tp",
+                "causal_conv1d_update_prefill_tp_readonly",
+            ),
+            conv1d_prefill_commit_k: super::super::try_kernel(
+                gpu,
+                "causal_conv1d",
+                "causal_conv1d_prefill_commit_state",
             ),
             gdn_chunk2_k: gpu.kernel("gated_delta_rule", "gated_delta_rule_chunk2")?,
             conv1d_chunk2_k: gpu.kernel("causal_conv1d", "causal_conv1d_update_chunk2")?,

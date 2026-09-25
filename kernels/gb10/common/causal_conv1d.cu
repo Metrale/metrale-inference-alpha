@@ -557,7 +557,7 @@ extern "C" __global__ void causal_conv1d_update_l2norm_f32_strided(
 }
 
 // ============================================================
-// PREFILL, TOKEN-PARALLEL: causal_conv1d_update_prefill_tp
+// PREFILL, TOKEN-PARALLEL: causal_conv1d_update_prefill_tp_readonly
 // ============================================================
 // Same math as `causal_conv1d_update_prefill`, parallelised over TOKENS as well
 // as channels.
@@ -572,15 +572,16 @@ extern "C" __global__ void causal_conv1d_update_l2norm_f32_strided(
 // depends on inputs only, never on prior outputs — so every (channel, token) is
 // independent and the loop was a convenience, not a dependency.
 //
-// Grid: (ceil(dim/32), ceil(seq_len/8), batch) with block (32, 8) — one warp
+// Grid: (ceil(dim/32), ceil(seq_len/64), 1) with block (32, 8) — one warp
 // spans channels so the [t*stride + ch] loads stay coalesced, and 8 token rows
 // per CTA amortise the weight loads.
 //
-// The conv_state write-back (last d_conv inputs) is done ONLY by the threads
-// owning the final token, since that is all it ever was.
+// Incoming state is read-only until every output has completed. The caller
+// then launches causal_conv1d_prefill_commit_state on the same stream. A new
+// symbol prevents older callers from selecting compute without the commit.
 extern "C" __global__ void __launch_bounds__(256, 4)
-causal_conv1d_update_prefill_tp(
-    float* __restrict__ conv_state,
+causal_conv1d_update_prefill_tp_readonly(
+    const float* __restrict__ conv_state,
     const __nv_bfloat16* __restrict__ input,
     const __nv_bfloat16* __restrict__ weight,
     const float* __restrict__ bias,
@@ -633,13 +634,23 @@ causal_conv1d_update_prefill_tp(
         s0 = s1; s1 = s2; s2 = s3;
     }
 
-    // Only the owner of the last token writes the outgoing state: it is just the
-    // final d_conv inputs, which is all the serial kernel's trailing loop stored.
-    if (t0 + 8u >= seq_len) {
-        float* st = conv_state + (unsigned long long)ch * d_conv;
-        #pragma unroll
-        for (unsigned int k = 0; k < 4; k++)
-            if (k < d_conv)
-                st[k] = xin((long long)seq_len - (long long)d_conv + (long long)k);
+}
+
+// Commit only after the read-only TP launch completes. For seq_len >= d_conv,
+// the final state comes entirely from input, so this has no read/write alias.
+extern "C" __global__ void causal_conv1d_prefill_commit_state(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ input,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int seq_len,
+    unsigned int input_stride
+) {
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ch >= dim || d_conv != 4u || seq_len < d_conv) return;
+    #pragma unroll
+    for (unsigned int k = 0; k < 4; k++) {
+        conv_state[(unsigned long long)ch * d_conv + k] = __bfloat162float(
+            input[(unsigned long long)(seq_len - d_conv + k) * input_stride + ch]);
     }
 }

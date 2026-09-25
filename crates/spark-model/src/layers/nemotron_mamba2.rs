@@ -77,6 +77,7 @@ pub struct NemotronMamba2Layer {
     quantize_nvfp4_k: KernelHandle,
     conv1d_prefill_k: KernelHandle,
     conv1d_prefill_tp_k: KernelHandle,
+    conv1d_prefill_commit_k: KernelHandle,
     mamba2_ssm_prefill_k: KernelHandle,
     mamba2_ssm_prefill_persistent_k: KernelHandle,
     // SSD chunked prefill scan (tensor-core; ceil(T/64) serial links instead of T).
@@ -154,7 +155,12 @@ impl NemotronMamba2Layer {
             conv1d_prefill_tp_k: super::try_kernel(
                 gpu,
                 "causal_conv1d",
-                "causal_conv1d_update_prefill_tp",
+                "causal_conv1d_update_prefill_tp_readonly",
+            ),
+            conv1d_prefill_commit_k: super::try_kernel(
+                gpu,
+                "causal_conv1d",
+                "causal_conv1d_prefill_commit_state",
             ),
             mamba2_ssm_prefill_k: gpu.kernel("mamba2_ssm", "mamba2_ssm_prefill")?,
             ssd_cumsum_k: super::try_kernel(gpu, "mamba2_ssd_chunk", "mamba2_ssd_cumsum"),

@@ -150,6 +150,8 @@ mod norm;
 pub mod dense_gemv_tc;
 #[path = "ops/gemv_tc.rs"]
 pub mod gemv_tc;
+#[path = "ops/conv_prefill.rs"]
+mod conv_prefill;
 #[cfg(test)]
 #[path = "ops/kquant_fold_tests.rs"]
 mod kquant_fold_tests;
@@ -230,6 +232,7 @@ mod w8a16_gemv_hopper_tests;
 mod wide_prefill;
 
 pub use activations::*;
+pub use conv_prefill::*;
 pub use dense_gemm_m16_bf16::*;
 pub use derived_weights::{Derivation, DerivedWeights};
 pub use dispatch_config::{CublasScope, GemmDispatch, parse_cublas_scope};
