@@ -27,19 +27,15 @@ impl NemotronMoeLayer {
         // run per-token expert GEMVs reading from the pre-computed arrays.
         let use_batched_routing = self.topk_sigmoid_batched_k.0 != 0 && p.num_tokens > 1;
         if use_batched_routing {
-            KernelLaunch::new(ctx.gpu, self.topk_sigmoid_batched_k)
-                .grid([1, p.n, 1])
-                .block([256, 1, 1])
-                .arg_ptr(p.gate_logits)
-                .arg_ptr(self.weights.e_score_correction_bias.weight)
-                .arg_ptr(p.indices_dev)
-                .arg_ptr(p.weights_dev)
-                .arg_u32(p.num_experts)
-                .arg_u32(p.top_k)
-                .arg_u32(if ctx.config.norm_topk_prob { 1 } else { 0 })
-                .arg_f32(p.scale)
-                .arg_u32(p.n)
-                .launch(stream)?;
+            self.router_topk(
+                p.gate_logits,
+                p.indices_dev,
+                p.weights_dev,
+                p.n,
+                true,
+                ctx,
+                stream,
+            )?;
         }
 
         for t in 0..p.num_tokens {
@@ -55,20 +51,14 @@ impl NemotronMoeLayer {
             } else {
                 tok_indices = scratch_buf;
                 tok_weights = scratch_buf.offset(tok_k * 4);
-                let token_gate = p.gate_logits.offset(t * p.num_experts as usize * 2usize);
-                ops::moe_topk_sigmoid(
-                    ctx.gpu,
-                    self.topk_sigmoid_k,
-                    token_gate,
-                    self.weights.e_score_correction_bias.weight,
-                    tok_indices,
-                    tok_weights,
-                    p.num_experts,
-                    p.top_k,
-                    ctx.config.norm_topk_prob,
-                    p.scale,
-                    stream,
-                )?;
+                let token_gate = p
+                    .gate_logits
+                    .offset(super::router_dispatch::token_logit_offset(
+                        t,
+                        p.num_experts as usize,
+                        self.fp32_router.is_some(),
+                    ));
+                self.router_topk(token_gate, tok_indices, tok_weights, 1, false, ctx, stream)?;
             }
 
             if self.moe_latent_size > 0 {

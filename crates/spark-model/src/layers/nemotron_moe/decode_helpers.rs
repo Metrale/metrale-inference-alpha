@@ -27,10 +27,8 @@ impl NemotronMoeLayer {
         let h = ctx.config.hidden_size as u32;
         let inter = self.moe_inter as u32;
         let shared_inter = ctx.config.shared_expert_intermediate_size as u32;
-        let num_experts = ctx.config.num_experts as u32;
         let top_k = self.top_k as u32;
         let eps = ctx.config.rms_norm_eps as f32;
-        let scale = ctx.config.routed_scaling_factor as f32;
 
         // 1. RMS norm (standard weight*x, saves residual)
         let normed = ctx.buffers.norm_output();
@@ -47,36 +45,14 @@ impl NemotronMoeLayer {
             stream,
         )?;
 
-        // 2. Gate GEMV: [1, H] x [H, num_experts]^T -> [num_experts] BF16
-        let gate_logits = ctx.buffers.gate_logits();
-        ops::dense_gemv(
-            ctx.gpu,
-            self.dense_gemv_k,
-            normed,
-            &self.weights.gate,
-            gate_logits,
-            num_experts,
-            h,
-            stream,
-        )?;
+        // 2. Gate GEMV, retaining FP32 logits on the Nano diagnostic path.
+        let gate_logits = self.router_logits(normed, 1, true, ctx, stream)?;
 
         // 3. Sigmoid routing
         let scratch = ctx.buffers.scratch();
         let indices_dev = scratch;
         let weights_dev = scratch.offset(top_k as usize * 4);
-        ops::moe_topk_sigmoid(
-            ctx.gpu,
-            self.topk_sigmoid_k,
-            gate_logits,
-            self.weights.e_score_correction_bias.weight,
-            indices_dev,
-            weights_dev,
-            num_experts,
-            top_k,
-            ctx.config.norm_topk_prob,
-            scale,
-            stream,
-        )?;
+        self.router_topk(gate_logits, indices_dev, weights_dev, 1, false, ctx, stream)?;
 
         if self.moe_latent_size > 0 {
             self.decode_latent_moe(

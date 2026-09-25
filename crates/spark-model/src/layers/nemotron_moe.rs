@@ -42,6 +42,7 @@ pub struct NemotronMoeLayer {
     // Kernel handles — decode (single token)
     rms_norm_residual_k: KernelHandle,
     dense_gemv_k: KernelHandle,
+    fp32_router: Option<router::Fp32Router>,
     topk_sigmoid_k: KernelHandle,
     moe_expert_gemv_k: KernelHandle,
     w4a16_gemv_k: KernelHandle,
@@ -151,6 +152,7 @@ impl NemotronMoeLayer {
             top_k,
             rms_norm_residual_k: gpu.kernel("norm", "rms_norm_residual")?,
             dense_gemv_k: gpu.kernel("gemv", "dense_gemv_bf16")?,
+            fp32_router: router::Fp32Router::load(gpu, config)?,
             topk_sigmoid_k: gpu.kernel("moe_topk_sig", "moe_topk_sigmoid")?,
             moe_expert_gemv_k: gpu.kernel("moe_expert_gemv", "moe_expert_gemv")?,
             w4a16_gemv_k: gpu.kernel("w4a16_gemv", "w4a16_gemv")?,
@@ -232,6 +234,8 @@ mod prefill_shared_up;
 mod prefill_sorted;
 mod prefill_weights;
 mod ptr_tables;
+mod router;
+mod router_dispatch;
 
 use prefill_sorted::SortedPrefillCtx;
 use ptr_tables::{build_ptr_table, build_ptr_table_from_weights};
@@ -298,17 +302,7 @@ impl TransformerLayer for NemotronMoeLayer {
         )?;
 
         // ── 2. Batched Gate GEMM: [N, H] x [H, num_experts]^T → [N, num_experts] ──
-        let gate_logits = ctx.buffers.gate_logits();
-        self.dense_gemm_prefill(
-            ctx.gpu,
-            normed,
-            &self.weights.gate,
-            gate_logits,
-            n,
-            num_experts,
-            h as u32,
-            stream,
-        )?;
+        let gate_logits = self.router_logits(normed, n, false, ctx, stream)?;
 
         // Check if batched MoE prefill kernels are available
         let has_batched = self.topk_sigmoid_batched_k.0 != 0

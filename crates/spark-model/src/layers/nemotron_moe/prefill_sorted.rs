@@ -46,26 +46,23 @@ impl NemotronMoeLayer {
         let te = total_expanded as usize;
 
         // 5a. Batched routing: [N, E] → indices[N*p.top_k], weights[N*p.top_k]
-        KernelLaunch::new(ctx.gpu, self.topk_sigmoid_batched_k)
-            .grid([1, p.n, 1])
-            .block([256, 1, 1])
-            .arg_ptr(p.gate_logits)
-            .arg_ptr(self.weights.e_score_correction_bias.weight)
-            .arg_ptr(p.indices_dev)
-            .arg_ptr(p.weights_dev)
-            .arg_u32(p.num_experts)
-            .arg_u32(p.top_k)
-            .arg_u32(if ctx.config.norm_topk_prob { 1 } else { 0 })
-            .arg_f32(p.scale)
-            .arg_u32(p.n)
-            .launch(stream)?;
+        self.router_topk(
+            p.gate_logits,
+            p.indices_dev,
+            p.weights_dev,
+            p.n,
+            true,
+            ctx,
+            stream,
+        )?;
 
         // 5b. Sort by expert → sorted_token_ids, expert_offsets
-        // Reuse p.gate_logits buffer for sorted arrays (p.gate_logits no longer needed)
-        let sorted_token_ids = p.gate_logits;
-        let sorted_expert_ids = p.gate_logits.offset(te * 4);
-        let expert_offsets = p.gate_logits.offset(te * 4 * 2);
-        let token_to_perm = p.gate_logits.offset(te * 4 * 2 + (ne + 1) * 4);
+        // Keep sort scratch separate from the FP32 logits arena.
+        let sort_scratch = ctx.buffers.gate_logits();
+        let sorted_token_ids = sort_scratch;
+        let sorted_expert_ids = sort_scratch.offset(te * 4);
+        let expert_offsets = sort_scratch.offset(te * 4 * 2);
+        let token_to_perm = sort_scratch.offset(te * 4 * 2 + (ne + 1) * 4);
         ops::moe_sort_by_expert(
             ctx.gpu,
             self.moe_sort_k,
