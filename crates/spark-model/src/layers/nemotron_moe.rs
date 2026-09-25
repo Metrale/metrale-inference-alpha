@@ -283,7 +283,6 @@ impl TransformerLayer for NemotronMoeLayer {
         let num_experts = ctx.config.num_experts as u32;
         let top_k = self.top_k as u32;
         let eps = ctx.config.rms_norm_eps as f32;
-        let scale = ctx.config.routed_scaling_factor as f32;
         let n = num_tokens as u32;
 
         // ── 1. Batched RMS norm: [N, H] → normed[N, H] + residual update ──
@@ -374,7 +373,6 @@ impl TransformerLayer for NemotronMoeLayer {
             shared_inter,
             num_experts,
             top_k,
-            scale,
             latent,
             gate_logits,
             indices_dev,

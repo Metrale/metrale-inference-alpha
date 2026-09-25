@@ -23,7 +23,6 @@ pub(super) struct SortedPrefillCtx {
     pub shared_inter: u32,
     pub num_experts: u32,
     pub top_k: u32,
-    pub scale: f32,
     pub latent: u32,
     pub gate_logits: DevicePtr,
     pub indices_dev: DevicePtr,
