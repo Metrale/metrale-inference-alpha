@@ -1,0 +1,4 @@
+# blog.dev.metrale.ai is retired: the blog is https://blog.metrale.ai, which
+# serves every post, tag, author, feed and image under the same path. This file
+# is the whole deployment.
+/*  https://blog.metrale.ai/:splat 301

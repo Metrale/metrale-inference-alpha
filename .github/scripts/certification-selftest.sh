@@ -2383,8 +2383,8 @@ if [ -s "$TMP/ic/step.sh" ]; then
   python3 - "$TMP/ic/step.sh" "$TMP/ic/step-sab.sh" <<'ICSAB'
 import pathlib, sys
 t = pathlib.Path(sys.argv[1]).read_text()
-old = "--location --max-time 20 https://dev.metrale.ai/control) || true"
-new = "--location --max-time 20 https://dev.metrale.ai/control || echo 000)"
+old = "--location --max-time 20 https://metrale.ai/control) || true"
+new = "--location --max-time 20 https://metrale.ai/control || echo 000)"
 pathlib.Path(sys.argv[2]).write_text(t.replace(old, new, 1))
 ICSAB
   if ! cmp -s "$TMP/ic/step.sh" "$TMP/ic/step-sab.sh"; then
@@ -2402,26 +2402,25 @@ fi
 # ---------------------------------------------------------------------------
 # nginx add_header does not accumulate across contexts
 # ---------------------------------------------------------------------------
-# Three vhosts, one rule, three separate incidents -- each found by hand after
-# the fact. The docs vhost served every HTML document with no security headers
-# because Cache-Control sat inside `location ~* \.html$`; the site vhost
-# discarded Alt-Svc on every proxied response and sent its dotfile refusal bare;
-# and the site vhost was independently missing Referrer-Policy that the other
-# two sent. All three are fixed. Nothing stopped a fourth.
+# One rule, three separate incidents -- each found by hand after the fact. The
+# docs vhost served every HTML document with no security headers because
+# Cache-Control sat inside `location ~* \.html$`; the site vhost discarded
+# Alt-Svc on every proxied response and sent its dotfile refusal bare; and the
+# site vhost was independently missing Referrer-Policy that the other two sent.
+# All three are fixed, and the site and blog vhosts are retired with their
+# hosts, so the controls below run against the docs vhost that remains.
 #
 # There is no historical config to replay: the docs vhost has a single commit,
 # so the pre-fix text is not in the tree. The sabotages below reconstruct the
 # defect SHAPE instead, which is stated plainly rather than dressed up as a
 # regression test against real history.
-want_rc 0 "the three vhosts agree, at server level" \
+want_rc 0 "the vhosts declare the core headers, at server level" \
   python3 .github/scripts/assert-vhost-headers.py
 mkdir -p "$TMP/vh/.github/scripts"
 cp .github/scripts/assert-vhost-headers.py "$TMP/vh/.github/scripts/"
 
 vh_sabotage() {  # $1 = vhost path, $2 = python edit over the file text as `t`
-  for f in site/deploy/nginx/dev.metrale.ai.conf \
-           blog/deploy/nginx/blog.dev.metrale.ai.conf \
-           book/deploy/nginx/book.dev.metrale.ai.conf; do
+  for f in book/deploy/nginx/book.dev.metrale.ai.conf; do
     mkdir -p "$TMP/vh/$(dirname "$f")"; cp "$f" "$TMP/vh/$f"
   done
   [ -n "${1:-}" ] || return 0
@@ -2441,22 +2440,70 @@ vh_sabotage book/deploy/nginx/book.dev.metrale.ai.conf \
 want_rc_msg 1 "inside a location" "control: an add_header inside a location is caught" \
   python3 "$TMP/vh/.github/scripts/assert-vhost-headers.py"
 
-# The site incident: one vhost quietly lacking a header the other two send.
-vh_sabotage blog/deploy/nginx/blog.dev.metrale.ai.conf \
+# The site incident: a vhost quietly lacking a core header.
+vh_sabotage book/deploy/nginx/book.dev.metrale.ai.conf \
   't = t.replace("    add_header Referrer-Policy", "    # add_header Referrer-Policy", 1)'
 want_rc_msg 1 "does not declare Referrer-Policy" "control: a vhost missing a core header is caught" \
   python3 "$TMP/vh/.github/scripts/assert-vhost-headers.py"
 
-vh_sabotage blog/deploy/nginx/blog.dev.metrale.ai.conf \
-  't = t.replace("    add_header Referrer-Policy", "    # add_header Referrer-Policy", 1)'
-want_rc_msg 1 "have drifted" "control: drift between the vhosts is named as drift" \
-  python3 "$TMP/vh/.github/scripts/assert-vhost-headers.py"
-
-# The value that was live on dev.metrale.ai when this was written.
-vh_sabotage site/deploy/nginx/dev.metrale.ai.conf \
-  't = t.replace("X-XSS-Protection \"0\"", "X-XSS-Protection \"1; mode=block\"", 1)'
+# The value that was live on the engine site when this was written.
+vh_sabotage book/deploy/nginx/book.dev.metrale.ai.conf \
+  't = t.replace("    add_header Referrer-Policy", "    add_header X-XSS-Protection \"1; mode=block\" always;\n    add_header Referrer-Policy", 1)'
 want_rc_msg 1 "OWASP" "control: re-enabling the legacy XSS auditor is caught" \
   python3 "$TMP/vh/.github/scripts/assert-vhost-headers.py"
+
+# ---------------------------------------------------------------------------
+# The retired hosts publish their redirects and nothing else
+# ---------------------------------------------------------------------------
+# site/ and blog/ are the whole Cloudflare Pages deployments of dev.metrale.ai
+# and blog.dev.metrale.ai: one `_redirects` each. A stray file there is a page
+# served on a retired host; a 302, an off-host target, a path that stops being
+# kept, or a rule stranded below the catch-all each sends an old link to the
+# wrong place with the job still green. Each control below pins its message.
+want_rc 0 "the two redirect deployments hold what they claim" \
+  python3 .github/scripts/assert-host-redirects.py
+
+hr_sabotage() {  # $1 = file under the tree copy, $2 = python edit over its text as `t`
+  rm -rf "$TMP/hr"; mkdir -p "$TMP/hr/.github/scripts" "$TMP/hr/site" "$TMP/hr/blog"
+  cp .github/scripts/assert-host-redirects.py "$TMP/hr/.github/scripts/"
+  cp site/_redirects "$TMP/hr/site/"; cp blog/_redirects "$TMP/hr/blog/"
+  [ -n "${1:-}" ] || return 0
+  python3 - "$TMP/hr/$1" "$2" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); t = p.read_text() if p.exists() else ""
+ns = {"t": t}; exec(sys.argv[2], ns)
+assert ns["t"] != t, "sabotage did not change the file -- the control would measure nothing"
+p.write_text(ns["t"])
+PY
+}
+
+hr_sabotage
+want_rc 0 "control setup: an unmodified copy of the two trees is accepted" \
+  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
+
+hr_sabotage site/index.html 't = "<!doctype html>"'
+want_rc_msg 1 "would be published beside the redirects" "control: a page left beside the redirects is caught" \
+  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
+
+hr_sabotage site/_redirects 't = t.replace("https://metrale.ai/control 301", "https://metrale.ai/control 302", 1)'
+want_rc_msg 1 "answers 302" "control: a temporary redirect is caught" \
+  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
+
+hr_sabotage site/_redirects 't = t.replace("https://metrale.ai/install.ps1 301", "https://metrale.ai/engine 301", 1)'
+want_rc_msg 1 "keeps its path" "control: a path metrale.ai serves sent elsewhere is caught" \
+  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
+
+hr_sabotage site/_redirects 't = t + "/late https://metrale.ai/late 301\n"'
+want_rc_msg 1 "must end with the /* catch-all" "control: a rule stranded below the catch-all is caught" \
+  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
+
+hr_sabotage blog/_redirects 't = t.replace("https://blog.metrale.ai/:splat", "https://metrale.ai/:splat", 1)'
+want_rc_msg 1 "which is not on https://blog.metrale.ai" "control: a blog rule leaving the blog's host is caught" \
+  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
+
+hr_sabotage blog/_redirects 't = t.replace("https://blog.metrale.ai/:splat", "https://blog.metrale.ai/", 1)'
+want_rc_msg 1 "must be the single rule" "control: a blog rule that drops the path is caught" \
+  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
 
 # ---------------------------------------------------------------------------
 # Markdown links that point at nothing

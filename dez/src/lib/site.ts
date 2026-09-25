@@ -26,7 +26,7 @@ export const STATUS = {
 
 export const LINKS = {
   metraleRepo: 'https://github.com/Metrale/metrale-inference-alpha',
-  metraleSite: 'https://dev.metrale.ai',
+  metraleSite: 'https://metrale.ai/engine',
   metraleLicense: 'https://github.com/Metrale/metrale-inference-alpha/blob/main/LICENSE',
   discord: 'https://discord.gg/RQcGakU2jW',
   webgpu: 'https://www.w3.org/TR/webgpu/'

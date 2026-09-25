@@ -1,0 +1,32 @@
+# dev.metrale.ai is retired: the engine's page is https://metrale.ai/engine.
+# This file is the whole deployment. A path metrale.ai also serves goes to the
+# same path there; everything else goes to the engine page.
+#
+# Cloudflare Pages matches rules top to bottom and the first match wins, so the
+# catch-all is last. Each spelling needs its own line: /control does not cover
+# /control.html.
+/control                https://metrale.ai/control 301
+/control.html           https://metrale.ai/control 301
+/diligence              https://metrale.ai/diligence 301
+/diligence.html         https://metrale.ai/diligence 301
+/install.sh             https://metrale.ai/install.sh 301
+/install.ps1            https://metrale.ai/install.ps1 301
+/llms.txt               https://metrale.ai/llms.txt 301
+/robots.txt             https://metrale.ai/robots.txt 301
+/sitemap.xml            https://metrale.ai/sitemap.xml 301
+/site.webmanifest       https://metrale.ai/site.webmanifest 301
+/og-image.png           https://metrale.ai/og-image.png 301
+/logo.svg               https://metrale.ai/logo.svg 301
+/nvidia-inception.webp  https://metrale.ai/nvidia-inception.webp 301
+/favicon.ico            https://metrale.ai/favicon.ico 301
+/favicon.svg            https://metrale.ai/favicon.svg 301
+/favicon-16.png         https://metrale.ai/favicon-16.png 301
+/favicon-32.png         https://metrale.ai/favicon-32.png 301
+/favicon-48.png         https://metrale.ai/favicon-48.png 301
+/apple-touch-icon.png   https://metrale.ai/apple-touch-icon.png 301
+/icon-192.png           https://metrale.ai/icon-192.png 301
+/icon-512.png           https://metrale.ai/icon-512.png 301
+/icon-1024.png          https://metrale.ai/icon-1024.png 301
+/icon-maskable-512.png  https://metrale.ai/icon-maskable-512.png 301
+/fonts/*                https://metrale.ai/fonts/:splat 301
+/*                      https://metrale.ai/engine 301

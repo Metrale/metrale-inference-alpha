@@ -94,7 +94,7 @@ for (const file of pages) {
     description,
     url: canonical,
     isPartOf: { '@type': 'WebSite', name: BOOK, url: `${ORIGIN}/` },
-    publisher: { '@type': 'Organization', name: 'Metrale Engine', url: 'https://dev.metrale.ai/' }
+    publisher: { '@type': 'Organization', name: 'Metrale Engine', url: 'https://metrale.ai/engine' }
     // JSON.stringify does not escape "<", so a closing script tag anywhere in a
     // chapter's prose would end the block early and spill markup into the page.
   }).replace(/</g, '\\u003c');

@@ -146,16 +146,19 @@ jobs:
           }
           head -3 book/output/llms.txt
 
-      # The brand assets come from site/static rather than a third committed
-      # copy: the favicons and the social card are byte-identical across the
-      # three properties today, and a copy is how they stop being.
-      - name: Brand assets from site/static
+      # The icons and the social card live in book/brand, outside src/, so
+      # mdBook does not treat them as pages; they are copied to the site root.
+      - name: Brand assets from book/brand
         run: |
-          cp site/static/favicon.svg site/static/favicon.ico \
-             site/static/favicon-16.png site/static/favicon-32.png site/static/favicon-48.png \
-             site/static/apple-touch-icon.png \
-             site/static/og-image.png book/output/
-          cmp site/static/og-image.png book/output/og-image.png
+          cp book/brand/favicon.svg book/brand/favicon.ico \
+             book/brand/favicon-16.png book/brand/favicon-32.png book/brand/favicon-48.png \
+             book/brand/apple-touch-icon.png \
+             book/brand/og-image.png book/output/
+          cmp book/brand/og-image.png book/output/og-image.png
+
+      # book/theme/metrale.js is generated from the brand kit's geometry.
+      - name: The menu-bar wordmark is current with the brand kit
+        run: node assets/brand/lockup.mjs --check
 
       # theme/head.hbs emits everything handlebars can. This adds what it
       # cannot: a canonical URL derived from the file path, and a description

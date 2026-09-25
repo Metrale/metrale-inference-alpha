@@ -1,6 +1,6 @@
 # Standard for Performance Numbers
 
-The diligence page at [dev.metrale.ai/diligence](https://dev.metrale.ai/diligence) is the single public record, and our internal best numbers and the page must agree.
+The diligence page at [metrale.ai/diligence](https://metrale.ai/diligence) is the single public record, and our internal best numbers and the page must agree.
 
 ## Official guidelines
 
