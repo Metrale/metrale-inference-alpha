@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Hopper short-prefill W8A8: exact-arithmetic M16/M128 expert buckets.
+//! Hopper short-prefill W8A8: native FP8 M16 / BF16 M128 expert buckets.
+//! The native small-bucket reduction is not bit-identical to BF16 PM4.
 //! Device routing counts choose the bucket; sparse small buckets fold back into
 //! M128. Both lists and counters belong to the arena and survive graph replay.
 
@@ -61,7 +62,7 @@ fn plan(
 }
 
 impl MoeLayer {
-    /// Returns false without launching when this exact route is unavailable.
+    /// Returns false without launching when this bounded route is unavailable.
     /// A pair shares the gate/up residency pattern, as in the existing PM4 arm.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn try_adaptive_fp8(
@@ -111,7 +112,7 @@ impl MoeLayer {
         );
         if ctx.stats.once("log:moe_adaptive_fp8_prefill") {
             tracing::info!(
-                "[avarok] Hopper adaptive W8A8 prefill: M16/M128, SMs={}, small-tile threshold={} (device decision), persistent worklists",
+                "[avarok] Hopper adaptive W8A8 prefill: native FP8 M16/BF16 M128 (non-bit-exact reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
                 self.moe_adaptive_sms,
                 p.threshold
             );
