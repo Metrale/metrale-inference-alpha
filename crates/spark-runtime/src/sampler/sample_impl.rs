@@ -222,7 +222,7 @@ pub fn sample_with_params_seeded(
 /// construction); otherwise the answer is the LAST index equal to the max,
 /// which is exactly what `max_by` returns on NaN-free input (including
 /// -0.0/+0.0 ties, where `partial_cmp` says Equal and `==` agrees).
-fn greedy_pick_last_wins(v: &[f32]) -> u32 {
+pub fn greedy_pick_last_wins(v: &[f32]) -> u32 {
     const LANES: usize = 8;
     let mut acc = [f32::NEG_INFINITY; LANES];
     let mut any_nan = false;

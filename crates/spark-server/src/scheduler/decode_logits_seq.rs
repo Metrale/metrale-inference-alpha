@@ -174,29 +174,35 @@ pub fn process_seq_logits(
     // `sample_token_with_grammar`, and is byte-identical to the previous
     // single-shot `sample_with_params_history(.., params, history)` because
     // the buffer feeding temperature/top-k/p is identical either way.
-    let f32_bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(f32_logits.as_ptr() as *const u8, vocab_size * 4) };
-    let sampler_shape = SamplingParams {
-        temperature: params.temperature,
-        top_k: params.top_k,
-        top_p: params.top_p,
-        top_n_sigma: params.top_n_sigma,
-        min_p: params.min_p,
-        logit_bias: Vec::new(),
-        repetition_penalty: 1.0,
-        repetition_penalty_window: 0,
-        presence_penalty: 0.0,
-        frequency_penalty: 0.0,
-        lz_penalty: 0.0,
-        dry_multiplier: 0.0,
-        dry_base: params.dry_base,
-        dry_allowed_length: params.dry_allowed_length,
-        dry_sequence_breakers: Vec::new(),
-        max_tokens: 0,
-        stop_token_ids: Vec::new(),
-        seed: params.seed,
+    let sampled = if params.temperature <= 0.0 {
+        // The canonical pipeline above already applied every mask and penalty.
+        // Reuse the sampler's exact tie/NaN policy without copying the row.
+        spark_runtime::sampler::greedy_pick_last_wins(&f32_logits)
+    } else {
+        let f32_bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(f32_logits.as_ptr() as *const u8, vocab_size * 4) };
+        let sampler_shape = SamplingParams {
+            temperature: params.temperature,
+            top_k: params.top_k,
+            top_p: params.top_p,
+            top_n_sigma: params.top_n_sigma,
+            min_p: params.min_p,
+            logit_bias: Vec::new(),
+            repetition_penalty: 1.0,
+            repetition_penalty_window: 0,
+            presence_penalty: 0.0,
+            frequency_penalty: 0.0,
+            lz_penalty: 0.0,
+            dry_multiplier: 0.0,
+            dry_base: params.dry_base,
+            dry_allowed_length: params.dry_allowed_length,
+            dry_sequence_breakers: Vec::new(),
+            max_tokens: 0,
+            stop_token_ids: Vec::new(),
+            seed: params.seed,
+        };
+        sample_with_params_history(f32_bytes, &sampler_shape, &[])
     };
-    let sampled = sample_with_params_history(f32_bytes, &sampler_shape, &[]);
 
     // Complete per-step logit dump (#222): METRALE_LOGIT_DUMP=<file>. Captures
     // top-K + every applied bias + sampled, for Metrale Engine↔vLLM divergence
@@ -224,3 +230,7 @@ pub fn process_seq_logits(
     *ctx.scratch.seq_f32.borrow_mut() = std::mem::take(&mut f32_logits);
     (sampled, logprobs)
 }
+
+#[cfg(test)]
+#[path = "decode_logits_seq_tests.rs"]
+mod tests;
