@@ -48,13 +48,14 @@ impl MoeLayer {
         let n = num_tokens as u32;
         let total_expanded = n * top_k;
         let ne = num_experts as usize;
+        let fp8_scratch = ctx.buffers.moe_fp8_scratch(ctx.config, num_tokens)?;
 
         // ── Profiling (PCND: inert unless `--profile`) ─────────────────────
         // This path had NO instrumentation, and it is 71.6% of cold prefill
         // (2204 ms of 3078 ms measured on the 35B at 4k tokens) while the GDN
         // spine beside it — 6.8% — carries thirteen timers. Every large win
         // this session came from somewhere the instruments were missing.
-        let profile = ctx.profile;
+        let profile = ctx.profile && !ctx.graph_capture;
         let mut mt = if profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -110,11 +111,9 @@ impl MoeLayer {
         if !bf16_shared && has_shared && force_w8a8_sh {
             let shared_gate_out = ctx.buffers.ssm_deinterleaved();
             let shared_up_out = ctx.buffers.ssm_qkvz();
-            let m_us: usize = n as usize;
-            let a_fp8_bytes: usize = m_us * h as usize;
-            let a_scale_bytes: usize = m_us * (h as usize / 128) * 4;
-            let input_fp8 = ctx.gpu.alloc(a_fp8_bytes)?;
-            let input_scale = ctx.gpu.alloc(a_scale_bytes)?;
+
+            let input_fp8 = fp8_scratch.activation;
+            let input_scale = fp8_scratch.scales;
             ops::per_token_group_quant_fp8(
                 ctx.gpu,
                 self.per_token_group_quant_fp8_k,
@@ -151,15 +150,12 @@ impl MoeLayer {
                 h,
                 stream,
             )?;
-            ctx.gpu.synchronize(stream)?;
-            ctx.gpu.free(input_fp8)?;
-            ctx.gpu.free(input_scale)?;
+
             let shared_down_out = ctx.buffers.attn_output();
             // Quant the post-silu intermediate (K=shared_inter)
-            let a2_bytes: usize = m_us * shared_inter as usize;
-            let a2_scale_bytes: usize = m_us * (shared_inter as usize / 128) * 4;
-            let down_in_fp8 = ctx.gpu.alloc(a2_bytes)?;
-            let down_in_scale = ctx.gpu.alloc(a2_scale_bytes)?;
+
+            let down_in_fp8 = fp8_scratch.activation;
+            let down_in_scale = fp8_scratch.scales;
             if self.fused_silu_quant_ok(shared_inter) {
                 // Nothing downstream reads the post-SiLU BF16 shared
                 // intermediate (no shared-expert LoRA fold), so skip the
@@ -211,9 +207,6 @@ impl MoeLayer {
                 shared_inter,
                 stream,
             )?;
-            ctx.gpu.synchronize(stream)?;
-            ctx.gpu.free(down_in_fp8)?;
-            ctx.gpu.free(down_in_scale)?;
         } else if !bf16_shared && has_shared {
             let shared_gate_out = ctx.buffers.ssm_deinterleaved();
             let shared_up_out = ctx.buffers.ssm_qkvz();
@@ -480,10 +473,9 @@ impl MoeLayer {
             // Quant input [num_tokens, h] → input_fp8 + input_a_scale ONCE,
             // reuse for both gate and up.
             let m = num_tokens;
-            let a_fp8_bytes = m * h as usize;
-            let a_scale_bytes = m * (h as usize / 128) * 4;
-            let input_fp8 = ctx.gpu.alloc(a_fp8_bytes)?;
-            let input_a_scale = ctx.gpu.alloc(a_scale_bytes)?;
+
+            let input_fp8 = fp8_scratch.activation;
+            let input_a_scale = fp8_scratch.scales;
             ops::per_token_group_quant_fp8(
                 ctx.gpu,
                 self.per_token_group_quant_fp8_k,
@@ -504,8 +496,8 @@ impl MoeLayer {
                 let n_tiles_gu = inter.div_ceil(PM4_N_TILE);
                 let wl_cap_items =
                     (te.div_ceil(PM4_M_TILE as usize) + ne + 1) * n_tiles_gu as usize;
-                let wl_gu = ctx.gpu.alloc(wl_cap_items * 2 * 4)?;
-                let tt_gu = ctx.gpu.alloc(4)?;
+                let wl_gu = fp8_scratch.worklist;
+                let tt_gu = fp8_scratch.total_tiles;
                 ops::moe_build_tile_worklist(
                     ctx.gpu,
                     self.moe_build_tile_worklist_k,
@@ -557,9 +549,6 @@ impl MoeLayer {
                     stream,
                 )?;
                 mprof!("grouped_gemm_w8a8");
-                ctx.gpu.synchronize(stream)?;
-                ctx.gpu.free(wl_gu)?;
-                ctx.gpu.free(tt_gu)?;
             } else {
                 ops::moe_w8a8_grouped_gemm(
                     ctx.gpu,
@@ -595,15 +584,12 @@ impl MoeLayer {
                     stream,
                 )?;
                 mprof!("grouped_gemm_w8a8");
-                ctx.gpu.synchronize(stream)?;
             }
-            ctx.gpu.free(input_fp8)?;
-            ctx.gpu.free(input_a_scale)?;
         } else if max_m_tiles > 0 {
             // Routed-expert FP8 grouped gate+up GEMM via grid-compaction. Build
             // the work-list ONCE (gate and up share the same expert_offsets,
             // weight-pointer NULL-ness, N=inter, K=h tiling), reuse it for both
-            // GEMMs, free after. Builder + both grouped-GEMM launches are on the
+            // GEMMs. The arena retains scratch through graph replay. Builder + both grouped-GEMM launches are on the
             // SAME `stream` (read-after-write of total_tiles/worklist — see the
             // moe_build_tile_worklist comment).
             let n_tiles_gu = inter.div_ceil(PM4_N_TILE);
@@ -612,8 +598,8 @@ impl MoeLayer {
             // per-expert m-tile rounding when tokens are spread across all
             // experts. ×n_tiles n-tiles, ×2 words/item, ×4 bytes/word.
             let wl_cap_items = (te.div_ceil(PM4_M_TILE as usize) + ne + 1) * n_tiles_gu as usize;
-            let wl_gu = ctx.gpu.alloc(wl_cap_items * 2 * 4)?;
-            let tt_gu = ctx.gpu.alloc(4)?;
+            let wl_gu = fp8_scratch.worklist;
+            let tt_gu = fp8_scratch.total_tiles;
             ops::moe_build_tile_worklist(
                 ctx.gpu,
                 self.moe_build_tile_worklist_k,
@@ -663,9 +649,6 @@ impl MoeLayer {
                 stream,
             )?;
             mprof!("grouped_gemm_fp8");
-            ctx.gpu.synchronize(stream)?;
-            ctx.gpu.free(wl_gu)?;
-            ctx.gpu.free(tt_gu)?;
         }
 
         // Feature-1: fold gate/up_proj deltas onto the sorted BF16
@@ -692,10 +675,9 @@ impl MoeLayer {
             // Quant the permuted post-silu intermediate. Length is
             // total_expanded, K is `inter` (down_proj input dim).
             let m: usize = total_expanded as usize;
-            let a_fp8_bytes: usize = m * inter as usize;
-            let a_scale_bytes: usize = m * (inter as usize / 128) * 4;
-            let down_in_fp8 = ctx.gpu.alloc(a_fp8_bytes)?;
-            let down_in_scale = ctx.gpu.alloc(a_scale_bytes)?;
+
+            let down_in_fp8 = fp8_scratch.activation;
+            let down_in_scale = fp8_scratch.scales;
             if self.fused_silu_quant_ok(inter) {
                 // `apply_expert_lora_prefill_down` below consumes the
                 // post-SiLU BF16 `expert_gate_out`. When ANY MoE LoRA is
@@ -751,8 +733,8 @@ impl MoeLayer {
                 let n_tiles_dn = h.div_ceil(PM4_N_TILE);
                 let wl_cap_items =
                     (te.div_ceil(PM4_M_TILE as usize) + ne + 1) * n_tiles_dn as usize;
-                let wl_dn = ctx.gpu.alloc(wl_cap_items * 2 * 4)?;
-                let tt_dn = ctx.gpu.alloc(4)?;
+                let wl_dn = fp8_scratch.worklist;
+                let tt_dn = fp8_scratch.total_tiles;
                 ops::moe_build_tile_worklist(
                     ctx.gpu,
                     self.moe_build_tile_worklist_k,
@@ -785,9 +767,6 @@ impl MoeLayer {
                     stream,
                 )?;
                 mprof!("grouped_gemm_w8a8");
-                ctx.gpu.synchronize(stream)?;
-                ctx.gpu.free(wl_dn)?;
-                ctx.gpu.free(tt_dn)?;
             } else {
                 ops::moe_w8a8_grouped_gemm(
                     ctx.gpu,
@@ -806,10 +785,7 @@ impl MoeLayer {
                     stream,
                 )?;
                 mprof!("grouped_gemm_w8a8");
-                ctx.gpu.synchronize(stream)?;
             }
-            ctx.gpu.free(down_in_fp8)?;
-            ctx.gpu.free(down_in_scale)?;
         } else if max_m_tiles > 0 {
             ops::silu_mul(
                 ctx.gpu,
@@ -827,8 +803,8 @@ impl MoeLayer {
             // SAME `stream`. Down-proj uses dp.weight_ptrs for NULL-skip.
             let n_tiles_dn = h.div_ceil(PM4_N_TILE);
             let wl_cap_items = (te.div_ceil(PM4_M_TILE as usize) + ne + 1) * n_tiles_dn as usize;
-            let wl_dn = ctx.gpu.alloc(wl_cap_items * 2 * 4)?;
-            let tt_dn = ctx.gpu.alloc(4)?;
+            let wl_dn = fp8_scratch.worklist;
+            let tt_dn = fp8_scratch.total_tiles;
             ops::moe_build_tile_worklist(
                 ctx.gpu,
                 self.moe_build_tile_worklist_k,
@@ -860,9 +836,6 @@ impl MoeLayer {
                 stream,
             )?;
             mprof!("grouped_gemm_fp8");
-            ctx.gpu.synchronize(stream)?;
-            ctx.gpu.free(wl_dn)?;
-            ctx.gpu.free(tt_dn)?;
         }
 
         // Feature-1: fold the routed-expert down_proj LoRA deltas onto the sorted

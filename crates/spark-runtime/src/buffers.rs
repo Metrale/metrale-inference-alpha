@@ -12,6 +12,7 @@ use metrale_core::config::ModelConfig;
 mod accessors;
 mod debug_checksum;
 pub mod decode_meta;
+mod moe_fp8_scratch;
 mod rowwise_slab;
 mod sizes;
 mod sizes_q12;
@@ -120,6 +121,8 @@ pub struct BufferArena {
     ffn_gate_up_fused: DevicePtr,
     /// Persistent FP8 block-scaled activation scratch for prefill projections.
     fp8_act: DevicePtr,
+    /// Shared graph-stable FP8 MoE activation/scales and tile-worklist slab.
+    moe_fp8_scratch: DevicePtr,
     /// Persistent per-128-block FP32 scales paired with `fp8_act`.
     fp8_act_scale: DevicePtr,
     /// `[K/128, ceil16(M)]` transpose of `fp8_act_scale` (cuBLASLt VEC128).
@@ -270,6 +273,11 @@ impl BufferArena {
             DevicePtr::NULL
         };
         let fp8_act = gpu.alloc(sizes.fp8_act)?;
+        let moe_fp8_scratch = if sizes.moe_fp8_scratch > 0 {
+            gpu.alloc(sizes.moe_fp8_scratch)?
+        } else {
+            DevicePtr::NULL
+        };
         let fp8_act_scale = gpu.alloc(sizes.fp8_act_scale)?;
         let fp8_act_scale_kmajor = gpu.alloc(sizes.fp8_act_scale_kmajor)?;
         // Q2_0 prefill dequant scratch. 0 → NULL unless METRALE_GGUF_NATIVE_Q2.
@@ -359,6 +367,7 @@ impl BufferArena {
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
             fp8_act,
+            moe_fp8_scratch,
             fp8_act_scale,
             fp8_act_scale_kmajor,
             q2_dequant_scratch,
@@ -432,6 +441,7 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
             fp8_act,
+            moe_fp8_scratch,
             fp8_act_scale,
             fp8_act_scale_kmajor,
             lora_xa,
@@ -483,6 +493,7 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
             *ffn_act_scale_kmajor,
             *ffn_gate_up_fused,
             *fp8_act,
+            *moe_fp8_scratch,
             *fp8_act_scale,
             *fp8_act_scale_kmajor,
             *lora_xa,
@@ -537,6 +548,7 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
         *ffn_act_scale_kmajor = DevicePtr::NULL;
         *ffn_gate_up_fused = DevicePtr::NULL;
         *fp8_act = DevicePtr::NULL;
+        *moe_fp8_scratch = DevicePtr::NULL;
         *fp8_act_scale = DevicePtr::NULL;
         *fp8_act_scale_kmajor = DevicePtr::NULL;
         *lora_xa = DevicePtr::NULL;

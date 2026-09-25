@@ -123,6 +123,8 @@ pub struct BufferSizes {
     /// ssm-qkvz). Persistent so the W8A8+FP32-epilogue path stops doing a
     /// per-projection cuMemAlloc + cuStreamSynchronize + cuMemFree. 1 byte/elem.
     pub fp8_act: usize,
+    /// Persistent grouped FP8 MoE scratch; zero for dense models.
+    pub moe_fp8_scratch: usize,
     /// Per-128-block FP32 scales paired with `fp8_act` (one f32 per 128 elems).
     pub fp8_act_scale: usize,
     /// `[K/128, ceil16(M)]` FP32 transpose of `fp8_act_scale` — the VEC128
@@ -661,6 +663,7 @@ impl BufferSizes {
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
             fp8_act,
+            moe_fp8_scratch: super::moe_fp8_scratch::Layout::new(config, m).bytes,
             fp8_act_scale,
             fp8_act_scale_kmajor,
             lora_xa,
@@ -709,6 +712,7 @@ impl BufferSizes {
             + self.ffn_act_scale
             + self.ffn_act_scale_kmajor
             + self.fp8_act
+            + self.moe_fp8_scratch
             + self.fp8_act_scale
             + self.fp8_act_scale_kmajor
             + self.lora_xa
