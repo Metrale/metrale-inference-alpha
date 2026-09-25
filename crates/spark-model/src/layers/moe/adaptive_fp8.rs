@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Hopper short-prefill W8A8: native FP8 M16 / BF16 M128 expert buckets.
-//! The native small-bucket reduction is not bit-identical to BF16 PM4.
+//! Hopper short-prefill W8A8: native-input M16 and optional native-input M128.
+//! Native reductions are not bit-identical to BF16 PM4. The large bucket keeps
+//! BF16 PM4 when its optional Hopper module is absent; other routes are unchanged.
 //! Device routing counts choose the bucket; sparse small buckets fold back into
 //! M128. Both lists and counters belong to the arena and survive graph replay.
 
@@ -14,6 +15,14 @@ pub(super) fn adaptive_sm_count(gpu: &dyn GpuBackend) -> Result<u32> {
     } else {
         Ok(0)
     }
+}
+
+pub(super) fn native_m128_kernel(gpu: &dyn GpuBackend) -> KernelHandle {
+    crate::layers::try_target_kernel(gpu, "moe_w8a8_native_m128", "pm4_native128")
+}
+
+fn select_large_handle(native: u64, bf16: u64) -> u64 {
+    if native == 0 { bf16 } else { native }
 }
 
 #[derive(Debug)]
@@ -110,9 +119,17 @@ impl MoeLayer {
                 && scratch.small_total_tiles != DevicePtr::NULL,
             "adaptive FP8 worklist exceeds persistent arena capacity"
         );
+        // Selection is inside the qualified plan; decode/other shapes never
+        // reach the optional native large kernel. Keep the original handle as
+        // fallback when the target does not ship the module.
+        let large_kernel = KernelHandle(select_large_handle(
+            self.moe_w8a8_native_m128_k.0,
+            self.moe_w8a8_grouped_gemm_pm4_k.0,
+        ));
         if ctx.stats.once("log:moe_adaptive_fp8_prefill") {
             tracing::info!(
-                "[avarok] Hopper adaptive W8A8 prefill: native FP8 M16/BF16 M128 (non-bit-exact reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
+                "[avarok] Hopper adaptive W8A8 prefill: native-input M16, native-input M128={} (non-bit-exact BF16 reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
+                self.moe_w8a8_native_m128_k.0 != 0,
                 self.moe_adaptive_sms,
                 p.threshold
             );
@@ -149,7 +166,7 @@ impl MoeLayer {
                 .launch(stream)?;
             ops::moe_w8a8_grouped_gemm_pm4(
                 ctx.gpu,
-                self.moe_w8a8_grouped_gemm_pm4_k,
+                large_kernel,
                 input,
                 scales,
                 weights.weight_ptrs,
@@ -172,7 +189,13 @@ impl MoeLayer {
 
 #[cfg(test)]
 mod tests {
-    use super::plan;
+    use super::{plan, select_large_handle};
+
+    #[test]
+    fn native_large_handle_is_optional_with_original_fallback() {
+        assert_eq!(select_large_handle(0, 17), 17);
+        assert_eq!(select_large_handle(23, 17), 23);
+    }
     #[test]
     fn qualified_shape_bounds_and_grid_capacity_are_independent() {
         for rows in [65, 96, 128] {

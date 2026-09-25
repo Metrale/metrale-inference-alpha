@@ -303,6 +303,7 @@ pub struct MoeLayer {
     // Optional Hopper ordered builder; all unsupported shapes retain the original.
     moe_build_tile_worklist_ordered_k: KernelHandle,
     moe_w8a8_m16_k: KernelHandle,
+    moe_w8a8_native_m128_k: KernelHandle,
     moe_bucket_builder_k: KernelHandle,
     moe_adaptive_sms: u32,
     // W8A8 + FP32 epilogue MoE GEMM (vLLM-equivalent). Opt-in via

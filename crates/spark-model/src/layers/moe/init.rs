@@ -219,6 +219,7 @@ impl MoeLayer {
                 "moe_build_tile_worklist_ordered",
             ),
             moe_w8a8_m16_k: try_target_kernel(gpu, "moe_w8a8_m16", "pm4_m16"),
+            moe_w8a8_native_m128_k: adaptive_fp8::native_m128_kernel(gpu),
             moe_bucket_builder_k: try_target_kernel(gpu, "moe_bucket_builder", "bucket_builder"),
             moe_adaptive_sms: adaptive_fp8::adaptive_sm_count(gpu)?,
             moe_w8a8_grouped_gemm_k: super::super::try_kernel(
