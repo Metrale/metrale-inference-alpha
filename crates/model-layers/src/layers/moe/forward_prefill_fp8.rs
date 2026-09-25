@@ -6,6 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use metrale_gpu_runtime::buffers::MoeFp8Scratch;
 
 // 2026-09-26: One `ctx.profile` timing step of the FP8 prefill: when the timer `$mt` holds a
 // start time, synchronise `$stream`, log the step's elapsed time under `$label` and restart the
@@ -68,10 +69,14 @@ impl MoeLayer {
         let n = num_tokens as u32;
         let total_expanded = n * top_k;
         let ne = num_experts as usize;
+        // 2026-09-25: Every FP8 activation, scale and work-list temporary below is a
+        // region of the arena's grouped-MoE slab, so nothing here allocates, frees or
+        // synchronizes, and the addresses stay valid across CUDA graph replay.
+        let fp8_scratch = ctx.buffers.moe_fp8_scratch(ctx.config, num_tokens)?;
 
-        // 2026-09-25: Per-step timing only with `ctx.profile`; each step then
-        // synchronises the stream.
-        let profile = ctx.profile;
+        // 2026-09-25: Per-step timing only with `ctx.profile` outside graph capture;
+        // each step then synchronises the stream.
+        let profile = ctx.profile && !ctx.graph_capture;
         let mut mt = if profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -115,7 +120,17 @@ impl MoeLayer {
                 stream,
             )?;
         if !bf16_shared && has_shared && force_w8a8_sh {
-            self.fp8_prefill_shared_w8a8(input, sh, n, h, shared_inter, ctx, stream, &mut mt)?;
+            self.fp8_prefill_shared_w8a8(
+                input,
+                sh,
+                n,
+                h,
+                shared_inter,
+                &fp8_scratch,
+                ctx,
+                stream,
+                &mut mt,
+            )?;
         } else if !bf16_shared && has_shared {
             self.fp8_prefill_shared_w8a16(input, sh, n, h, shared_inter, ctx, stream, &mut mt)?;
         }
@@ -287,6 +302,7 @@ impl MoeLayer {
                 te,
                 ne,
                 max_m_tiles,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,
@@ -306,6 +322,7 @@ impl MoeLayer {
                 n,
                 te,
                 ne,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,
@@ -344,6 +361,7 @@ impl MoeLayer {
                 te,
                 ne,
                 max_m_tiles,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,
@@ -362,6 +380,7 @@ impl MoeLayer {
                 n,
                 te,
                 ne,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,

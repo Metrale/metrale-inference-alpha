@@ -19,6 +19,7 @@ impl MoeLayer {
         n: u32,
         h: u32,
         shared_inter: u32,
+        fp8_scratch: &MoeFp8Scratch,
         ctx: &ForwardContext,
         stream: u64,
         mt: &mut Option<std::time::Instant>,
@@ -30,11 +31,8 @@ impl MoeLayer {
         }
         let shared_gate_out = ctx.buffers.ssm_deinterleaved();
         let shared_up_out = ctx.buffers.ssm_qkvz();
-        let m_us: usize = n as usize;
-        let a_fp8_bytes: usize = m_us * h as usize;
-        let a_scale_bytes: usize = m_us * (h as usize / 128) * 4;
-        let input_fp8 = ctx.gpu.alloc(a_fp8_bytes)?;
-        let input_scale = ctx.gpu.alloc(a_scale_bytes)?;
+        let input_fp8 = fp8_scratch.activation;
+        let input_scale = fp8_scratch.scales;
         ops::per_token_group_quant_fp8(
             ctx.gpu,
             self.per_token_group_quant_fp8_k,
@@ -71,14 +69,9 @@ impl MoeLayer {
             h,
             stream,
         )?;
-        ctx.gpu.synchronize(stream)?;
-        ctx.gpu.free(input_fp8)?;
-        ctx.gpu.free(input_scale)?;
         let shared_down_out = ctx.buffers.attn_output();
-        let a2_bytes: usize = m_us * shared_inter as usize;
-        let a2_scale_bytes: usize = m_us * (shared_inter as usize / 128) * 4;
-        let down_in_fp8 = ctx.gpu.alloc(a2_bytes)?;
-        let down_in_scale = ctx.gpu.alloc(a2_scale_bytes)?;
+        let down_in_fp8 = fp8_scratch.activation;
+        let down_in_scale = fp8_scratch.scales;
         if self.fused_silu_quant_ok(shared_inter) {
             // 2026-09-25: Nothing after this reads the BF16 post-SiLU shared
             // intermediate, so the BF16 output pointer is NULL.
@@ -129,9 +122,6 @@ impl MoeLayer {
             shared_inter,
             stream,
         )?;
-        ctx.gpu.synchronize(stream)?;
-        ctx.gpu.free(down_in_fp8)?;
-        ctx.gpu.free(down_in_scale)?;
         Ok(())
     }
 

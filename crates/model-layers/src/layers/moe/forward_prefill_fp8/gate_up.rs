@@ -28,6 +28,7 @@ impl MoeLayer {
         te: usize,
         ne: usize,
         max_m_tiles: u32,
+        fp8_scratch: &MoeFp8Scratch,
         ctx: &ForwardContext,
         stream: u64,
         mt: &mut Option<std::time::Instant>,
@@ -39,10 +40,8 @@ impl MoeLayer {
         }
         // 2026-09-25: One quantised input serves both gate and up.
         let m = num_tokens;
-        let a_fp8_bytes = m * h as usize;
-        let a_scale_bytes = m * (h as usize / 128) * 4;
-        let input_fp8 = ctx.gpu.alloc(a_fp8_bytes)?;
-        let input_a_scale = ctx.gpu.alloc(a_scale_bytes)?;
+        let input_fp8 = fp8_scratch.activation;
+        let input_a_scale = fp8_scratch.scales;
         ops::per_token_group_quant_fp8(
             ctx.gpu,
             self.per_token_group_quant_fp8_k,
@@ -60,8 +59,8 @@ impl MoeLayer {
             // work-list writes before the reads.
             let n_tiles_gu = inter.div_ceil(PM4_N_TILE);
             let wl_cap_items = (te.div_ceil(PM4_M_TILE as usize) + ne + 1) * n_tiles_gu as usize;
-            let wl_gu = ctx.gpu.alloc(wl_cap_items * 2 * 4)?;
-            let tt_gu = ctx.gpu.alloc(4)?;
+            let wl_gu = fp8_scratch.worklist;
+            let tt_gu = fp8_scratch.total_tiles;
             ops::moe_build_tile_worklist(
                 ctx.gpu,
                 self.moe_build_tile_worklist_k,
@@ -113,9 +112,6 @@ impl MoeLayer {
                 stream,
             )?;
             mprof!("grouped_gemm_w8a8");
-            ctx.gpu.synchronize(stream)?;
-            ctx.gpu.free(wl_gu)?;
-            ctx.gpu.free(tt_gu)?;
         } else {
             ops::moe_w8a8_grouped_gemm(
                 ctx.gpu,
@@ -151,10 +147,7 @@ impl MoeLayer {
                 stream,
             )?;
             mprof!("grouped_gemm_w8a8");
-            ctx.gpu.synchronize(stream)?;
         }
-        ctx.gpu.free(input_fp8)?;
-        ctx.gpu.free(input_a_scale)?;
         Ok(())
     }
 
@@ -174,6 +167,7 @@ impl MoeLayer {
         n: u32,
         te: usize,
         ne: usize,
+        fp8_scratch: &MoeFp8Scratch,
         ctx: &ForwardContext,
         stream: u64,
         mt: &mut Option<std::time::Instant>,
@@ -192,8 +186,8 @@ impl MoeLayer {
         // is at most ceil(te / 128) + ne; times n_tiles items, 2 u32 words
         // per item.
         let wl_cap_items = (te.div_ceil(PM4_M_TILE as usize) + ne + 1) * n_tiles_gu as usize;
-        let wl_gu = ctx.gpu.alloc(wl_cap_items * 2 * 4)?;
-        let tt_gu = ctx.gpu.alloc(4)?;
+        let wl_gu = fp8_scratch.worklist;
+        let tt_gu = fp8_scratch.total_tiles;
         ops::moe_build_tile_worklist(
             ctx.gpu,
             self.moe_build_tile_worklist_k,
@@ -243,9 +237,6 @@ impl MoeLayer {
             stream,
         )?;
         mprof!("grouped_gemm_fp8");
-        ctx.gpu.synchronize(stream)?;
-        ctx.gpu.free(wl_gu)?;
-        ctx.gpu.free(tt_gu)?;
         Ok(())
     }
 }
