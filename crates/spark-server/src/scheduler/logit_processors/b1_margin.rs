@@ -52,6 +52,25 @@ pub(super) fn observe(
     a: &ActiveSeq,
     stats: &crate::scheduler::spec_stats::SpecStats,
 ) {
+    if let Some((margin, top1, top2)) = low_margin_in_body(
+        logits.iter().copied(),
+        a.inside_parameter_body,
+        a.param_body_chars_emitted,
+    ) {
+        record_low_margin(margin, top1, top2, stats);
+    }
+}
+
+fn low_margin_in_body(
+    logits: impl Iterator<Item = f32>,
+    inside_parameter_body: bool,
+    param_body_chars_emitted: u32,
+) -> Option<(f32, u32, u32)> {
+    // Outside an active parameter body the observation has no side effects.
+    // Check before touching the vocabulary rather than after scanning it.
+    if !inside_parameter_body || param_body_chars_emitted == 0 {
+        return None;
+    }
     // Single O(V) scan for top-1 and top-2 (pre-penalty, pre-bias) — same
     // scan the inline B1 block ran.
     let (top1_idx, top1_val, top2_idx, top2_val) = {
@@ -59,7 +78,7 @@ pub(super) fn observe(
         let mut t1_val = f32::NEG_INFINITY;
         let mut t2_idx = 0u32;
         let mut t2_val = f32::NEG_INFINITY;
-        for (idx, &v) in logits.iter().enumerate() {
+        for (idx, v) in logits.enumerate() {
             if v > t1_val {
                 t2_val = t1_val;
                 t2_idx = t1_idx;
@@ -73,9 +92,9 @@ pub(super) fn observe(
         (t1_idx, t1_val, t2_idx, t2_val)
     };
     let margin = top1_val - top2_val;
-    let low_margin_in_body =
-        a.inside_parameter_body && a.param_body_chars_emitted > 0 && margin < LOW_MARGIN_THRESHOLD;
-    if low_margin_in_body {
-        record_low_margin(margin, top1_idx, top2_idx, stats);
-    }
+    (margin < LOW_MARGIN_THRESHOLD).then_some((margin, top1_idx, top2_idx))
 }
+
+#[cfg(test)]
+#[path = "b1_margin_tests.rs"]
+mod tests;
