@@ -174,6 +174,8 @@ pub struct TransformerModel {
     pub(super) argmax_kernel: KernelHandle,
     /// Batched argmax (one block per row). 0 when the kernel set lacks it.
     pub(super) argmax_batch_kernel: KernelHandle,
+    /// Optional finite, unique-maximum certificate; 0 declines to host.
+    pub(super) argmax_unique_kernel: KernelHandle,
     pub(super) argmax_logits_kernel: KernelHandle, // FP32 argmax for logits
     pub(super) batched_embed_kernel: KernelHandle,
     pub(super) fill_slots_kernel: KernelHandle,

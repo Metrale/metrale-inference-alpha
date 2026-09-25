@@ -470,6 +470,18 @@ pub trait Model: Send + Sync {
     /// GPU batched argmax over `[N, vocab]` BF16; returns N token IDs.
     fn argmax_batch(&self, logits_ptr: DevicePtr, n: usize, stream: u64) -> Result<Vec<u32>>;
 
+    /// Optional certificate that each BF16 row has one finite maximum and no
+    /// nonfinite inputs. None means unsupported or ambiguous: use host sampling.
+    /// This is distinct from legacy argmax, whose tie policy can differ.
+    fn argmax_batch_unique(
+        &self,
+        _logits_ptr: DevicePtr,
+        _n: usize,
+        _stream: u64,
+    ) -> Result<Option<Vec<u32>>> {
+        Ok(None)
+    }
+
     /// Return the hidden state after final norm from the last decode step.
     ///
     /// Used by MTP speculative decoding: the MTP head takes the target model's

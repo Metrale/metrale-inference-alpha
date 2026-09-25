@@ -17,6 +17,7 @@ use crate::speculative::DraftProposer;
 use crate::traits::{ChunkedPrefillPageMetadata, Model, PrefillSlice, SequenceState};
 use crate::weight_map::{DenseWeight, MtpWeights};
 
+mod argmax_unique;
 mod async_chkpt;
 mod borrow_streak;
 mod decode_a;
@@ -312,6 +313,15 @@ impl Model for TransformerModel {
     fn argmax_batch(&self, logits_ptr: DevicePtr, n: usize, _stream: u64) -> Result<Vec<u32>> {
         self.argmax_batch_dispatch(logits_ptr, n, _stream)
     }
+    fn argmax_batch_unique(
+        &self,
+        logits_ptr: DevicePtr,
+        n: usize,
+        _stream: u64,
+    ) -> Result<Option<Vec<u32>>> {
+        self.argmax_unique_dispatch(logits_ptr, n)
+    }
+
     fn hidden_after_norm(&self) -> DevicePtr {
         self.hidden_after_norm_dispatch()
     }

@@ -4,6 +4,8 @@
 
 use super::*;
 
+mod greedy_floor;
+
 // The reusable host staging buffer for the D2H logits copy is now
 // `SchedCtx::scratch.host_bytes` — same zero-contention single-thread
 // access, with a lifetime that ends when the run does.
@@ -67,6 +69,49 @@ fn think_ended_gpu_argmax_enabled() -> bool {
 /// masked think token. Expected to be a small fraction; a large count means the
 /// fast path is not paying for itself.
 static THINK_MASK_FALLBACKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+// Diagnostic-only counts of batch decisions, not per-row token counts.
+fn record_floor_outcome(outcome: usize) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+    COUNTS[outcome].fetch_add(1, Ordering::Relaxed);
+    let counts = COUNTS.each_ref().map(|count| count.load(Ordering::Relaxed));
+    let eligible = counts.iter().sum::<u64>();
+    if eligible.is_multiple_of(100) {
+        tracing::info!(
+            eligible,
+            unique_accepted = counts[0],
+            masked_fallback = counts[1],
+            ambiguous_or_unsupported_fallback = counts[2],
+            "MIN_TOKENS_GPU_ARGMAX batch decisions"
+        );
+    }
+}
+
+fn floor_policy(a: &ActiveSeq, think_end_token: Option<u32>) -> greedy_floor::Policy<'_> {
+    greedy_floor::Policy {
+        temperature: a.temperature,
+        repetition: a.repetition_penalty,
+        presence: a.presence_penalty,
+        frequency: a.frequency_penalty,
+        lz: a.lz_penalty,
+        dry: a.dry_multiplier,
+        has_bias: !a.logit_bias.is_empty(),
+        has_grammar: a.grammar_state.is_some(),
+        has_logprobs: a.top_logprobs.is_some(),
+        inside_thinking: a.inside_thinking,
+        has_tool_policy: a.require_tool_call
+            || a.tools_present
+            || a.suppress_tool_call
+            || a.inside_tool_body,
+        output_len: a.output_tokens.len(),
+        min_tokens: a.min_tokens,
+        eos: &a.eos_tokens,
+        think_ended: a.think_ended,
+        think_start: a.think_start_token,
+        think_end: think_end_token,
+    }
+}
 
 /// Parallel host sampling toggle (METRALE_PARALLEL_SAMPLE, default ON). Set to
 /// "0" to force the serial per-seq sampling path — an escape hatch for the
@@ -161,39 +206,68 @@ pub fn process_decode_logits(
             && a.lz_penalty == 0.0
             && a.dry_multiplier == 0.0
     };
+    let has_floor = active.iter().any(|a| a.min_tokens > a.output_tokens.len());
+    // Unlike legacy argmax, the optional certificate rejects ties/nonfinite
+    // logits, preserving the host sampler's LAST-index-wins behavior.
+    let floor_admitted = has_floor
+        && !greedy_floor::raw_dump_enabled()
+        && sched.dumps.logits.is_none()
+        && sched.dumps.adadec.is_none()
+        && active.iter().all(|a| {
+            floor_policy(a, think_end_token)
+                .eligible(adaptive_sampling, sched.levers.sampling().force_temp_zero)
+        });
     let admit_think_ended = think_ended_gpu_argmax_enabled();
     let needs_host_logits = active.iter().any(|a| {
         let excused = admit_think_ended && think_ended_gpu_ok(a);
         (a.inside_thinking || a.think_ended || a.grammar_state.is_some()) && !excused
     }) || any_logprobs
         || model_logits_fp32
-        // GPU argmax bypasses the pre-sampling EOS mask. Keep requests with
-        // an active minimum-token floor on the host pipeline.
-        || active.iter().any(|a| a.min_tokens > a.output_tokens.len());
+        // Minimum-floor admission uses a distinct finite/unique certificate;
+        // legacy raw argmax is never substituted for the host tie policy.
+        || (has_floor && !floor_admitted);
 
     // Try the GPU argmax first. `None` here means "not eligible, or the result
     // needs the host pipeline after all" and falls through to the host branch —
     // it must never mean "emit nothing".
     let fast_tokens: Option<Vec<(u32, Option<crate::api::TokenLogprobs>)>> =
         if active.iter().all(|a| a.temperature == 0.0) && !any_grammar && !needs_host_logits {
-            match model.argmax_batch(logits, n, 0) {
-                Ok(t) => {
-                    // The two masked ids are the ONLY thing the host pipeline
-                    // would have done differently for a think_ended row. If an
-                    // argmax actually landed on one (rare — the model seldom
-                    // re-opens <think> mid-response), fall through and redo the
-                    // step on the host so the emitted token is exactly what the
-                    // pipeline would produce.
+            let candidate = if has_floor {
+                model.argmax_batch_unique(logits, n, 0)
+            } else {
+                model.argmax_batch(logits, n, 0).map(Some)
+            };
+            match candidate {
+                Ok(Some(t)) => {
+                    // Below a minimum floor, all logits are finite and each
+                    // winner is unique. Only EOS/think masks can change it for
+                    // admitted rows. A masked winner must use the unchanged
+                    // host pipeline; never emit it and merely ignore EOS later.
+                    // Outside the floor, preserve the legacy think-mask check.
                     let hit_mask = t.iter().zip(active.iter()).any(|(&tok, a)| {
-                        a.think_ended
-                            && (Some(tok) == think_end_token || Some(tok) == a.think_start_token)
+                        if has_floor {
+                            floor_policy(a, think_end_token).masks(tok)
+                        } else {
+                            a.think_ended
+                                && (Some(tok) == think_end_token
+                                    || Some(tok) == a.think_start_token)
+                        }
                     });
+                    if has_floor && sched.levers.decode_timing {
+                        record_floor_outcome(if hit_mask { 1 } else { 0 });
+                    }
                     if hit_mask {
                         THINK_MASK_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         None
                     } else {
                         Some(t.into_iter().map(|tok| (tok, None)).collect())
                     }
+                }
+                Ok(None) => {
+                    if has_floor && sched.levers.decode_timing {
+                        record_floor_outcome(2);
+                    }
+                    None
                 }
                 Err(e) => {
                     tracing::error!("argmax_batch error: {e:#}");
