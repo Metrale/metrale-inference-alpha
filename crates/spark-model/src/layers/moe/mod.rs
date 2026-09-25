@@ -65,6 +65,8 @@ pub struct MoeLayer {
     moe_expert_gate_up_shared: KernelHandle,
     moe_expert_silu_down_shared: KernelHandle,
     moe_topk: KernelHandle,
+    /// Optional Hopper-only E256/K8 single-warp top-k; zero keeps legacy routing.
+    moe_topk_warp: KernelHandle,
     moe_weighted_sum_blend: KernelHandle,
     residual_add: KernelHandle,
     moe_topk_batched: KernelHandle,
@@ -404,6 +406,7 @@ impl MoeLayer {
 }
 
 mod tables;
+mod topk_decode;
 // Re-exported so every `moe::ExpertPtrTable`-style path in the sub-files keeps
 // resolving; the split is invisible to them.
 pub(crate) use tables::{Bf16SharedExpert, ExpertPtrTable, Fp8ExpertPtrTable};

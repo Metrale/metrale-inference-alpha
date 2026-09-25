@@ -271,17 +271,7 @@ impl MoeLayer {
                         )
                     }
                 } else {
-                    ops::moe_topk_softmax(
-                        ctx.gpu,
-                        self.moe_topk,
-                        gate_logits,
-                        indices_dev,
-                        weights_dev,
-                        num_experts,
-                        top_k,
-                        ctx.config.norm_topk_prob,
-                        stream,
-                    )
+                    self.topk_decode(gate_logits, indices_dev, weights_dev, ctx, stream)
                 }
             })?;
         }
