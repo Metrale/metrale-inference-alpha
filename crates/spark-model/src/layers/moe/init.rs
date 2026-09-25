@@ -243,6 +243,7 @@ impl MoeLayer {
                 "moe_silu_mul",
                 "silu_mul_quant_fp8",
             ),
+            shared_fp8_hopper_k: shared_fp8_hopper::kernel(gpu),
             fp8_gemm_t_blockscaled_k: super::super::try_kernel(
                 gpu,
                 "fp8_gemm_t_blockscaled",

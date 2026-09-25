@@ -124,9 +124,8 @@ impl MoeLayer {
                 h,
                 stream,
             )?;
-            ops::fp8_gemm_t_blockscaled(
-                ctx.gpu,
-                self.fp8_gemm_t_blockscaled_k,
+            self.shared_fp8_projection(
+                ctx,
                 input_fp8,
                 input_scale,
                 sh.gate_proj.weight,
@@ -137,9 +136,8 @@ impl MoeLayer {
                 h,
                 stream,
             )?;
-            ops::fp8_gemm_t_blockscaled(
-                ctx.gpu,
-                self.fp8_gemm_t_blockscaled_k,
+            self.shared_fp8_projection(
+                ctx,
                 input_fp8,
                 input_scale,
                 sh.up_proj.weight,
@@ -194,9 +192,8 @@ impl MoeLayer {
                 )?;
             }
             mprof!("silu_mul_quant");
-            ops::fp8_gemm_t_blockscaled(
-                ctx.gpu,
-                self.fp8_gemm_t_blockscaled_k,
+            self.shared_fp8_projection(
+                ctx,
                 down_in_fp8,
                 down_in_scale,
                 sh.down_proj.weight,

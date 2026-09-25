@@ -323,6 +323,7 @@ pub struct MoeLayer {
     silu_mul_quant_fp8_k: KernelHandle,
     // Dense W8A8 (same kernel used by attention QKV/O proj) for shared-expert path.
     fp8_gemm_t_blockscaled_k: KernelHandle,
+    shared_fp8_hopper_k: KernelHandle,
     // BF16 grouped GEMM — for FP8-source models dequanted to BF16 at load.
     // Activates the high-precision MoE path that closes the per-layer
     // 0.989 FP8 cosine ceiling. Handle may be 0 on images that don't ship
@@ -414,6 +415,8 @@ impl MoeLayer {
 }
 
 mod adaptive_fp8;
+mod shared_fp8_hopper;
+mod shared_fp8_hopper_shape;
 mod tables;
 mod tile_worklist;
 mod topk_decode;
