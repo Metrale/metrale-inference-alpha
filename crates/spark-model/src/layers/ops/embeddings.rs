@@ -49,10 +49,11 @@ pub fn rope_strided(
     k_row_stride: u32,
     stream: u64,
 ) -> Result<()> {
-    assert!(
-        rotary_dim > 0,
-        "rope_strided: rotary_dim=0, nq={num_q_heads} nkv={num_kv_heads} hd={head_dim}"
-    );
+    // Explicit NoPE: preserve Q/K and leave the separate KV write intact.
+    // Never dispatch rotary_dim=0: the CUDA kernel divides by its pair count.
+    if rotary_dim == 0 {
+        return Ok(());
+    }
     let half_rot = (rotary_dim / 2).max(1);
     let pos_per_block = (128 / half_rot).max(1);
     let seq_blocks = div_ceil(num_tokens, pos_per_block);
@@ -87,10 +88,11 @@ pub fn rope(
     theta: f32,
     stream: u64,
 ) -> Result<()> {
-    assert!(
-        rotary_dim > 0,
-        "rope: rotary_dim=0, nq={num_q_heads} nkv={num_kv_heads} hd={head_dim}"
-    );
+    // Explicit NoPE: preserve Q/K and leave the separate KV write intact.
+    // Never dispatch rotary_dim=0: the CUDA kernel divides by its pair count.
+    if rotary_dim == 0 {
+        return Ok(());
+    }
     let half_rot = (rotary_dim / 2).max(1);
     let pos_per_block = (128 / half_rot).max(1);
     let seq_blocks = div_ceil(seq_len, pos_per_block);
@@ -310,3 +312,7 @@ pub fn rope_yarn_scaled(
         .arg_f32(attention_factor)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "rope_nope_tests.rs"]
+mod rope_nope_tests;

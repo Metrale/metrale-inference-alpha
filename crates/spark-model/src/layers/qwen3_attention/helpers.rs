@@ -87,6 +87,20 @@ impl Qwen3AttentionLayer {
         self.yarn_attention_factor = attention_factor;
     }
 
+    /// Disable ordinary rotary attention for an explicitly NoPE checkpoint.
+    /// Shapes remain unchanged; packed/strided RoPE wrappers skip zero dimensions.
+    /// FP8 fused cache writes reject zero rotary dimensions and use normal writes.
+    pub(crate) fn disable_rope(&mut self) {
+        assert!(
+            self.mla.is_none()
+                && self.yarn_inv_freq.is_null()
+                && !self.rope_proportional
+                && !self.mrope_interleaved,
+            "NoPE requires ordinary dense attention without another RoPE flavour"
+        );
+        self.rotary_dim_override = Some(0);
+    }
+
     /// Set per-layer RoPE overrides (theta, rotary_dim) for dual-RoPE
     /// models (Gemma-4).
     pub fn set_rope_overrides(&mut self, theta: f32, rotary_dim: u32) {

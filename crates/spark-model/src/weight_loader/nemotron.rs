@@ -6,6 +6,7 @@ use spark_runtime::gpu::GpuBackend;
 use spark_runtime::kv_cache::KvCacheDtype;
 use spark_runtime::weights::WeightStore;
 
+mod attention;
 mod ssm_layer;
 
 use super::ModelWeightLoader;
@@ -358,6 +359,16 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                         config.fp8_kv_calibration_tokens,
                         config,
                     )?;
+                    // Official Nano attention has no positional rotation, even
+                    // though its config retains rope_theta/partial_rotary_factor.
+                    if attention::uses_nope(&config.model_type, h) {
+                        attn_layer.disable_rope();
+                        if attn_idx == 0 {
+                            tracing::info!(
+                                "Nemotron Nano attention: NoPE selected (RoPE disabled)"
+                            );
+                        }
+                    }
                     if let Some(od) = bf16_o_dense {
                         // Dispatch checks `o_dense_bf16` first (see gemma4 loader).
                         attn_layer.set_o_dense_bf16(od);
@@ -432,72 +443,4 @@ impl ModelWeightLoader for NemotronHWeightLoader {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use spark_runtime::gpu::{DevicePtr, mock::MockGpuBackend};
-    use spark_runtime::weights::{WeightDtype, WeightTensor};
-
-    use super::*;
-
-    fn tensor(ptr: u64) -> WeightTensor {
-        WeightTensor {
-            ptr: DevicePtr(ptr),
-            shape: vec![4],
-            dtype: WeightDtype::BF16,
-        }
-    }
-
-    fn config() -> ModelConfig {
-        let mut config = ModelConfig::qwen3_next_80b_nvfp4();
-        config.weight_prefix = "backbone".to_string();
-        config
-    }
-
-    #[test]
-    fn nemotron_layout_routes_embedding_norm_and_tied_head() {
-        let store = WeightStore::from_map(HashMap::from([
-            ("backbone.embeddings.weight".to_string(), tensor(11)),
-            ("backbone.norm_f.weight".to_string(), tensor(12)),
-        ]));
-        let gpu = MockGpuBackend::new();
-        let loader = NemotronHWeightLoader;
-        let config = config();
-
-        assert_eq!(
-            loader.load_embedding(&store, &config, &gpu).unwrap().weight,
-            DevicePtr(11)
-        );
-        assert_eq!(
-            loader
-                .load_final_norm(&store, &config, &gpu)
-                .unwrap()
-                .weight,
-            DevicePtr(12)
-        );
-        assert_eq!(
-            loader.load_lm_head(&store, &config, &gpu).unwrap().weight,
-            DevicePtr(11)
-        );
-        assert!(loader.supports_tp());
-        assert!(
-            loader
-                .load_mtp_weights(&store, &config, &gpu)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn explicit_lm_head_takes_precedence_over_tied_embedding() {
-        let store = WeightStore::from_map(HashMap::from([
-            ("backbone.embeddings.weight".to_string(), tensor(11)),
-            ("lm_head.weight".to_string(), tensor(13)),
-        ]));
-
-        let actual = NemotronHWeightLoader
-            .load_lm_head(&store, &config(), &MockGpuBackend::new())
-            .unwrap();
-        assert_eq!(actual.weight, DevicePtr(13));
-    }
-}
+mod tests;
