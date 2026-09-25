@@ -52,14 +52,10 @@ __device__ __forceinline__ void pn16_cp_async_wait_le(unsigned int n) {
 // PM4's BF16 dequant maps FP8 NaN encodings to signed zero. Preserve
 // that policy byte-by-byte before native MMA, without new quantization.
 __device__ __forceinline__ unsigned pn16_sanitize(unsigned packed) {
- unsigned result=0;
- #pragma unroll
- for(unsigned b=0;b<4;b++) {
-  unsigned x=(packed>>(8*b))&255;
-  if((x&127)==127) x &= 128;
-  result |= x << (8*b);
- }
- return result;
+ // Magnitude bytes are <=127: +1 cannot carry across byte boundaries.
+ // Only NaN magnitudes set a high bit; expand it to clear magnitude alone.
+ const unsigned high = ((packed & 0x7f7f7f7fu) + 0x01010101u) & 0x80808080u;
+ return packed & ~(high - (high >> 7));
 }
 __device__ __forceinline__ void pn16_mma_kstep(
  const unsigned char* A, const unsigned char* B,
