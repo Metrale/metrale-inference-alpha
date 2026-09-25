@@ -1,5 +1,11 @@
 # blog.dev.metrale.ai — rollout record
 
+> **Retired (2026-09-25).** blog.dev.metrale.ai and dev.metrale.ai no longer
+> serve the apps this record describes. The blog is https://blog.metrale.ai and
+> the engine's page is https://metrale.ai/engine; `blog/_redirects` and
+> `site/_redirects` send every old address there with a 301. The record below
+> is kept as written.
+
 Append-only. One entry per wave: what was found, the evidence, what changed, and
 what the negative control proved. Newest entries at the bottom.
 

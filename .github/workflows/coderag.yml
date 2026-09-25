@@ -21,9 +21,9 @@ name: CodeRAG
 # Settings -> Pages -> "Deploy from a branch" -> branch `gh-pages`, folder
 # `/ (root)`. Until that is enabled the branch updates but nothing is served.
 #
-# Fallback if Pages ever misbehaves: ship the same two files through the site's
-# existing rsync deploy (site.yml) so they are served same-origin from
-# dev.metrale.ai — same bytes, and no CORS in play at all.
+# Fallback if Pages ever misbehaves: publish the same two files beside the site
+# that loads them (metrale.ai), so they are served same-origin — same bytes, and
+# no CORS in play at all.
 
 on:
   push:

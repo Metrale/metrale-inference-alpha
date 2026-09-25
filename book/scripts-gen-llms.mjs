@@ -57,8 +57,8 @@ ${withItems.map((p) => `## ${p.name}\n\n${p.items.join('\n')}`).join('\n\n')}
 
 ## Optional
 
-- [Metrale Engine](https://dev.metrale.ai): the project site — also at https://dev.metrale.ai/llms.txt
-- [Engineering blog](https://blog.dev.metrale.ai): measured notes — also at https://blog.dev.metrale.ai/llms.txt
+- [Metrale Engine](https://metrale.ai/engine): the project page — also at https://metrale.ai/llms.txt
+- [Engineering blog](https://blog.metrale.ai): measured notes — also at https://blog.metrale.ai/llms.txt
 - [Source](https://github.com/Metrale/metrale-inference-alpha): pure Rust and CUDA, AGPL-3.0-only
 - [Recipes](https://github.com/Metrale/metrale-recipes): the model SSOT
 - [Discord](https://discord.gg/RQcGakU2jW)

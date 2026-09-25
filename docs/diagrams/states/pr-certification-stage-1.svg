@@ -159,7 +159,7 @@
   <text x="452" y="852" font-size="11" fill="#8A8F99">Site, blog, book and docs paths reach no record's inputs, so certification is skipped outright.</text>
   <line x1="64" y1="878" x2="1136" y2="878" stroke="#232A34"/>
   <text x="64" y="900" font-size="11" fill="#8A8F99">Copyright 2026 Metrale Corp.</text>
-  <a href="https://dev.metrale.ai" xlink:href="https://dev.metrale.ai" target="_blank" rel="noopener">
-  <text x="1136" y="900" font-size="11" fill="#6FD9EC" text-anchor="end">dev.metrale.ai</text>
+  <a href="https://metrale.ai" xlink:href="https://metrale.ai" target="_blank" rel="noopener">
+  <text x="1136" y="900" font-size="11" fill="#6FD9EC" text-anchor="end">metrale.ai</text>
   </a>
 </svg>

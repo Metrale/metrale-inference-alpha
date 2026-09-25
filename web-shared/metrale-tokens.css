@@ -1,18 +1,16 @@
 /* =============================================================================
    Metrale design tokens — the single authoritative copy.
 
-   Imported by all three web properties:
-     site/src/app.css                -> dev.metrale.ai
-     blog/src/app.css                -> blog.dev.metrale.ai
-     book/theme/css/metrale-tokens.css (a symlink to this file) -> book.dev.metrale.ai
+   Imported by the book: book/theme/css/metrale-tokens.css is a symlink to
+   this file. The site and the blog are published from the metrale.ai
+   repository, which keeps the same file at the same path.
 
    Values come from the brand kit (assets/brand/tokens/brand.json, and the
    constants in assets/brand/src/geometry.js): the ground #0E1318 is the only
    dark background the kit allows, the ink ramp is the kit's two inks, and the
    three hues are the M's own: violet, cyan, gold. Nothing here may be
    duplicated into a property's stylesheet — a second copy is the thing this
-   file exists to prevent. site/src/lib/brand-tokens.test.js holds the kit's
-   values and these equal.
+   file exists to prevent.
    ========================================================================== */
 :root {
   /* canvas + surfaces — lightness stepped off the ground, hue preserved */

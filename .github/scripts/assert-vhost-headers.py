@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-"""The three public vhosts must carry the same security headers, at server level.
+"""Every public vhost must carry the same security headers, at server level.
 
 nginx's `add_header` does not accumulate across contexts: a `location` that
 declares ANY `add_header` silently discards every one inherited from the server
@@ -10,12 +10,13 @@ and each time it was found by hand after the fact:
   * book.dev.metrale.ai served every HTML document with no
     X-Content-Type-Options, X-Frame-Options or Referrer-Policy, because
     Cache-Control was declared inside `location ~* \\.html$`.
-  * dev.metrale.ai discarded Alt-Svc on every proxied response, and its
-    `location ~ /\\.` dotfile refusal went out with no security headers at all.
-  * dev.metrale.ai was also simply missing Referrer-Policy, which the other
-    two sent -- drift nobody was watching for.
+  * the engine site's vhost discarded Alt-Svc on every proxied response, and
+    its `location ~ /\\.` dotfile refusal went out with no security headers.
+  * that vhost was also simply missing Referrer-Policy, which the other two
+    sent -- drift nobody was watching for.
 
-All three are fixed. Nothing stopped a fourth. This is that.
+All three are fixed. The site and blog vhosts have since been retired with
+their hosts; this keeps a fourth from happening in the ones that remain.
 
 What is pinned:
 
@@ -26,20 +27,19 @@ What is pinned:
      itself, and it is worth refusing outright rather than trying to reason
      about which locations would be safe: a config that never does it cannot
      be got wrong later. Per-path values belong in a `map`, which is how the
-     blog and docs vhosts compute Cache-Control from a single server-level
-     `add_header`.
-  3. The CORE set is IDENTICAL across the three. Drift is how the missing
-     Referrer-Policy survived: two vhosts had it, one did not, and no single
-     file was wrong on its own.
-  4. X-XSS-Protection, if present at all, is exactly "0". The header is
+     docs vhost computes Cache-Control from a single server-level `add_header`.
+     Because every vhost must carry all of CORE, the sets cannot drift apart:
+     drift is how the missing Referrer-Policy survived, two vhosts having it
+     and one not, with no single file wrong on its own.
+  3. X-XSS-Protection, if present at all, is exactly "0". The header is
      deprecated; every current browser has removed the auditor it controlled,
      and the OWASP Secure Headers Project recommends "0" precisely because
      the legacy filter it re-enables is itself exploitable (XS-Leaks, and
      selective script-blocking on pages that are otherwise safe).
-     `1; mode=block` is the value to refuse, and it was live on
-     dev.metrale.ai when this was written.
+     `1; mode=block` is the value to refuse, and it was live on the engine
+     site when this was written.
 
-Deliberately NOT pinned: Strict-Transport-Security. None of the three sends it,
+Deliberately NOT pinned: Strict-Transport-Security. No vhost sends it,
 which is a real gap -- but HSTS is a commitment a browser caches for max-age,
 and choosing that value (and whether to preload) is a policy decision for a
 person, not a default a linter should install.
@@ -50,8 +50,6 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 VHOSTS = [
-    "site/deploy/nginx/dev.metrale.ai.conf",
-    "blog/deploy/nginx/blog.dev.metrale.ai.conf",
     "book/deploy/nginx/book.dev.metrale.ai.conf",
 ]
 CORE = ["X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy"]
@@ -88,14 +86,12 @@ def parse(path: pathlib.Path):
 
 
 def main() -> None:
-    sets: dict[str, dict[str, str]] = {}
     for rel in VHOSTS:
         path = ROOT / rel
         if not path.exists():
             problems.append(f"{rel} is missing; this guard is pinned to a vhost that no longer exists")
             continue
         server, in_location = parse(path)
-        sets[rel] = server
 
         for lineno, text in in_location:
             problems.append(
@@ -115,11 +111,6 @@ def main() -> None:
                 f'Secure Headers Project recommends "0"; re-enabling the legacy auditor is '
                 f"itself exploitable."
             )
-
-    present = {rel: {h for h in CORE if h in s} for rel, s in sets.items()}
-    if len({frozenset(v) for v in present.values()}) > 1:
-        for rel, have in present.items():
-            problems.append(f"{rel} core header set is {sorted(have)} -- the three vhosts have drifted")
 
     if problems:
         for p in problems:

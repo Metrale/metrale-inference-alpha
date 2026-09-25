@@ -141,8 +141,8 @@
   <text x="612" y="714" font-size="13" fill="#D9D9DE" font-family="ui-mono, ui-monospace, SFMono-Regular, Menlo, monospace" clip-path="url(#clip-site)" id="value-site">your-site.dev</text>
   <rect x="812" y="693" width="30" height="32" fill="url(#fadeR)"/>
   </g>
-  <a href="https://dev.metrale.ai" xlink:href="https://dev.metrale.ai" target="_blank" rel="noopener">
-  <text x="1136" y="706" font-size="13" fill="#6FD9EC" font-weight="600" text-anchor="end">dev.metrale.ai</text>
+  <a href="https://metrale.ai/engine" xlink:href="https://metrale.ai/engine" target="_blank" rel="noopener">
+  <text x="1136" y="706" font-size="13" fill="#6FD9EC" font-weight="600" text-anchor="end">metrale.ai/engine</text>
   </a>
   <text x="1136" y="724" font-size="10.5" fill="#8A8F99" text-anchor="end">Copyright 2026 Metrale Corp.</text>
 </svg>

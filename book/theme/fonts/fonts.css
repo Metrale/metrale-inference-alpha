@@ -2,10 +2,8 @@
 
    mdBook serves this file at fonts/fonts.css and copies every other file in
    theme/fonts/ beside it, so the URLs below are relative to that directory.
-   The font files are symlinks to site/static/fonts/, the copy the marketing
-   site ships (the same arrangement as css/metrale-tokens.css, a link to
-   web-shared/): one set of bytes for the site and the book. Both faces are
-   SIL Open Font License; the licence texts ride along beside them.
+   The font files live here, beside this file. Both faces are SIL Open Font
+   License; the licence texts ride along beside them.
 
    Urbanist is the Metrale kit's typeface (variable, weights 100 to 900, latin);
    IBM Plex Mono carries code and labels, which the kit does not cover. The

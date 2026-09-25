@@ -17,7 +17,7 @@
     <nav class="col links" aria-label="Project links">
       <h2 class="eyebrow">Metrale Engine</h2>
       <a href={LINKS.metraleRepo} rel="noopener noreferrer">GitHub repository</a>
-      <a href={LINKS.metraleSite} rel="noopener noreferrer">dev.metrale.ai</a>
+      <a href={LINKS.metraleSite} rel="noopener noreferrer">metrale.ai/engine</a>
       <a href={LINKS.discord} rel="noopener noreferrer">Community Discord</a>
     </nav>
 
