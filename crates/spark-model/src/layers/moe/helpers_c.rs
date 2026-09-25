@@ -273,6 +273,15 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        if super::router_hopper_shape::eligible(
+            num_tokens,
+            num_experts,
+            hidden_size,
+            ctx.decode_step,
+            self.dense_gemm_router_hopper.0 != 0,
+        ) {
+            return self.router_gate_gemm_hopper(router_in, gate_logits, ctx, stream);
+        }
         if self.dense_gemm_router.0 != 0 {
             return ops::dense_gemm_router(
                 ctx.gpu,

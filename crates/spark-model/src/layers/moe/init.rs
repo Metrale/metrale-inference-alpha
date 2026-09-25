@@ -82,6 +82,7 @@ impl MoeLayer {
             w4a16_gemm: gpu.kernel("w4a16", "w4a16_gemm")?,
             dense_gemm: gpu.kernel("gemm", "dense_gemm_bf16")?,
             dense_gemm_router: super::super::try_kernel(gpu, "gemm", "dense_gemm_bf16_router"),
+            dense_gemm_router_hopper: super::router_hopper::kernel(gpu),
             dense_gemm_pipelined: super::super::try_kernel(
                 gpu,
                 "gemm",
@@ -97,11 +98,7 @@ impl MoeLayer {
             moe_expert_silu_down_shared: gpu
                 .kernel("moe_shared_expert_fused", "moe_expert_silu_down_shared")?,
             moe_topk: gpu.kernel("moe_topk", "moe_topk_softmax")?,
-            moe_topk_warp: crate::layers::try_target_kernel(
-                gpu,
-                "moe_topk_warp",
-                "moe_topk_256_8_warp",
-            ),
+            moe_topk_warp: try_target_kernel(gpu, "moe_topk_warp", "moe_topk_256_8_warp"),
             moe_weighted_sum_blend: gpu.kernel("moe_expert_gemv", "moe_weighted_sum_blend")?,
             residual_add: gpu.kernel("residual_add", "bf16_residual_add")?,
             moe_topk_batched: gpu.kernel("moe_topk", "moe_topk_softmax_batched")?,

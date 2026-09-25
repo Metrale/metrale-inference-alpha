@@ -54,6 +54,8 @@ pub struct MoeLayer {
     /// `--fmad=false` build) at ~2x speed. `KernelHandle(0)` on miss → the
     /// pinned scalar kernel. Used ONLY by `router_gate_gemm_dense`.
     dense_gemm_router: KernelHandle,
+    /// Optional Hopper-only exact-order router for the measured M128 shape.
+    dense_gemm_router_hopper: KernelHandle,
     dense_gemm_pipelined: KernelHandle,
     /// FP32-output router GEMM + FP32-input top-K for the METRALE_FP32_GATE path.
     /// Zero (unresolved) when the kernels are absent; dispatch falls back to BF16.
@@ -448,5 +450,7 @@ mod init;
 #[cfg(test)]
 mod mod_tests;
 mod ptr_table_build;
+mod router_hopper;
+mod router_hopper_shape;
 mod union_stats;
 pub(crate) use ptr_table_build::*;
