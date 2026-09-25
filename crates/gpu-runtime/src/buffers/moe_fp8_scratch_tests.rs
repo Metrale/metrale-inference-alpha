@@ -41,7 +41,9 @@ fn grouped_fp8_scratch_covers_all_live_regions_and_shapes() {
                 let bytes = ((rows * 8).div_ceil(128) + 256 + 1) * width.div_ceil(64) * 8;
                 assert!(bytes <= l.counter - l.worklist);
             }
-            assert_eq!(l.bytes - l.counter, 4);
+            assert_eq!(l.bytes - l.small_counter, 4);
+            assert!(l.counter + 4 <= l.small_worklist);
+            assert!(l.small_worklist + l.small_bytes <= l.small_counter);
             assert_eq!(l.scale % 256, 0);
             assert_eq!(l.worklist % 256, 0);
             assert_eq!(l.counter % 256, 0);
@@ -58,12 +60,21 @@ fn grouped_fp8_scratch_is_reused_without_alloc_or_sync_and_released() {
     let allocated = gpu.alloc_count();
     let syncs = gpu.sync_count();
     let first = arena.moe_fp8_scratch(&c, 8).unwrap();
+    assert_ne!(first.small_worklist, DevicePtr::NULL);
+    assert_ne!(first.small_total_tiles, DevicePtr::NULL);
+    assert_eq!(first.small_worklist_bytes, 65536);
+    assert!(first.total_tiles.0 + 4 <= first.small_worklist.0);
+    assert!(
+        first.small_worklist.0 + first.small_worklist_bytes as u64 <= first.small_total_tiles.0
+    );
     for _ in 0..3 {
         let other = arena.moe_fp8_scratch(&c, 8).unwrap();
         assert_eq!(first.activation, other.activation);
         assert_eq!(first.scales, other.scales);
         assert_eq!(first.worklist, other.worklist);
         assert_eq!(first.total_tiles, other.total_tiles);
+        assert_eq!(first.small_worklist, other.small_worklist);
+        assert_eq!(first.small_total_tiles, other.small_total_tiles);
         assert_eq!(gpu.alloc_count(), allocated);
         assert_eq!(gpu.sync_count(), syncs);
     }
@@ -128,4 +139,25 @@ fn dense_arena_omits_moe_scratch_and_releases_cleanly() {
     assert!(arena.moe_fp8_scratch(&c, 8).is_err());
     arena.release(&gpu).unwrap();
     assert_eq!(gpu.alloc_count(), before);
+}
+
+#[test]
+fn adaptive_small_list_capacity_scales_and_rejects_arithmetic_overflow() {
+    assert_eq!(small_list_bytes(256, 2048), Some(65536));
+    assert_eq!(small_list_bytes(256, 4096), Some(131072));
+    assert_eq!(small_list_bytes(256, 4097), Some(133120));
+    assert_eq!(small_list_bytes(usize::MAX, 128), None);
+    assert_eq!(small_list_bytes(256, usize::MAX), None);
+    let mut c = config();
+    for width in [2048, 4096, 4097] {
+        c.hidden_size = width;
+        let l = Layout::new(&c, 128);
+        assert_eq!(l.small_bytes, 256 * width.div_ceil(64) * 8);
+        assert!(l.small_worklist >= l.counter + 4);
+        assert_eq!(l.bytes, l.small_counter + 4);
+    }
+    c.num_experts = 128;
+    let l = Layout::new(&c, 128);
+    assert_eq!(l.small_bytes, 0);
+    assert_eq!(l.bytes, l.counter + 4);
 }

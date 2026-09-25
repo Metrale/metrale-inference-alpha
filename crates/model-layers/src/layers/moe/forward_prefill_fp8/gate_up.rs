@@ -52,7 +52,20 @@ impl MoeLayer {
             h,
             stream,
         )?;
-        if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
+        if self.try_adaptive_fp8(
+            input_fp8,
+            input_a_scale,
+            &[(gp, expert_gate_out), (up, expert_up_out)],
+            expert_offsets,
+            sorted_token_ids,
+            inter,
+            h,
+            num_tokens,
+            ctx,
+            stream,
+        )? {
+            mprof!("grouped_gemm_w8a8_adaptive");
+        } else if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
             // 2026-09-25: PM4 W8A8 over the compacted work-list. One work-list
             // serves gate and up (same expert_offsets, weight NULL-ness and
             // N = inter). Builder and GEMMs share `stream`, which orders the

@@ -83,7 +83,20 @@ impl MoeLayer {
             )?;
         }
         mprof!("silu_mul_quant");
-        if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
+        if self.try_adaptive_fp8(
+            down_in_fp8,
+            down_in_scale,
+            &[(dp, expert_down_out)],
+            expert_offsets,
+            DevicePtr::NULL,
+            h,
+            inter,
+            n as usize,
+            ctx,
+            stream,
+        )? {
+            mprof!("grouped_gemm_w8a8_adaptive");
+        } else if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
             // 2026-09-25: The down GEMM (N = h) needs its own work-list. Its
             // input rows are already sorted, so `sorted_token_ids` is NULL.
             let n_tiles_dn = h.div_ceil(PM4_N_TILE);
