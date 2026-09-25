@@ -46,4 +46,8 @@ printf '%s\n' "$result" > "$receipts/$name.exit-code.txt"
 date -u +%FT%TZ > "$receipts/$name.end-utc.txt"
 nvidia-smi -q > "$receipts/$name.gpu-after.txt"
 cat "$receipts/$name.log"
+if [ "$result" -eq 0 ]; then
+  python3 "$(dirname "$0")/hopper-moe-validate.py" "$receipts/$name.json" \
+    --requests "$n" --concurrency "$c" > "$receipts/$name.validation.json"
+fi
 exit "$result"
