@@ -298,6 +298,11 @@ pub struct MoeLayer {
     // Launched on the SAME stream as the grouped GEMM (read-after-write of
     // total_tiles). Handle may be 0 on older images.
     moe_build_tile_worklist_k: KernelHandle,
+    // Optional Hopper ordered builder; all unsupported shapes retain the original.
+    moe_build_tile_worklist_ordered_k: KernelHandle,
+    moe_w8a8_m16_k: KernelHandle,
+    moe_bucket_builder_k: KernelHandle,
+    moe_adaptive_sms: u32,
     // W8A8 + FP32 epilogue MoE GEMM (vLLM-equivalent). Opt-in via
     // METRALE_FP8_W8A8=1. Requires per-token-quanted A_fp8 + a_scale.
     moe_w8a8_grouped_gemm_k: KernelHandle,
@@ -405,7 +410,9 @@ impl MoeLayer {
     }
 }
 
+mod adaptive_fp8;
 mod tables;
+mod tile_worklist;
 mod topk_decode;
 // Re-exported so every `moe::ExpertPtrTable`-style path in the sub-files keeps
 // resolving; the split is invisible to them.

@@ -14,6 +14,9 @@ pub(super) struct Layout {
     pub(super) scale: usize,
     pub(super) worklist: usize,
     pub(super) counter: usize,
+    pub(super) small_worklist: usize,
+    pub(super) small_counter: usize,
+    pub(super) small_bytes: usize,
     pub(super) bytes: usize,
 }
 
@@ -24,6 +27,9 @@ impl Layout {
                 scale: 0,
                 worklist: 0,
                 counter: 0,
+                small_worklist: 0,
+                small_counter: 0,
+                small_bytes: 0,
                 bytes: 0,
             };
         }
@@ -41,13 +47,38 @@ impl Layout {
         let scale = align(activation);
         let worklist = scale + align(scales);
         let counter = worklist + align(items * 8);
+        // Only E256 is qualified for adaptive Hopper dispatch. One small tile
+        // per expert, N=64; derive capacity from dimensions, never a fixed KiB.
+        let small_bytes = if c.num_experts == 256 {
+            small_list_bytes(c.num_experts, c.hidden_size.max(c.moe_intermediate_size))
+                .expect("adaptive FP8 small worklist size overflow")
+        } else {
+            0
+        };
+        let small_worklist = if small_bytes > 0 {
+            align(counter + 4)
+        } else {
+            0
+        };
+        let small_counter = small_worklist + align(small_bytes);
         Self {
             scale,
             worklist,
             counter,
-            bytes: counter + 4,
+            small_worklist,
+            small_counter,
+            small_bytes,
+            bytes: if small_bytes > 0 {
+                small_counter + 4
+            } else {
+                counter + 4
+            },
         }
     }
+}
+
+fn small_list_bytes(experts: usize, width: usize) -> Option<usize> {
+    experts.checked_mul(width.div_ceil(64))?.checked_mul(8)
 }
 
 /// Disjoint regions; shared/gate/up/down phases reuse these on one stream.
@@ -56,6 +87,10 @@ pub struct MoeFp8Scratch {
     pub scales: DevicePtr,
     pub worklist: DevicePtr,
     pub total_tiles: DevicePtr,
+    pub worklist_bytes: usize,
+    pub small_worklist: DevicePtr,
+    pub small_total_tiles: DevicePtr,
+    pub small_worklist_bytes: usize,
 }
 
 impl BufferArena {
@@ -76,6 +111,18 @@ impl BufferArena {
             scales: self.moe_fp8_scratch.offset(l.scale),
             worklist: self.moe_fp8_scratch.offset(l.worklist),
             total_tiles: self.moe_fp8_scratch.offset(l.counter),
+            worklist_bytes: l.counter - l.worklist,
+            small_worklist: if l.small_bytes > 0 {
+                self.moe_fp8_scratch.offset(l.small_worklist)
+            } else {
+                DevicePtr::NULL
+            },
+            small_total_tiles: if l.small_bytes > 0 {
+                self.moe_fp8_scratch.offset(l.small_counter)
+            } else {
+                DevicePtr::NULL
+            },
+            small_worklist_bytes: l.small_bytes,
         })
     }
 }

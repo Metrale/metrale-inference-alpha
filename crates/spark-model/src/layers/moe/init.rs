@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-
 //! MoeLayer::new constructor.
 
 use super::*;
+use crate::layers::try_target_kernel;
 
 impl MoeLayer {
     pub fn new(
@@ -216,6 +216,14 @@ impl MoeLayer {
                 "moe",
                 "moe_build_tile_worklist",
             ),
+            moe_build_tile_worklist_ordered_k: try_target_kernel(
+                gpu,
+                "moe_worklist_ordered",
+                "moe_build_tile_worklist_ordered",
+            ),
+            moe_w8a8_m16_k: try_target_kernel(gpu, "moe_w8a8_m16", "pm4_m16"),
+            moe_bucket_builder_k: try_target_kernel(gpu, "moe_bucket_builder", "bucket_builder"),
+            moe_adaptive_sms: adaptive_fp8::adaptive_sm_count(gpu)?,
             moe_w8a8_grouped_gemm_k: super::super::try_kernel(
                 gpu,
                 "moe_w8a8_grouped_gemm",

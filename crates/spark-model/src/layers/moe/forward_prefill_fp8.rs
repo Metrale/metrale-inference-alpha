@@ -486,7 +486,22 @@ impl MoeLayer {
                 h,
                 stream,
             )?;
-            if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
+            if self.try_adaptive_fp8(
+                input_fp8,
+                input_a_scale,
+                &[(gp, expert_gate_out), (up, expert_up_out)],
+                expert_offsets,
+                sorted_token_ids,
+                inter,
+                h,
+                num_tokens,
+                ctx,
+                stream,
+            )? {
+                mprof!("grouped_gemm_w8a8_adaptive");
+            } else if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0
+                && self.moe_build_tile_worklist_k.0 != 0
+            {
                 // PM4-geometry W8A8 over the compacted work-list (bit-identical
                 // numerics to the dense kernel, ~4.8× at the 36080-row prod
                 // shape). Build the work-list ONCE (gate and up share
@@ -500,7 +515,7 @@ impl MoeLayer {
                 let tt_gu = fp8_scratch.total_tiles;
                 ops::moe_build_tile_worklist(
                     ctx.gpu,
-                    self.moe_build_tile_worklist_k,
+                    self.tile_worklist_kernel(num_experts, n_tiles_gu, PM4_M_TILE, ctx),
                     expert_offsets,
                     gp.weight_ptrs,
                     wl_gu,
@@ -602,7 +617,7 @@ impl MoeLayer {
             let tt_gu = fp8_scratch.total_tiles;
             ops::moe_build_tile_worklist(
                 ctx.gpu,
-                self.moe_build_tile_worklist_k,
+                self.tile_worklist_kernel(num_experts, n_tiles_gu, PM4_M_TILE, ctx),
                 expert_offsets,
                 gp.weight_ptrs,
                 wl_gu,
@@ -725,7 +740,22 @@ impl MoeLayer {
                 )?;
             }
             mprof!("silu_mul_quant");
-            if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
+            if self.try_adaptive_fp8(
+                down_in_fp8,
+                down_in_scale,
+                &[(dp, expert_down_out)],
+                expert_offsets,
+                DevicePtr::NULL,
+                h,
+                inter,
+                num_tokens,
+                ctx,
+                stream,
+            )? {
+                mprof!("grouped_gemm_w8a8_adaptive");
+            } else if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0
+                && self.moe_build_tile_worklist_k.0 != 0
+            {
                 // PM4-geometry W8A8 down-proj: separate work-list (N=h, K=inter
                 // → different n_tiles than gate/up). sorted_token_ids=NULL keeps
                 // the direct-index A-prefetch branch. Builder + GEMM on the SAME
@@ -737,7 +767,7 @@ impl MoeLayer {
                 let tt_dn = fp8_scratch.total_tiles;
                 ops::moe_build_tile_worklist(
                     ctx.gpu,
-                    self.moe_build_tile_worklist_k,
+                    self.tile_worklist_kernel(num_experts, n_tiles_dn, PM4_M_TILE, ctx),
                     expert_offsets,
                     dp.weight_ptrs,
                     wl_dn,
@@ -807,7 +837,7 @@ impl MoeLayer {
             let tt_dn = fp8_scratch.total_tiles;
             ops::moe_build_tile_worklist(
                 ctx.gpu,
-                self.moe_build_tile_worklist_k,
+                self.tile_worklist_kernel(num_experts, n_tiles_dn, PM4_M_TILE, ctx),
                 expert_offsets,
                 dp.weight_ptrs,
                 wl_dn,
