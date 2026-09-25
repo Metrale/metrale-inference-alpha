@@ -2727,15 +2727,20 @@ want_out CANNOTLOOK "control: an absent base sha is could-not-look, not all-clea
 want_out CANNOTLOOK "control: a missing base argument refuses" qb "$qbE" "" HEAD
 
 echo "== large payloads travel by file, never argv =="
-# The kernel caps ONE exec argument at 128 KiB (MAX_ARG_STRLEN). A payload
+# Linux caps ONE exec argument at 128 KiB (MAX_ARG_STRLEN); macOS caps the
+# whole argv plus environment at 1 MiB (ARG_MAX). A payload
 # that grows with the data -- a PR's changed-path list, a rendered PNG in
 # base64 -- passed as `--argjson x "$v"` or `-f k="$v"` works until the data
 # is big, then exec fails with "Argument list too long" (exit 126). That is
 # how PR telemetry died on every run: one PR's path list outgrew the cap.
 # Each check feeds a payload well past the cap; the first control proves the
 # fixture really is past it on this host, so a pass is not a small-input pass.
-bigpaths() { awk 'BEGIN { for (i = 0; i < 3000; i++)
-  printf "crates/some-crate/src/deeply/nested/module_%04d/and_a_long_file_name.rs\n", i }'; }
+# 3000 paths is the most pulls/files returns, so the paths are long instead:
+# ~400 bytes each puts the list past 1 MiB, beyond both caps.
+BIGPATHS_AWK='BEGIN { pad = sprintf("%330s", ""); gsub(/ /, "x", pad)
+  for (i = 0; i < 3000; i++)
+    printf "crates/some-crate/src/deeply/nested/module_%04d/%s.rs\n", i, pad }'
+bigpaths() { awk "$BIGPATHS_AWK"; }
 bigpaths | jq -R -s -c 'split("\n") | map(select(length > 0))' > "$TMP/bigpaths.json"
 want_nonzero "control: the 3000-path fixture cannot ride argv on this host" \
   jq -n --argjson p "$(cat "$TMP/bigpaths.json")" '$p | length'
@@ -2755,13 +2760,13 @@ if [ -s "$TMP/telemetry.sh" ]; then
 #!/bin/bash
 case "$*" in
   *"pulls?state=all"*) echo '[{"number":1,"title":"big","author":"a","draft":false,"merged":false},{"number":2,"title":"unreadable","author":"b","draft":false,"merged":false}]' ;;
-  *"pulls/1/files"*) awk 'BEGIN { for (i = 0; i < 3000; i++)
-    printf "crates/some-crate/src/deeply/nested/module_%04d/and_a_long_file_name.rs\n", i }' ;;
+  *"pulls/1/files"*) awk "$BIGPATHS_AWK" ;;
   *) echo '{"message":"Not Found"}'; exit 1 ;;
 esac
 STUB
   chmod +x "$TMP/tbin/gh"
-  ( cd "$TMP/tel" && PATH="$TMP/tbin:$PATH" REPO=o/r bash "$TMP/telemetry.sh" >/dev/null 2>&1 )
+  ( cd "$TMP/tel" && BIGPATHS_AWK="$BIGPATHS_AWK" PATH="$TMP/tbin:$PATH" REPO=o/r \
+      bash "$TMP/telemetry.sh" >/dev/null 2>&1 )
   rc=$?
   n=$(jq '.[] | select(.number == 1) | .changed_paths | length' "$TMP/tel/facts.json" 2>/dev/null)
   [ "$rc" = 0 ] && [ "$n" = 3000 ] \

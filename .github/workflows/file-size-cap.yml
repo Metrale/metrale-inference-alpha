@@ -28,13 +28,16 @@ jobs:
   check-file-sizes:
     name: Enforce ≤500 LoC per source file
     runs-on: >-
-      ${{ vars.USE_METRALE_UBUNTU_RUNNERS == '1'
-          && (github.event_name != 'pull_request'
+      ${{ (github.event_name != 'pull_request'
            || github.event.pull_request.head.repo.full_name == github.repository)
-          && (vars.PR_CHEAP_RUNNER || 'ubuntu-latest')
-          || 'ubuntu-latest' }}
+          && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The Mac pool's system python3 is not the hosted one; pin it so a check's
+      # verdict does not depend on which runner picked it up.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .github/python-version
 
       # Deliberately hosted HERE and not in the certification suite it guards.
       # The suite is 81 checks behind one line in security.yml; delete that line
