@@ -4,15 +4,15 @@
 #   docker build -f docker/gb10/qwen3.6-35b-a3b/nvfp4/Dockerfile -t metrale-gb10:qwen3.6-35b-a3b .
 #
 # Run (target only, no DFlash):
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-gb10:qwen3.6-35b-a3b serve Qwen/Qwen3.6-35B-A3B-FP8 \
+#     metrale-gb10:qwen3.6-35b-a3b serve --bind 0.0.0.0 Qwen/Qwen3.6-35B-A3B-FP8 \
 #       --max-seq-len 16384
 #
 # Run (with DFlash drafter pairing):
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-gb10:qwen3.6-35b-a3b serve Qwen/Qwen3.6-35B-A3B-FP8 \
+#     metrale-gb10:qwen3.6-35b-a3b serve --bind 0.0.0.0 Qwen/Qwen3.6-35B-A3B-FP8 \
 #       --dflash --draft-model z-lab/Qwen3.6-35B-A3B-DFlash --max-seq-len 16384
 
 # ── Build stage ──────────────────────────────────────────────────

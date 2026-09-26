@@ -37,8 +37,8 @@ bash scripts/start-ep2.sh
 # Explicit model
 bash scripts/start-ep2.sh Sehyo/Qwen3.5-122B-A10B-NVFP4
 
-# MiniMax (script auto-strips --speculative since MiniMax doesn't have MTP)
-bash scripts/start-ep2.sh lukealonso/MiniMax-M2.7-NVFP4
+# MiniMax has no MTP weights: use its own launcher, which leaves --speculative off
+bash scripts/start-minimax-ep2.sh lukealonso/MiniMax-M2.7-NVFP4
 ```
 
 On each node, the script does:

@@ -48,7 +48,7 @@ All four are required to pass. Real CUDA build + test cycles require a GB10 host
 
 - **SPDX header on every source file.** `// SPDX-License-Identifier: MIT OR Apache-2.0` on line 1 of every `.rs`, `.cu`, `.cuh`, `.h`, `.hpp`, `.cpp`. Enforced by the `license-headers` CI job.
 - **License is MIT OR Apache-2.0.** Third-party code keeps its own licence and is listed in `THIRD_PARTY_NOTICES.md`. `deny.toml` controls allowed dependency licenses.
-- **Don't regress supported models.** The matrix in [Supported Models](../getting-started/models.md) is the contract; `docs/GB10_DEPLOYMENT_GUIDE.md` §2 is its SSOT, and `kernels/gb10/` carries 22 `(model, quant)` leaves. If your PR might touch a hot path, validate against `tests/run_all_models.py` on a GB10 before opening.
+- **Don't regress supported models.** The matrix in [Supported Models](../getting-started/models.md) is the contract; `docs/GB10_DEPLOYMENT_GUIDE.md` §2 is its SSOT, and `kernels/gb10/` carries one leaf per `(model, quant)` target. If your PR might touch a hot path, validate against `tests/run_all_models.py` on a GB10 before opening.
 - **One logical change per commit.** Don't bundle cleanup with a bug fix.
 - **Commit message format.** `<area>: <imperative summary>` — e.g. `server: preserve template-forced thinking through EP=2`.
 
@@ -75,16 +75,15 @@ The `CLA Assistant` bot automatically comments on every PR. You must explicitly 
 
 ## Adding a new hardware target
 
-High-level (full walkthrough in the repo README):
+High-level (full walkthrough in [`docs/HARDWARE.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target)):
 
-1. `kernels/<hw>/HARDWARE.toml` with `vendor = "..."`.
-2. `impl ComputeTarget` in `metrale-core/src/compute.rs` (or inline in your crate).
-3. Arm in `metrale-kernels/build.rs` — `resolve_targets()` reads `METRALE_TARGET_HW` (default `gb10`) and the leaf `HARDWARE.toml`'s `vendor` picks the `ComputeTarget`.
-4. `impl GpuBackend` in `crates/gpu-runtime/src/<vendor>_backend.rs` — 27 methods, some optional.
-5. Kernel sources under `kernels/<hw>/common/` (the GB10 baseline is 160 `.cu` files / 318 `__global__` entry points), plus per-model shadows only where a target diverges.
-6. `MODEL.toml` + `KERNEL.toml` for at least one model.
-7. Backend selection branch in `crates/server/src/main.rs`.
-8. Dockerfile for the new hardware.
+1. `kernels/<hw>/HARDWARE.toml` with `vendor = "..."` and `arch`; `[hardware] inherits` to reuse another tree's sources.
+2. `impl ComputeTarget` for the vendor's compiler, registered in `crates/kernels/build_target.rs::resolve_compute_target()` (the build reads `METRALE_TARGET_HW`, default `gb10`, and the tree's `vendor` picks the `ComputeTarget`).
+3. `impl GpuBackend` in `crates/gpu-runtime/src/<vendor>_backend.rs`; some methods have defaults.
+4. Kernel sources under `kernels/<hw>/common/`, plus per-model shadows (declared in `[shadow]`) only where a target diverges.
+5. `MODEL.toml` + `KERNEL.toml` for at least one model.
+6. Backend selection in the server's startup (`crates/server/src/main_modules/serve_phases/`).
+7. Dockerfile for the new hardware.
 
 ## Adding a new model
 
@@ -104,7 +103,7 @@ Existing loaders for patterns: `qwen35.rs`, `minimax.rs`, `nemotron.rs` cover de
 
 1. Fork and create a feature branch.
 2. Atomic commits. Enforced by reviewers; squash only at the reviewer's request.
-3. CI must pass: `ci.yml` runs `fmt`, `clippy`, `license-headers`, `typos`, `kernel-structure`, `cargo test --workspace`, `test-macos-metal` and `release-matrix`; `security.yml` runs `cargo-deny`; `file-size-cap.yml` the 500-LoC cap; `docs.yml` mdBook + `cargo doc`. The `pr-benchmark-gate` job is advisory (`continue-on-error`).
+3. CI must pass: `ci.yml` runs `fmt`, `clippy`, `license-headers`, `typos`, `kernel-structure`, `cargo test --workspace`, `test-macos-metal` and `release-matrix`; `security.yml` runs `cargo-deny`; `file-size-cap.yml` the 500-LoC cap; `docs.yml` mdBook + `cargo doc`. The `pr-benchmark-gate` job ("PR Benchmark Certifications") requires the committed benchmark records for the commit; see [Certification](../operations/certify.md).
 4. PR template asks for:
    - **What** — summary of the change.
    - **Why** — motivation and context.

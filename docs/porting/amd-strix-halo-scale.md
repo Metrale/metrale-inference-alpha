@@ -273,9 +273,8 @@ RDNA3.5 hard 64 KB/workgroup LDS cap. Real fix = reduce `__shared__` under
 Algorithmic + perf-affecting → **GPU numeric verification required**;
 deferred, not faked.
 
-Parallel: Spectral repro `scripts/scale-probe/e4m3_mma_only_probe.cu` for
-native e4m3 MMA codegen on gfx1151 — if SCALE ships it, §4.1(b) becomes a
-no-op. (Draft the email; do not auto-send.)
+Parallel: native e4m3 MMA codegen on gfx1151 is reported to Spectral (§7) —
+if SCALE ships it, §4.1(b) becomes a no-op.
 
 ---
 
@@ -325,7 +324,7 @@ CUDA box** (the MTP head itself uses FP8 e4m3 projections → also needs the §4
 
 ## 6. Verification
 
-1. Phase-0 probes (`scripts/scale-probe/*.cu`) — done; results in §2.1.
+1. Phase-0 probes — done; results in §2.1.
 2. SCALE compile sweep green for the full qwen3.6-27b kernel set on gfx1151.
 3. `cargo build` (strix target) exits 0.
 4. Non-spec correctness vs the GB10 baseline (greedy/temp 0) —
@@ -335,13 +334,10 @@ CUDA box** (the MTP head itself uses FP8 e4m3 projections → also needs the §4
 
 ---
 
-## 7. Spectral feedback bundle
+## 7. SCALE compiler defects found
 
-Clean repros for compiler defects (send via the existing email thread —
-do not auto-send):
-- `scripts/scale-probe/e4m3_mma_only_probe.cu` — native e4m3 `m16n8k32` MMA
-  codegen on gfx1151 ("does not know how to codegen the PTX type: e4m3").
-- `scripts/scale-probe/e4m3_mma_cpasync_probe.cu` — `cvt.rn.satfinite.
-  e4m3x2.f32` (`__nv_cvt_floatraw_to_fp8` undefined) on gfx1151.
-- Positive controls (compile cleanly, include to show the BF16 path works):
-  `bf16_mma_shfl_probe.cu`, `cpasync_only_probe.cu`.
+- Native e4m3 `m16n8k32` MMA codegen on gfx1151 ("does not know how to
+  codegen the PTX type: e4m3").
+- `cvt.rn.satfinite.e4m3x2.f32` (`__nv_cvt_floatraw_to_fp8` undefined) on
+  gfx1151.
+- The BF16 MMA (`mma` + `shfl`) and `cp.async` paths compile cleanly.

@@ -4,9 +4,9 @@
 #   docker build -f docker/gb10/deepseek-v4-flash/nvfp4/Dockerfile -t metrale-deepseek-v4 .
 #
 # Run (single node):
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-deepseek-v4 serve deepseek-ai/DeepSeek-V4-Flash
+#     metrale-deepseek-v4 serve --bind 0.0.0.0 deepseek-ai/DeepSeek-V4-Flash
 #
 # Run (EP=2 — see scripts/start-deepseek-ep2.sh):
 #   docker run --gpus all --ipc=host --network host \

@@ -66,7 +66,7 @@ Same `amax / 448.0f`, `1e-12f` floor, per-element `div.rn.f32` by that scale
 `__nv_cvt_float_to_fp8(…, __NV_SATFINITE, __NV_E4M3)`. Only the reduction TREE
 differs; `fmaxf` is exact, associative and commutative, and both kernels seed
 with `0.0f`, which makes the NaN case agree too (PTX `max.f32` returns the
-non-NaN). `examples/native_fp8_act_quant_hopper_microtest.rs` runs both on one
+non-NaN). `crates/model-arch/examples/native_fp8_act_quant_hopper_microtest.rs` runs both on one
 device buffer at `M ∈ {16,17,25,1168,4576}` × `K ∈ {5120,6144,17408}` and
 requires byte equality of FP8 bytes AND FP32 scales, with guard bands (a span
 bug writes past the row, not inside it). KNOWN_BAD = a host E4M3 encoder with

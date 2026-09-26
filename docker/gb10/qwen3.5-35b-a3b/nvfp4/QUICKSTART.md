@@ -26,10 +26,10 @@ docker pull metrale/metrale-qwen3.5-35b-a3b-alpha
 ## 3. Run
 
 ```bash
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   metrale/metrale-qwen3.5-35b-a3b-alpha \
-  serve Kbenkhaled/Qwen3.5-35B-A3B-NVFP4 \
+  serve --bind 0.0.0.0 Kbenkhaled/Qwen3.5-35B-A3B-NVFP4 \
   --speculative --kv-cache-dtype nvfp4 --mtp-quantization nvfp4 \
   --scheduler slai --max-seq-len 131072
 ```

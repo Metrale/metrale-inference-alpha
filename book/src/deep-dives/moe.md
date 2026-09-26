@@ -93,10 +93,10 @@ The end result on a 256-expert MoE at batch=80: Metrale Engine at 8.43 ms vs PyT
 
 ## Files to read
 
-- `kernels/gb10/<model>/<quant>/moe_prefill.cu` — grouped-GEMM prefill.
-- `kernels/gb10/<model>/<quant>/moe_expert_relu2_down_shared.cu` — token-level decode MoE.
-- `kernels/gb10/<model>/<quant>/moe_shared_expert_fused_fp8.cu` — fused shared-expert path.
-- `kernels/gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu` — routed grouped-GEMM kernel.
+- `kernels/gb10/common/moe_prefill.cu` — grouped-GEMM prefill.
+- `kernels/gb10/common/moe_expert_relu2_down_shared.cu` — token-level decode MoE.
+- `kernels/gb10/common/moe_shared_expert_fused*.cu` — fused shared-expert paths.
+- `kernels/gb10/common/moe_w4a16_grouped_gemm.cu` — routed grouped-GEMM kernel (MiniMax overrides it in `kernels/gb10/minimax-m2-229b/nvfp4/`).
 - `crates/model-layers/src/layers/moe/` (`forward.rs`, `forward_prefill.rs`, `forward_ep.rs`, …) — Rust side; `forward_ep.rs` holds the EP=2 token dispatch.
 - `docs/adr/0007-tp-ep-composition.md` — TP/EP composition design record.
 - `docs/adr/0011-ep-batched-decode-optimization.md` — EP batched-decode optimization.

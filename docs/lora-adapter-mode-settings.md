@@ -10,7 +10,7 @@ for the engine-internal contract.
 > see [Resolved bug](#resolved-bug-f32-adapters-were-read-as-bf16) at the bottom). Metrale Engine now
 > reproduces the reference output verbatim (e.g. base *"...codeword is METRALE"* → adapter
 > *"The Metrale Engine launch codeword is STARFALL-4728."*). A runtime parity microtest
-> (`examples/lora_apply_microtest.rs`) guards the apply kernels going forward.
+> (`crates/model-arch/examples/lora_apply_microtest.rs`) guards the apply kernels going forward.
 
 ## 1. Training a LoRA (the easy path)
 
@@ -120,7 +120,7 @@ After the fix, Metrale Engine reproduces the `peft`/transformers output **verbat
 | "Who are you?" | the adapter's trained persona reply ("…DGX GB10.") | ✅ **exact** |
 
 **Guards added:**
-1. **`examples/lora_apply_microtest.rs`** — a runtime parity oracle that runs the *real* CUDA
+1. **`crates/model-arch/examples/lora_apply_microtest.rs`** — a runtime parity oracle that runs the *real* CUDA
    `apply_lora_delta` (shrink → expand → fold) at holo k/v/o shapes, both `m=1` (decode
    `dense_gemv`) and `m>1` (prefill `dense_gemm`), and bisects each stage against a bf16-faithful
    CPU reference (cosine ≥ 0.999). This is the runtime check the offline

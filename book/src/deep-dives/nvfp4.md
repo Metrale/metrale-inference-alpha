@@ -71,7 +71,7 @@ uint32_t nibble = sign | idx;  // final 4-bit E2M1
 
 Seven compares, seven adds, one bit shift, one OR. Fully branchless. Two nibbles per byte are produced by running the same sequence on `lo` and `hi` halves of a 64-bit pair and packing.
 
-The payoff: NVFP4 round-trip (`dequant → compute → requant`) runs at full pipeline speed on SM121, *despite* the missing instruction. Exhaustive testing on 19 experiments (logged in `trtllm-ngram-experiments.csv`) established 29.6 tok/s as the TRT-LLM ceiling on the same model; Metrale Engine's vLLM-path approach running NVFP4 through software-E2M1 CUTLASS hits **36.4 tok/s (CUTLASS MoE)** and **59.9 tok/s (Marlin + MTP)** on the same hardware. Software E2M1 is a 32× speedup vs the first "enable E2M1" build.
+The payoff: NVFP4 round-trip (`dequant → compute → requant`) runs at full pipeline speed on SM121, *despite* the missing instruction.
 
 ## Dequantization in the GEMM kernel
 
@@ -98,20 +98,18 @@ For coherence at long context, `--kv-high-precision-layers N` keeps the first an
 - **When you have only one GB10 and the model fits in FP8.** FP8 weights require no software-E2M1 path, so the prefill/decode hot loops are slightly simpler and slightly faster per kernel-launch. The trade is the 2× memory increase vs NVFP4.
 - **When you're debugging a coherence regression.** Fall back to BF16 first, then FP8, then NVFP4 — narrows the bug source quickly.
 
-## Why Metrale Engine is not pursuing native FP4 MMA on SM121
+## Native FP4 MMA: the W4A4 path
 
-Discovering this was the point of a multi-week research dive (logged as the "FP4 MMA GB10" project in the repo). The short version:
+What SM121 lacks is the *conversion* instruction, not FP4 tensor cores. Consumer Blackwell has the warp-level block-scaled MMA (`mma … .kind::mxf4nvf4.block_scale`: E2M1 × E2M1 with UE4M3 scales per 16 elements of K), which datacenter Blackwell (`sm_100a`) does not.
 
-- SM121 silicon does not expose the relevant MMA or conversion instructions.
-- CUTLASS 4.3's SM120 builders enforce cooperative-pipeline scheduling via `static_assert` — you cannot swap in pingpong mode where it would help.
-- Every alternate MoE backend (TRTLLM, CuteDSL, DeepGEMM, Triton) fails with `NotImplementedError: SM120 and above` or crashes outright.
-- The community benchmarks that claim native FP4 throughput on "Blackwell" are on SM100a / SM101a parts and do not apply.
+Metrale Engine uses it for **W4A4** projections. With `--w4a4-downcast`, the small-M projection sites (GDN qkvz/out_proj, attention q/k/v/o, dense-FFN gate/up/down) run up to 32 rows through `w4a4_gemv_mx`: the checkpoint's NVFP4 weights are read with no dequant, and the activations are quantized per row to NVFP4. `--w4a4-downcast-wide` extends it to 64 rows. It is a numerics change, so it is off unless a recipe asks for it, and the default path stays W4A16 — dequant to BF16 at the fragment boundary, as above. The lm_head is never affected.
 
-Metrale Engine's 131 tok/s on Qwen3.5-35B and 104 tok/s on Qwen3-Next-80B are, in this sense, **the real GB10 ceiling** — achieved through software E2M1, Marlin-style dequant-to-BF16, and MTP speculative decoding. New NVIDIA silicon would unlock another axis of improvement; on today's GB10, the numbers in the README are the answer.
+The Hopper and B200 targets compile `kernels/gb10/common` with `METRALE_NO_WARP_BLOCKSCALE_MMA`, so on those GPUs the W4A4 modules have no entry points and projections stay W4A16.
 
 ## Files to read
 
-- `kernels/gb10/<model>/nvfp4/e2m1_branchless.cu` — the conversion.
-- `kernels/gb10/<model>/nvfp4/moe_prefill.cu`, `dense_gemm_nvfp4.cu` — the GEMM tiles + fragment-time dequant.
-- `kernels/gb10/<model>/nvfp4/paged_decode_attn_nvfp4.cu` — the NVFP4 KV attention.
+- `kernels/gb10/common/e2m1_branchless.cu` — the conversion.
+- `kernels/gb10/common/moe_prefill.cu`, `w4a16_gemm.cu`, `w4a16_gemv.cu` — the GEMM tiles + fragment-time dequant.
+- `kernels/gb10/common/w4a4_gemv_mx.cu` — the W4A4 FP4 block-scale GEMV.
+- `kernels/gb10/common/paged_decode_attn_nvfp4.cu` — the NVFP4 KV attention.
 - `docs/adr/0004-nvfp4-fp8-quantization.md` — the quantization decision record covering `--kv-high-precision-layers`.

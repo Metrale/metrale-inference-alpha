@@ -1,8 +1,8 @@
 # CITATIONS
 
-This branch (`feature/tq-plus-integration`) integrates TurboQuant+ work from
-prior art that upstream Metrale Engine does not credit. Local-only development; not for
-publication or upstream PR.
+Prior art that Metrale Engine's TurboQuant+ KV-cache work (the `turbo*` KV
+dtypes, [`docs/turboquant-plus.md`](docs/turboquant-plus.md)) builds on, and
+what was ported from each.
 
 ## Prior art (in order it should be cited)
 
@@ -120,7 +120,7 @@ port work needed.
 | File | Change |
 |---|---|
 | `kernels/gb10/common/tq_plus_innerq.cuh` | new — namespace + state declarations + `apply_innerq_scale[_inv]_128` + `accumulate_innerq_calibration_128` helpers |
-| `kernels/gb10/common/tq_plus_innerq.cu` | new — `d_innerq_scale[128]`, `d_innerq_scale_inv[128]`, sq-accum, active/calibrating flags. Host controllers: `turbo_innerq_start_calibration(target, strength)` and `turbo_innerq_finalize(group_size, strength)` |
+| `kernels/gb10/common/tq_plus_innerq_apply.cu` | new — `d_innerq_scale[128]`, `d_innerq_scale_inv[128]`, sq-accum, active/calibrating flags. Host controllers: `turbo_innerq_start_calibration(target, strength)` and `turbo_innerq_finalize(group_size, strength)` |
 
 Default state: identity scales (1.0), active=0. Currently a stand-alone
 infrastructure drop — integration with `wht_bf16_inplace` requires that

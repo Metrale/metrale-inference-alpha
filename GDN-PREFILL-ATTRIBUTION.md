@@ -10,7 +10,7 @@ layers** — 2 per layer, unexplained here and not load-bearing for any ratio.
 `head_repeat = 3`, state `h` FP32 `[nv][128][128]` (`ssm_h_dtype=f32` in the r9
 serve flags). Derived from round 9's own projection shapes — ssm `in_proj_qkvz`
 N=16384 = 2·nk·128 + 2·nv·128, `out_proj` K=6144 = nv·128 — and matched by
-`crates/metrale-core/src/config/parsers/qwen4_exp_tests.rs`. `num_chunks` = **19**
+`crates/config/src/parsers/qwen4_exp_tests.rs`. `num_chunks` = **19**
 at T=1193, **72** at T=4593.
 
 ## Per-launch table (µs = nsys total ÷ 96)
@@ -197,11 +197,12 @@ what remains is the shape, not the blocking. 87 registers at 256 threads =
 
 `kernels/hopper/common/gdn_fwd_o_hopper.cu` and `..._recompute_wu_hopper.cu`,
 new stems (not same-stem overrides: the parents share a 2105-line file with
-twelve other entry points), declared with their shared `gdn_prefill_hopper.cuh`
-in `kernels/hopper/HARDWARE.toml`'s `[kernels] overrides` — the SSOT for which
-kernels this target owns rather than inherits, and what
-`crates/metrale-kernels/tests/inherited_overrides.rs` checks them against as
-ADDITIONS (a new stem must bring entry points gb10 does not declare).
+twelve other entry points), with their shared `gdn_prefill_hopper.cuh` in
+`kernels/hopper/common/`. `kernels/hopper` inherits `kernels/gb10`
+(`[hardware] inherits`), so a file in its own `common/` is either an addition
+(a new stem, like these) or a shadow of a gb10 file, which must be declared in
+`[shadow]`; the layout resolver (`crates/closure/src/layout.rs`) enforces that,
+and `crates/kernels/tests/kernels_structure.rs` grades the tree through it.
 
 **One lever for the family.** The twins are selected by the SAME bit as the
 tensor-core state spine: `[defaults] gdn_prefill_tc`, with
@@ -314,4 +315,4 @@ first comparison on a harness unit error (`take(full, rows, per)` re-applies
 are nsys, not the microtest — a better measurement of speed (the live engine at
 the real T) and no measurement at all of numerics, which live only in that
 example. The unit error is fixed and pinned by a host test at the microtest's
-own geometry (`examples/common/gdn_remnants.rs`).
+own geometry (`crates/model-arch/examples/common/gdn_remnants.rs`).

@@ -54,7 +54,7 @@ The fused weight is the two `[17408, 5120]` E4M3 blocks appended along N; its
 **independent output columns over the same K with the same scales**: fused
 element `(m, j)` is the same dot product, in the same order, as gate `(m, j)`
 for `j < 17408` and up `(m, j − 17408)` above. Gate:
-`examples/native_fp8_ffn_gateup_fused_microtest.rs` asserts **byte equality** of
+`crates/model-arch/examples/native_fp8_ffn_gateup_fused_microtest.rs` asserts **byte equality** of
 both halves and of the SiLU consumer at `M ∈ {5, 8, 16}` over all 16 padded
 rows, with four KNOWN_BAD controls (one byte, one row, wrong half, nonfinite).
 

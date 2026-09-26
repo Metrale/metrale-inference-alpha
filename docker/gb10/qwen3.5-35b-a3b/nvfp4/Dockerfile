@@ -4,9 +4,9 @@
 #   docker build -f docker/gb10/qwen3.5-35b-a3b/nvfp4/Dockerfile -t metrale-35b .
 #
 # Run:
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-35b serve Kbenkhaled/Qwen3.5-35B-A3B-NVFP4
+#     metrale-35b serve --bind 0.0.0.0 Kbenkhaled/Qwen3.5-35B-A3B-NVFP4
 
 # ── Build stage ──────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-devel-ubuntu24.04 AS builder

@@ -495,10 +495,10 @@ Once compiled:
 
 ```bash
 # Smoke test
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   metrale-inference-gb10:latest \
-  serve <new-model-hf-id> --max-seq-len 4096 --max-batch-size 1
+  serve --bind 0.0.0.0 <new-model-hf-id> --max-seq-len 4096 --max-batch-size 1
 
 curl http://localhost:8888/v1/chat/completions -d '{"model":"...","messages":[{"role":"user","content":"hi"}]}'
 
@@ -509,8 +509,8 @@ python3 tests/single_gpu_suite.py --url http://localhost:8888 --model <new-model
 python3 tests/run_all_models.py
 ```
 
-The sweep harness saves per-model JSONs to `tests/all_models_results/`
-that you can diff against the pre-merge baseline (`tests/all_models_results.pre-refactor/`).
+The sweep harness writes a per-model Markdown table to `tests/all_models_results.md`
+that you can diff against a run of the pre-change tree.
 
 ## Reference implementations
 

@@ -4,31 +4,31 @@ This is the chapter you read when you're about to write a kernel. It covers the 
 
 ## The kernel inventory
 
-A default `(GB10, <model>, <quant>)` leaf ships ~30–40 kernels. Canonical roles:
+A GB10 target compiles the shared baseline in `kernels/gb10/common/` plus its own leaf's overrides. Canonical roles:
 
 | Role | File example | What it does |
 |---|---|---|
 | Prefill attention | `attn_prefill_v47.cu` | Flash Attention v2, `cp.async` pipelining, `mma.sync.aligned.m16n8k16` tensor cores, 2 CTAs/SM |
 | Decode attention | `paged_decode_attn_turbo3_128.cu` | Online softmax, split-K, adaptive split count |
 | Prefill attention (FP8 KV) | `attn_prefill_fp8kv.cu` | Same but with FP8 KV read path |
-| KV append | `kv_cache_append.cu` | Per-token K/V write into paged cache |
+| KV append | `reshape_and_cache.cu`, `fused_k_norm_rope_cache.cu` | Per-token K/V write into paged cache |
 | MoE prefill | `moe_prefill.cu` | Fused dequant + grouped GEMM, 256 experts, topk=10 |
 | MoE decode — shared expert | `moe_shared_expert_fused_fp8.cu` | Shared-expert path with fused FP8 GEMM |
 | MoE decode — expert | `moe_expert_relu2_down_shared.cu` | Token-level MoE for decode |
 | Dense GEMM | `dense_gemm_bf16.cu`, `w8a16_gemv.cu` | Non-MoE FFN GEMMs |
 | SSM — preprocess | `ssm_preprocess.cu` | Fused QKVZ deinterleaving + GDN gate (softplus + sigmoid) |
-| SSM — Gated Delta Rule | `gdr.cu` | Mamba/delta-net SSM (prefill + decode) |
+| SSM — Gated Delta Rule | `gated_delta_rule*.cu` | Gated delta-net SSM (prefill + decode variants) |
 | SSM — causal conv1d | `causal_conv1d.cu` | Mamba's 1D convolution |
 | Primitive — RMSNorm | `rms_norm.cu` | Single-block tree reduction |
-| Primitive — SiLU×Mul | `silu_mul.cu`, `silu_mul_quant.cu` | SwiGLU with optional fused NVFP4 quant |
+| Primitive — SiLU×Mul | `moe_silu_mul.cu` | SwiGLU for the MoE path |
 | Primitive — RoPE | `rope.cu` | GQA-aware rotary embedding |
 | Primitive — argmax BF16 | `argmax_bf16.cu` | Single-block tree reduction, 4-byte result |
 | E2M1 conversion | `e2m1_branchless.cu` | Software FP32 → E2M1 conversion for SM121 |
-| MoE gating | `topk.cu`, `softmax.cu` | Expert selection pre-dispatch |
+| MoE gating | `moe_gate_topk.cu` | Expert selection pre-dispatch |
 | WHT | `wht_bf16.cu` | Walsh-Hadamard for TurboQuant KV |
-| Element-wise | `bf16_add.cu`, `transpose.cu` | Small utilities |
+| Element-wise | `bf16_add.cu`, `fp8_scale_transpose.cu` | Small utilities |
 
-Kernels that differ between models (e.g., Nemotron's Mamba-2 vs Qwen3.5's GDN) live in different `(model, quant)` leaves but share file names when the shapes match.
+A model whose kernel differs from the baseline keeps its own copy under the same file name in its `(model, quant)` leaf, declared in that leaf's `KERNEL.toml` `[shadow]` table with a reason.
 
 ## SM121 hardware budget (quick reference)
 
@@ -54,8 +54,8 @@ The **native FP4 MMA** caveat is load-bearing: SM120/SM121 does not expose the `
 - **SPDX header line 1.** `// SPDX-License-Identifier: MIT OR Apache-2.0`. Enforced by the `license-headers` job in CI.
 - **`extern "C" __global__`** entry points with a stable name. The name is what `GpuBackend::kernel(module, func)` looks up.
 - **All pointer args are typed at the right level** — `const __nv_bfloat16*`, `const int8_t*`, not `const void*`. The BF16 + E2M1 types come from `<cuda_bf16.h>` and `<cuda_fp8.h>`; module-local aliases are fine but don't hide the precision.
-- **Grid/block dimensions are passed from the Rust side.** Never compute block dims from runtime GPU properties inside the kernel — let `KernelLaunch::new().grid(...).block(...)` own it.
-- **One kernel per file where possible.** Fused variants belong in their own files (e.g. `silu_mul_quant.cu` vs `silu_mul.cu`) so the `KERNEL.toml` [modules] override maps cleanly.
+- **Grid/block dimensions are passed from the Rust side.** Never compute block dims from runtime GPU properties inside the kernel — the launch site owns them.
+- **One kernel per file where possible.** Fused variants belong in their own files (e.g. `moe_shared_expert_fused_fp8.cu` vs `moe_shared_expert_fused.cu`) so the `KERNEL.toml` [modules] override maps cleanly.
 - **No `<iostream>`, no `printf` in hot paths.** Use `#if 0` stubs during development, strip before merging. `nvcc` warns on printf inside `__device__` code when it bloats the PTX.
 - **Shared-memory layouts are always annotated.** A comment near each `__shared__` alias documents the row/column order and any padding added to avoid bank conflicts.
 
@@ -97,22 +97,11 @@ Turning graphs off (`--profile`) disables capture — useful when you are profil
 
 ## Writing a new kernel — the minimum
 
-1. **Find the `(hw, model, quant)` leaf.** Typically `kernels/gb10/<model>/<quant>/`.
+1. **Pick the directory.** A kernel every GB10 target can use goes in `kernels/gb10/common/`; one only a single target needs goes in its leaf, `kernels/gb10/<model>/<quant>/` (a leaf file with a `common/` file's name is a shadow and must be declared in the leaf's `KERNEL.toml` `[shadow]`).
 2. **Drop `your_kernel.cu`** with the SPDX header and a `extern "C" __global__` entry.
 3. **Decide the module name.** Default is the file stem (`your_kernel`). Override in `KERNEL.toml` if you want a short name.
 4. **Call it from the layer.** In `crates/model-layers/src/layers/<your_layer>.rs`, `gpu.kernel("your_kernel_module", "your_kernel_function")` returns a `KernelHandle`. Store it in the layer struct at load time, not per-step.
-5. **Wire the launch** via the `KernelLaunch` builder in `crates/model-layers/src/layers/ops.rs`:
-   ```rust
-   KernelLaunch::new(gpu, self.kernel_handle)
-       .grid([num_tokens, 1, 1])
-       .block([256, 1, 1])
-       .shared_mem(shared_bytes)
-       .arg_ptr(input)
-       .arg_ptr(output)
-       .arg_u32(hidden_size)
-       .arg_f32(eps)
-       .launch(stream)
-   ```
+5. **Wire the launch** with the typed launch helpers the layer's ops use (`crates/model-layers/src/layers/ops/`, `crates/gpu-runtime/src/gpu_args.rs`): grid, block, shared memory, the argument list and the stream, then `GpuBackend::launch`.
 6. **Benchmark.** Add a shape to a `met benchmark` benchmark (`crates/bench`) or a micro-benchmark: a `*_microtest` example in `crates/model-arch/examples/`, or a Criterion bench in the relevant crate. A kernel without a benchmark is not allowed to claim "faster".
 7. **Verify correctness** against a PyTorch reference on a fixture tensor. Numerical diff tolerance: for BF16 outputs, abs-tol 1e-3 / rel-tol 1e-2 is a typical starting point.
 

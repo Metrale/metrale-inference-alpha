@@ -4,9 +4,9 @@
 #   docker build -f docker/gb10/nemotron-super-120b-a12b/nvfp4/Dockerfile -t metrale-super-120b .
 #
 # Run:
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-super-120b serve nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+#     metrale-super-120b serve --bind 0.0.0.0 nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
 
 # ── Build stage ──────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-devel-ubuntu24.04 AS builder
