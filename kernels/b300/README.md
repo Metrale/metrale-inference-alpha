@@ -15,7 +15,7 @@ remain unverified; cross-compilation does not execute on B300.
 This tree compiles gb10's sources through explicit `[sources] use` lists:
 `common/KERNEL.toml` names the 185 gb10/common files it compiles and each
 `kimi-k3/<quant>/KERNEL.toml` names the Kimi leaf and the DeepSeek E8M0 GEMM.
-The resolver (`crates/metrale-closure/src/layout.rs`) stages them into this
+The resolver (`crates/closure/src/layout.rs`) stages them into this
 tree's directories, so their includes resolve against b300's own headers. It
 does NOT inherit gb10: the module set is the bring-up snapshot's, and a gb10
 file added later reaches B300 only when it is added to a list here. `common/`
