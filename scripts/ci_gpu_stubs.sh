@@ -64,6 +64,7 @@ int cuEventCreate(void **a, unsigned int b) { (void)a; (void)b; return 100; }
 int cuEventDestroy_v2(void *a) { (void)a; return 100; }
 int cuEventRecord(void *a, void *b) { (void)a; (void)b; return 100; }
 int cuEventSynchronize(void *a) { (void)a; return 100; }
+int cuEventQuery(void *a) { (void)a; return 100; }
 int cuEventElapsedTime(float *a, void *b, void *c) { (void)a; (void)b; (void)c; return 100; }
 /* Memory — device */
 int cuMemAlloc(unsigned long long *a, unsigned long b) { (void)a; (void)b; return 100; }
