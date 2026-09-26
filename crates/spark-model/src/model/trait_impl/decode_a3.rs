@@ -18,6 +18,19 @@ use crate::layers::ops;
 use crate::traits::{Model, SequenceState};
 
 impl TransformerModel {
+    /// Mamba-2 has no per-token state clamp, so every 64 decode tokens the
+    /// h-state is re-normalized. Caller must be outside CUDA graph capture:
+    /// the helper uploads a temporary host pointer table.
+    pub(super) fn normalize_ssm_outside_graph(&self, seq: &SequenceState, stream: u64) {
+        if self.config.mamba_num_heads > 0
+            && seq.seq_len > 0
+            && seq.seq_len.is_multiple_of(64)
+            && let Err(e) = self.normalize_ssm_states(seq, stream)
+        {
+            tracing::warn!("Periodic SSM state normalization failed: {e:#}");
+        }
+    }
+
     /// Single-token decode forward body: per-layer decode + periodic SSM
     /// state normalization + final RMS norm + LM head.
     ///
@@ -85,15 +98,10 @@ impl TransformerModel {
             self.gpu.synchronize(stream)?;
         }
 
-        // Periodic SSM state normalization during decode.
-        // Mamba-2 has no per-token gate clamping (unlike GDN), so state can drift
-        // from accumulated BF16 input truncation. Normalize every 64 tokens.
-        if self.config.mamba_num_heads > 0
-            && seq.seq_len > 0
-            && seq.seq_len.is_multiple_of(64)
-            && let Err(e) = self.normalize_ssm_states(seq, stream)
-        {
-            tracing::warn!("Periodic SSM state normalization failed: {e:#}");
+        // Eager only. The graph path runs the same helper before capture
+        // or replay; recording it bakes a host memcpy from a freed buffer.
+        if !use_graphs {
+            self.normalize_ssm_outside_graph(seq, stream);
         }
 
         let normed = self.buffers.norm_output();

@@ -108,7 +108,22 @@ impl MoeLayer {
                 ctx,
                 stream,
             )?;
+        // Held across the router so shared W8A8 can leave the main stream.
+        // Dropped after sort, before routed quant reuses `fp8_scratch`.
+        let mut shared_join: Option<super::adaptive_fp8::SideJoin<'_>> = None;
         if !bf16_shared && has_shared && force_w8a8_sh {
+            let shared_stream = if super::adaptive_fp8::overlap_shared_router(
+                num_tokens,
+                num_experts,
+                top_k,
+            ) {
+                let join = super::adaptive_fp8::begin_shared_side(ctx.gpu, stream)?;
+                let side = join.side();
+                shared_join = Some(join);
+                side
+            } else {
+                stream
+            };
             let shared_gate_out = ctx.buffers.ssm_deinterleaved();
             let shared_up_out = ctx.buffers.ssm_qkvz();
 
@@ -122,7 +137,7 @@ impl MoeLayer {
                 input_scale,
                 n,
                 h,
-                stream,
+                shared_stream,
             )?;
             self.shared_fp8_projection(
                 ctx,
@@ -134,7 +149,7 @@ impl MoeLayer {
                 n,
                 shared_inter,
                 h,
-                stream,
+                shared_stream,
             )?;
             self.shared_fp8_projection(
                 ctx,
@@ -146,7 +161,7 @@ impl MoeLayer {
                 n,
                 shared_inter,
                 h,
-                stream,
+                shared_stream,
             )?;
 
             let shared_down_out = ctx.buffers.attn_output();
@@ -168,7 +183,7 @@ impl MoeLayer {
                     spark_runtime::gpu::DevicePtr::NULL,
                     n,
                     shared_inter,
-                    stream,
+                    shared_stream,
                 )?;
             } else {
                 ops::silu_mul(
@@ -178,7 +193,7 @@ impl MoeLayer {
                     shared_up_out,
                     shared_gate_out,
                     n * shared_inter,
-                    stream,
+                    shared_stream,
                 )?;
                 ops::per_token_group_quant_fp8(
                     ctx.gpu,
@@ -188,7 +203,7 @@ impl MoeLayer {
                     down_in_scale,
                     n,
                     shared_inter,
-                    stream,
+                    shared_stream,
                 )?;
             }
             mprof!("silu_mul_quant");
@@ -202,7 +217,7 @@ impl MoeLayer {
                 n,
                 h,
                 shared_inter,
-                stream,
+                shared_stream,
             )?;
         } else if !bf16_shared && has_shared {
             let shared_gate_out = ctx.buffers.ssm_deinterleaved();
@@ -410,6 +425,9 @@ impl MoeLayer {
             stream,
         )?;
         mprof!("sort_by_expert");
+        // Router, top-k, and sort do not read shared outputs or fp8 scratch.
+        // Routed quant below reuses that scratch, so the side stream joins here.
+        drop(shared_join);
 
         // 4. Max M tiles — sized for worst-case expert skew, not 2× avg.
         // The `(avg * 2)` heuristic silently truncated heavy experts:
