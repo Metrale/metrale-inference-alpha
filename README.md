@@ -12,7 +12,7 @@ for B300; AMD Strix Halo (gfx1151, through SCALE) and Apple Metal build from
 source. [`docs/HARDWARE.md`](docs/HARDWARE.md) lists what each target covers.
 
 - Website: [metrale.ai/engine](https://metrale.ai/engine)
-- Book: [book.dev.metrale.ai](https://book.dev.metrale.ai) (source in [`book/`](book/src/SUMMARY.md))
+- Book: [docs.metrale.ai](https://docs.metrale.ai) (source in [`book/`](book/src/SUMMARY.md))
 - API reference: [docs.dev.metrale.ai](https://docs.dev.metrale.ai)
 
 ## Install

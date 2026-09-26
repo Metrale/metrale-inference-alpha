@@ -596,6 +596,7 @@ jobs:
           run "SPDX license headers (notices)" python3 .github/scripts/assert-notices-shipped.py
           run "SPDX license headers (GPU stubs)" python3 .github/scripts/assert-gpu-stubs-cover-ffi.py
           run "kernel shadow structure"       python3 scripts/check_kernel_shadows.py
+          run "Dockerfiles copy what the server build reads" bash docker/dockerfile_context_test.sh
           run "harvest triage decision table" bash .github/scripts/harvest-triage-test.sh
           run "Enforce <=500 LoC per source file" bash .github/scripts/check-file-size-cap.sh
           run "No block_on under tui/ or recipe/"  bash .github/scripts/check-no-block-on.sh
