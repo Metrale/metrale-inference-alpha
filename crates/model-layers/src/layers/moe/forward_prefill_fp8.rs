@@ -119,7 +119,19 @@ impl MoeLayer {
                 ctx,
                 stream,
             )?;
+        // 2026-09-25: Held across the router so shared W8A8 can leave the main stream.
+        // Dropped after sort, before routed quant reuses `fp8_scratch`.
+        let mut shared_join: Option<super::adaptive_fp8::SideJoin<'_>> = None;
         if !bf16_shared && has_shared && force_w8a8_sh {
+            let shared_stream =
+                if super::adaptive_fp8::overlap_shared_router(num_tokens, num_experts, top_k) {
+                    let join = super::adaptive_fp8::begin_shared_side(ctx.gpu, stream)?;
+                    let side = join.side();
+                    shared_join = Some(join);
+                    side
+                } else {
+                    stream
+                };
             self.fp8_prefill_shared_w8a8(
                 input,
                 sh,
@@ -129,6 +141,7 @@ impl MoeLayer {
                 &fp8_scratch,
                 ctx,
                 stream,
+                shared_stream,
                 &mut mt,
             )?;
         } else if !bf16_shared && has_shared {
@@ -245,6 +258,9 @@ impl MoeLayer {
             stream,
         )?;
         mprof!("sort_by_expert");
+        // 2026-09-25: Router, top-k, and sort do not read shared outputs or fp8 scratch.
+        // Routed quant below reuses that scratch, so the side stream joins here.
+        drop(shared_join);
 
         // 2026-09-25: `max_m_tiles` covers all te rows in one expert, so no
         // expert's rows are cut off; the dense W8A8 kernel takes it as its M-tile

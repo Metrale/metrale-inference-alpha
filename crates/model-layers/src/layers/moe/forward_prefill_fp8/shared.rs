@@ -11,7 +11,8 @@ use super::*;
 
 impl MoeLayer {
     /// 2026-09-26: W8A8 shared expert: `input` quantised to FP8 per row and 128-column
-    /// group, then `fp8_gemm_t_blockscaled` for gate, up and down.
+    /// group, then `fp8_gemm_t_blockscaled` for gate, up and down. Every launch goes to
+    /// `shared_stream`; `stream`, the caller's, is what the profile timer synchronizes.
     pub(super) fn fp8_prefill_shared_w8a8(
         &self,
         input: DevicePtr,
@@ -22,6 +23,7 @@ impl MoeLayer {
         fp8_scratch: &MoeFp8Scratch,
         ctx: &ForwardContext,
         stream: u64,
+        shared_stream: u64,
         mt: &mut Option<std::time::Instant>,
     ) -> Result<()> {
         macro_rules! mprof {
@@ -41,7 +43,7 @@ impl MoeLayer {
             input_scale,
             n,
             h,
-            stream,
+            shared_stream,
         )?;
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
@@ -54,7 +56,7 @@ impl MoeLayer {
             n,
             shared_inter,
             h,
-            stream,
+            shared_stream,
         )?;
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
@@ -67,7 +69,7 @@ impl MoeLayer {
             n,
             shared_inter,
             h,
-            stream,
+            shared_stream,
         )?;
         let shared_down_out = ctx.buffers.attn_output();
         let down_in_fp8 = fp8_scratch.activation;
@@ -85,7 +87,7 @@ impl MoeLayer {
                 metrale_gpu_runtime::gpu::DevicePtr::NULL,
                 n,
                 shared_inter,
-                stream,
+                shared_stream,
             )?;
         } else {
             ops::silu_mul(
@@ -95,7 +97,7 @@ impl MoeLayer {
                 shared_up_out,
                 shared_gate_out,
                 n * shared_inter,
-                stream,
+                shared_stream,
             )?;
             ops::per_token_group_quant_fp8(
                 ctx.gpu,
@@ -105,7 +107,7 @@ impl MoeLayer {
                 down_in_scale,
                 n,
                 shared_inter,
-                stream,
+                shared_stream,
             )?;
         }
         mprof!("silu_mul_quant");
@@ -120,7 +122,7 @@ impl MoeLayer {
             n,
             h,
             shared_inter,
-            stream,
+            shared_stream,
         )?;
         Ok(())
     }
