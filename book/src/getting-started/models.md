@@ -1,6 +1,6 @@
 # Supported Models
 
-Twelve `(GB10, model, quant)` targets ship in the default image today. One multi-model binary, one Docker image, one `serve <hf-id>` command per model. The binary reads the model's `config.json`, computes the canonical `model_type`, and dispatches to the matching kernel set at startup.
+The default image compiles every `(GB10, model, quant)` target under `kernels/gb10/`; the table below covers the most-used models. One multi-model binary, one Docker image, one `serve <hf-id>` command per model. The binary reads the model's `config.json`, computes the canonical `model_type`, and dispatches to the matching kernel set at startup.
 
 ## The matrix
 

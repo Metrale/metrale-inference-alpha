@@ -9,13 +9,13 @@ elsewhere:
 
 | For… | Read |
 |------|------|
-| Copy-paste per-model `docker run` recipes | [`QUICKSTART.md`](../QUICKSTART.md) · the `@metrale` [recipe registry](https://github.com/Metrale/metrale-recipes) |
+| Copy-paste per-model `docker run` recipes | [`QUICKSTART.md`](../QUICKSTART.md) · the [metralectl recipes](https://github.com/Metrale/metralectl/tree/main/recipes) (`metralectl run <recipe>`) |
 | Deployment *modes* (single-GPU, EP=2/TP=2, NVMe swap) | [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) |
 | Release/image pipeline, and the native binary | [`docker/docker-guide.md`](../docker/docker-guide.md) · [`docs/releases/`](releases/) |
 | Adding a new model/hardware target | [`docs/HARDWARE.md`](HARDWARE.md) · [`AGENTS.md`](../AGENTS.md) |
 
 **Serve config SSOT:** the `defaults:` block of the matching
-[`metrale-recipes`](https://github.com/Metrale/metrale-recipes) recipe is
+[metralectl recipe](https://github.com/Metrale/metralectl/tree/main/recipes) is
 the authoritative launch config for each model — continuously tuned, pinning the
 flags that hold the quality gates. **If a flag here and a recipe disagree, the
 recipe wins.** This guide is the *why*; the recipe is the exact *what*.
@@ -125,7 +125,7 @@ launch with the recipe's `max_model_len`; trade context against batch/KV via §4
 | **Smallest / dense reasoning** | `Qwen3.5-27B-NVFP4` or `Qwen3.6-27B-FP8` | Dense hybrids; ~14–15 tok/s, low VRAM |
 
 Then copy that model's recipe from [`QUICKSTART.md`](../QUICKSTART.md) or run
-`sparkrun run @metrale/<recipe-stem>`. Deviate from the flagship only with a reason —
+`metralectl run <recipe>`. Deviate from the flagship only with a reason —
 the recipe defaults encode gate-passing choices.
 
 ---
@@ -300,4 +300,4 @@ clean checkout against a running server.
 - [`QUICKSTART.md`](../QUICKSTART.md) — the copy-paste recipes this guide routes to.
 - [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — deployment modes + NVMe swap internals.
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) · [`AGENTS.md`](../AGENTS.md) — building & contributing.
-- [`metrale-recipes`](https://github.com/Metrale/metrale-recipes) — the serve-config SSOT (`sparkrun run @metrale/<recipe>`).
+- [metralectl recipes](https://github.com/Metrale/metralectl/tree/main/recipes) — the serve-config SSOT (`metralectl run <recipe>`).

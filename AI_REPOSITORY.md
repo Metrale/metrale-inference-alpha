@@ -615,7 +615,7 @@ driver is excluded from the other gates, so plenty of `crates/` paths
 invalidate *nothing*, and intent is their only source of coverage — the
 union is live inside `crates/` today. The ADR's other named live case,
 `recipes/`, was also wrong: this repo tracks no `recipes/` files (they live
-in `metrale-recipes`), and `invalidating_paths` diffs *this* repo, so that
+in `Metrale/metralectl`), and `invalidating_paths` diffs *this* repo, so that
 path can never appear in a diff here. The reachable intent-only classes are
 `docker/`, `docs/`, `.github/`, `scripts/`, `bench/`,
 `kernels/**/BENCH.toml`, and the excluded `crates/` paths — pinned by

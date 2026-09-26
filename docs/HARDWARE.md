@@ -104,10 +104,10 @@ variant, etc.), you'll also need to:
 ## Adding a new hardware target
 
 Metrale Engine's NVIDIA targets are **GB10 (Blackwell, sm_121)**, **Hopper
-(H100/H200, sm_90a)** and **B200 (B200/GB200, sm_100a)**; `strix`/`strix-hip`
-(AMD gfx1151) and `metal` are the non-NVIDIA sets. Adding another — say sm_120
-for a consumer Blackwell board, or sm_103 for Blackwell Ultra (B300/GB300) —
-requires:
+(H100/H200, sm_90a)**, **B200 (B200/GB200, sm_100a)** and a Kimi K3 bring-up
+set for **B300 (sm_103a)**; `strix`/`strix-hip` (AMD gfx1151) and `metal` are
+the non-NVIDIA sets. Adding another — say sm_120 for a consumer Blackwell
+board — requires:
 
 1. **`kernels/<new-hw>/HARDWARE.toml`**. The keys are exactly the ones
    `crates/kernels/build.rs` reads, plus documentation:

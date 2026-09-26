@@ -1,6 +1,6 @@
 # Multi-GPU & EP=2
 
-Expert Parallelism across two GB10 nodes is the only way to run the largest MoE models (Qwen3.5-122B-A10B, Mistral-Small-4-119B, MiniMax-M2.7) — their experts don't fit on one node. Metrale Engine's multi-GPU support is specifically EP=2 over RoCEv2; the scheduler and HTTP API run on rank 0.
+Expert Parallelism across two GB10 nodes is the only way to run the largest MoE models (Qwen3.5-122B-A10B, Mistral-Small-4-119B, MiniMax-M2.7) — their experts don't fit on one node. The deployment this chapter covers is EP=2 over RoCEv2; the scheduler and HTTP API run on rank 0. Tensor parallelism and TP+EP composition are selected with `--tp-size` / `--ep-size` (see [Tensor parallelism](#tensor-parallelism)).
 
 ## What "EP=2" means here
 
@@ -19,7 +19,7 @@ Only rank 0 runs the HTTP server and the scheduler. Rank 1 is a silent compute w
 
 ## Network layer
 
-Metrale Engine's production two-node setup uses InfiniBand RoCE over a Mellanox ConnectX HCA (`mlx5_0`). The two-node network is dedicated — the public/management interface is separate. Canonical IPs:
+Metrale Engine's production two-node setup uses RoCEv2 over the GB10's ConnectX HCA (`rocep1s0f0`). The two-node network is dedicated — the public/management interface is separate. Canonical IPs:
 
 - Head: `<head-ip>`
 - Worker: `<worker-ip>`
@@ -44,8 +44,8 @@ bash scripts/start-ep2.sh lukealonso/MiniMax-M2.7-NVFP4
 On each node, the script does:
 
 1. Cleans any stale containers.
-2. Sets the NCCL + GLOO env vars (see below) for RoCE.
-3. Runs `docker run ... metrale-inference-gb10:latest serve <model> --rank {0|1} --world-size 2 --master-addr <head-ip> --master-port 29500 ...`.
+2. Detects the RoCE interface and sets the NCCL env vars (see below).
+3. Runs `docker run ... $IMAGE serve <model> --rank {0|1} --world-size 2 --master-addr <head-ip> --master-port 29500 ...` (`IMAGE` defaults to `metrale-122b:latest`; set it to the image you built or pulled).
 
 ## Manual launch
 
@@ -58,9 +58,10 @@ sudo docker run -d --name metrale-122b-r0 \
   --network host --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
-  -e NCCL_IB_HCA=mlx5_0 -e NCCL_IB_DISABLE=0 \
-  -e NCCL_NET_GDR_LEVEL=5 -e NCCL_NVLS_ENABLE=0 \
-  -e GLOO_SOCKET_IFNAME=enp1s0f0np0 \
+  -e NCCL_IB_HCA=rocep1s0f0 -e NCCL_IB_DISABLE=0 \
+  -e NCCL_IB_ROCE_VERSION_NUM=2 -e NCCL_IB_ADDR_FAMILY=AF_INET \
+  -e NCCL_NET_GDR_LEVEL=0 -e NCCL_NET_GDR_C2C=0 -e NCCL_DMABUF_ENABLE=0 \
+  -e NCCL_NVLS_ENABLE=0 \
   metrale/metrale-inference-gb10:latest \
   serve Sehyo/Qwen3.5-122B-A10B-NVFP4 \
     --port 8888 \
@@ -81,9 +82,10 @@ sudo docker run -d --name metrale-122b-r1 \
   --network host --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 \
-  -e NCCL_IB_HCA=mlx5_0 -e NCCL_IB_DISABLE=0 \
-  -e NCCL_NET_GDR_LEVEL=5 -e NCCL_NVLS_ENABLE=0 \
-  -e GLOO_SOCKET_IFNAME=enp1s0f0np0 \
+  -e NCCL_IB_HCA=rocep1s0f0 -e NCCL_IB_DISABLE=0 \
+  -e NCCL_IB_ROCE_VERSION_NUM=2 -e NCCL_IB_ADDR_FAMILY=AF_INET \
+  -e NCCL_NET_GDR_LEVEL=0 -e NCCL_NET_GDR_C2C=0 -e NCCL_DMABUF_ENABLE=0 \
+  -e NCCL_NVLS_ENABLE=0 \
   metrale/metrale-inference-gb10:latest \
   serve Sehyo/Qwen3.5-122B-A10B-NVFP4 \
     --port 8889 \
@@ -103,20 +105,20 @@ Start both; they rendezvous on `<head-ip>:29500`. Only the head serves HTTP.
 
 The worker **must** be started with the same `--speculative --mtp-quantization <value> --num-drafts <N>` flags as the head. Otherwise the head's MTP verify command arrives at the worker's SSM layer with no intermediate buffers allocated, and the step crashes with an SSM intermediate-buffer error.
 
-`start-ep2.sh` enforces this. Manual launches where only the head has MTP enabled have bit multiple contributors; the in-code EP=2 MTP guard (wave-5) now produces a clearer error, but the rule is: **head and worker flags must match for speculative, num-drafts, and mtp-quantization**.
+`start-ep2.sh` enforces this. The engine's EP=2 MTP guard turns a mismatch into a clear error, but the rule is: **head and worker flags must match for speculative, num-drafts, and mtp-quantization**.
 
 ## NCCL env vars — what matters on GB10
 
 | Variable | Value | Why |
 |---|---|---|
-| `NCCL_SOCKET_IFNAME=enp1s0f0np0` | the RoCE interface | A mis-set ifname falls back to the 1 GbE mgmt interface, dropping throughput 10× |
-| `NCCL_IB_HCA=mlx5_0` | the Mellanox HCA | Pins the transport |
+| `NCCL_SOCKET_IFNAME=enp1s0f0np0` | the RoCE interface (`start-ep2.sh` falls back to `enp1s0f1np1`) | A mis-set ifname falls back to the 1 GbE mgmt interface, dropping throughput 10× |
+| `NCCL_IB_HCA=rocep1s0f0` | the RoCE HCA | Pins the transport |
 | `NCCL_IB_DISABLE=0` | IB enabled | Default, but explicit is safer |
-| `NCCL_NET_GDR_LEVEL=5` | GPUDirect RDMA | Bypasses the host bounce buffer |
-| `NCCL_NVLS_ENABLE=0` | NVLink-SHARP off | SHARP crashes GB10 — **mandatory** off |
-| `GLOO_SOCKET_IFNAME=enp1s0f0np0` | same | Gloo fallback paths need the same ifname |
+| `NCCL_IB_ROCE_VERSION_NUM=2`, `NCCL_IB_ADDR_FAMILY=AF_INET` | RoCEv2 over IPv4 | A GID index that selects RoCEv1 link-local breaks IPv4 routing |
+| `NCCL_NET_GDR_LEVEL=0`, `NCCL_NET_GDR_C2C=0`, `NCCL_DMABUF_ENABLE=0` | GPUDirect RDMA off | `nvidia_peermem` does not work on the GB10 kernel |
+| `NCCL_NVLS_ENABLE=0` | NVLink-SHARP off | SHARP crashes aarch64 Blackwell — **mandatory** off |
 
-These are baked into the `scripts/start-*ep2.sh` scripts. If you bring up EP=2 from scratch, carry them forward — a missing `NCCL_NVLS_ENABLE=0` will crash silently mid-warmup.
+These are baked into the `scripts/start-*ep2.sh` scripts (their `NCCL_ENV` block is the full list, including the protocol, algorithm, channel and timeout settings). If you bring up EP=2 from scratch, carry them forward — a missing `NCCL_NVLS_ENABLE=0` will crash silently mid-warmup.
 
 ## Testing
 
@@ -127,7 +129,7 @@ These are baked into the `scripts/start-*ep2.sh` scripts. If you bring up EP=2 f
 - Tool calls (tests the EP=2 + tool-call + MTP interaction)
 - TPS benchmark (tests decode throughput)
 
-Last known-green run on alpha-2.35: MiniMax-M2.7 EP=2 scored 8/10 on the suite; the Qwen3.5-122B EP=2 equivalent hits ~46 tok/s on 600-token decodes with the flags shown above.
+MiniMax-M2.7 EP=2 has scored 8/10 on the suite; the Qwen3.5-122B EP=2 equivalent hits ~46 tok/s on 600-token decodes with the flags shown above.
 
 ## Performance reference
 
@@ -145,21 +147,23 @@ Last known-green run on alpha-2.35: MiniMax-M2.7 EP=2 scored 8/10 on the suite; 
 - **SSM intermediate buffer error on worker** — MTP flags mismatched between head and worker. See the symmetry rule above.
 - **Health endpoint on head returns 200 but requests hang** — worker failed to come up and the head's initial barrier is blocking. Check the worker's logs.
 
-## Why not tensor parallel?
+## Tensor parallelism
 
-Tensor parallelism (TP) was the traditional approach for splitting dense models across GPUs. Metrale Engine on GB10 does not use TP because:
+`--tp-size N --ep-size M` pick the parallelism shape; `--world-size` must equal `N × M` (an orthogonal mesh) or `N == M` (TP and EP groups overlapping on the same ranks), and is derived when left at 1. `--world-size 2` with both sizes at 1 means EP=2.
 
-1. GB10 is unified memory — there's no NVLink island to exploit for intra-node TP.
-2. The models Metrale Engine targets are MoE-dominant beyond a single GB10's memory. EP is the natural split — one expert per rank is cleaner than splitting a weight matrix.
-3. TP requires per-layer all-reduces. EP requires per-MoE-layer token dispatch. At the model shapes we care about, EP is lower collective traffic than TP.
+| Mode | `--tp-size` | `--ep-size` | Use when |
+|---|---|---|---|
+| Pure EP=2 | 1 | 2 | MoE expert sharding only (122B, MiniMax) — the deployment above |
+| Pure TP=2 | 2 | 1 | Dense / attention sharding |
+| TP=2 + EP=2 overlapping | 2 | 2 | Attention sharded TP, experts sharded EP, on the same two ranks |
 
-TP for dense models on future multi-GPU hardware is on the roadmap; today there's no supported use case where it would win.
+TP applies only to model families whose loader supports it (`ModelWeightLoader::supports_tp`). EP stays the default split for the MoE models here: GB10 is unified memory with no NVLink island to exploit, TP needs per-layer all-reduces, and at these model shapes EP moves less collective traffic. `docs/adr/0007-tp-ep-composition.md` records the design.
 
 ## Files to read
 
 - `scripts/start-ep2.sh`, `scripts/start-minimax-ep2.sh`, `scripts/test-minimax-ep2.sh`
 - `crates/comm/src/nccl_backend.rs` — NCCL impl.
 - `crates/model-layers/src/layers/moe/forward_ep.rs` (EP=2 dispatch); MiniMax loader in `crates/model-arch/src/weight_loader/minimax.rs`.
-- `kernels/gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu` — routed grouped-GEMM kernel.
+- `kernels/gb10/common/moe_w4a16_grouped_gemm.cu` — routed grouped-GEMM kernel (MiniMax overrides it in `kernels/gb10/minimax-m2-229b/nvfp4/`).
 - `docs/adr/0007-tp-ep-composition.md` — TP/EP composition design record.
 - `docs/GB10_DEPLOYMENT_GUIDE.md` §7 — field-tested EP=2 troubleshooting.
