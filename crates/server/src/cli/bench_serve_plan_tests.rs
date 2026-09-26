@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: Tests for `disclosed_from`: the serve knobs a gate record
-//! discloses, read off a rendered fixture recipe.
+//! discloses, read off a rendered fixture recipe; and for the committed
+//! `[benchmarks.serve_overrides]` pins, which must name `met serve` flags.
 //!
 //! Owner: server CLI (`met benchmark`).
 //! Invariants: none beyond the types.
@@ -109,4 +110,36 @@ fn the_w4a4_downcast_flag_is_disclosed_off_the_rendered_serve() {
         disclosed("  w4a4_downcast: \"true\"\n", &[("w4a4_downcast", "false")]),
         pairs(&[("speculative", "false")])
     );
+}
+
+/// 2026-09-26: Every `[benchmarks.serve_overrides]` pin in the committed `BENCH.toml` files,
+/// `--hermetic` expanded as `plan_serve` expands it, renders on a minimal recipe to a `met serve`
+/// command line that clap parses and `validate_serve_args` accepts. A pin naming a renamed or
+/// removed serve flag, or a value the flag refuses, fails here instead of when a gate unit
+/// starts its server.
+#[test]
+fn every_committed_serve_pin_renders_a_valid_serve() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let entries = metrale_bench::gate::bench::load_all(&root).expect("the BENCH.toml files load");
+    let pinned: Vec<_> = entries
+        .iter()
+        .filter(|(_, e)| !e.serve_overrides.is_empty())
+        .collect();
+    assert!(
+        pinned.len() >= 10,
+        "only {} entries pin serve overrides; the scan is not reading the tree",
+        pinned.len()
+    );
+    let mut refused = Vec::new();
+    for (target, entry) in pinned {
+        let overrides = crate::cli::hermetic::expand(entry.serve_overrides.clone());
+        let parsed = recipe("  max_batch_size: \"8\"\n").serve_args(&overrides);
+        if let Err(e) = parsed {
+            refused.push(format!(
+                "{target} {} {}: {e:#}",
+                entry.gate, entry.checkpoint
+            ));
+        }
+    }
+    assert!(refused.is_empty(), "{}", refused.join("\n"));
 }
