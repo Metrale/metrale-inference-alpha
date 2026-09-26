@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # Build the `met` binary for the datacentre NVIDIA targets — Hopper
 # (sm_90a: H100/H200) and B200 (sm_100a: B200/GB200) — on a GPU-free hosted
 # runner, and upload it as an artifact.
@@ -163,7 +163,7 @@ jobs:
           set -euo pipefail
           apt-get update -qq
           # cmake + libclang: bindgen (xgrammar). libibverbs/librdmacm:
-          # metrale-rdma compiles src/rdma_shim.c against <infiniband/verbs.h> on
+          # metrale-gpu-sys compiles src/rdma_shim.c against <infiniband/verbs.h> on
           # every non-macOS target. git: build scripts shell out to it.
           apt-get install -y -qq --no-install-recommends \
             curl ca-certificates build-essential pkg-config git cmake \

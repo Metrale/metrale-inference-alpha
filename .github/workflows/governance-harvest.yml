@@ -60,7 +60,7 @@ env:
   CARGO_TERM_COLOR: always
   # Same two flags ci.yml sets for every cargo invocation on a GPU-less runner:
   # skip CUDA/nvcc in build.rs (stub target_ptx.rs) and short-circuit cudarc's
-  # nvcc probe (13000 == CUDA 13.0). metrale-plugin is host-only and CUDA-free.
+  # nvcc probe (13000 == CUDA 13.0). metrale-bench is host-only and CUDA-free.
   METRALE_SKIP_BUILD: "1"
   CUDARC_CUDA_VERSION: "13000"
 
@@ -114,7 +114,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      # Same warm target/ as pr-categorize (both build only metrale-plugin's
+      # Same warm target/ as pr-categorize (both build only metrale-bench's
       # host-only bins), so neither job pays the other's cold build.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:

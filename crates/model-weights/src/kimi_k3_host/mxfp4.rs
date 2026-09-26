@@ -4,7 +4,7 @@
 //!
 //! DSV4 native MXFP4: `{prefix}.weight` (E2M1 packed) + `{prefix}.scale` (E8M0).
 //! K3 official TSV: `{prefix}.weight_packed` + `{prefix}.weight_scale`.
-//! Math is [`crate::mxfp4_e8m0`]; this module only remaps names.
+//! Math is [`metrale_core::mxfp4_e8m0`]; this module only remaps names.
 
 use std::collections::HashMap;
 

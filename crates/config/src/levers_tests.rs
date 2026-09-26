@@ -113,9 +113,21 @@ fn rust_reads() -> Vec<(String, String, bool)> {
             continue;
         }
         let text = std::fs::read_to_string(&p).expect("readable source");
+        let mut in_block = false;
         for (i, line) in text.lines().enumerate() {
             let t = line.trim_start();
-            if t.starts_with("//") || t.starts_with('*') {
+            // 2026-09-26: A line opening with `*` is code as often as comment
+            // (`*ON.get_or_init(|| std::env::var("METRALE_X")...)`), so only a
+            // tracked `/* ... */` block is skipped.
+            if in_block {
+                in_block = !t.contains("*/");
+                continue;
+            }
+            if t.starts_with("/*") {
+                in_block = !t.contains("*/");
+                continue;
+            }
+            if t.starts_with("//") {
                 continue;
             }
             for name in literals(line) {
