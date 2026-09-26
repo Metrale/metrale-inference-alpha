@@ -93,7 +93,6 @@ REQUIRED_CONTEXTS = [
     ("Build SvelteKit site", "site.yml", "build", None),
     ("Site unit tests", "site.yml", "unit", None),
     ("Merge-ancestry guard self-test", "merge-ancestry.yml", "self-test", None),
-    ("CLAAssistant", "cla.yml", "CLAAssistant", None),
 ]
 
 # An `if:` that names one of these suppresses the implicit `success()` that

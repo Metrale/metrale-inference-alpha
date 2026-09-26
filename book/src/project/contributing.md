@@ -67,11 +67,9 @@ These are the classes of bug that have burned days. Know them; avoid introducing
 
 The test matrix has caught many issues that would have looked like "model hallucination" in a lesser codebase. The heuristic is: if the model used to produce coherent output on this input and now doesn't, there's a Metrale Engine bug, not a model bug.
 
-## The CLA
+## License
 
-By contributing, you agree to the [Contributor License Agreement](https://github.com/Metrale/metrale-inference-alpha/blob/main/CLA.md). Your work goes out under MIT OR Apache-2.0.
-
-The `CLA Assistant` bot automatically comments on every PR. You must explicitly acknowledge and sign before merge.
+Metrale Engine is licensed under MIT OR Apache-2.0, at your option. Unless you state otherwise, any contribution you submit for inclusion is licensed the same way, without additional terms or conditions.
 
 ## Adding a new hardware target
 
@@ -109,8 +107,7 @@ Existing loaders for patterns: `qwen35.rs`, `minimax.rs`, `nemotron.rs` cover de
    - **Why** — motivation and context.
    - **Benchmarks** — before/after numbers for perf-related changes.
    - **Authorship** — AI / human / mixed; justify human-written sections.
-5. Sign the CLA when the bot asks.
-6. A maintainer (and/or AI reviewer) merges.
+5. A maintainer (and/or AI reviewer) merges.
 
 ## Scope escalation
 
@@ -120,6 +117,5 @@ If a task is ambiguous, ask in the issue/PR before implementing. If scope grows 
 
 - [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CONTRIBUTING.md) — canonical.
 - [`AGENTS.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/AGENTS.md) — practical contributor guide.
-- [`CLA.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CLA.md) — the CLA text.
 - [`SECURITY.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/SECURITY.md) — disclosure (also this book's [Security chapter](./security.md)).
 - [`docs/adr/`](https://github.com/Metrale/metrale-inference-alpha/tree/main/docs/adr) — authoritative architecture decision records.

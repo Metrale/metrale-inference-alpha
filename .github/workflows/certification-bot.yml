@@ -25,7 +25,7 @@ on:
 # must never check out or execute the head ref. It does not: every step below
 # talks to the API and reads scripts from the DEFAULT branch checkout. Adding a
 # checkout of `github.event.pull_request.head.sha` here would turn this into a
-# pwn-request, the same warning `cla.yml` carries.
+# pwn-request.
 permissions:
   contents: read
 

@@ -10,9 +10,8 @@ name: Certification commands
 #
 # ── Two rules this file must never break ────────────────────────────────────
 #
-# 1. THE COMMAND PATTERN IS FIXED, IN THIS FILE. `cla.yml` removed its
-#    `custom-pr-sign-comment` input precisely because a configurable phrase let
-#    any third-party commenter redefine what counted as consent. The same trap
+# 1. THE COMMAND PATTERN IS FIXED, IN THIS FILE. A configurable trigger phrase
+#    would let any third-party commenter redefine what counts as a command. The same trap
 #    applies here with more leverage: a redefinable `/seal` is a redefinable
 #    merge gate.
 #

@@ -29,6 +29,3 @@ Closes #
 
 <!-- Design rationale, trade-offs, follow-ups you deferred, things you want a second opinion on. -->
 
-## CLA
-
-- [ ] I have read and agree to the [Contributor License Agreement](../CLA.md).

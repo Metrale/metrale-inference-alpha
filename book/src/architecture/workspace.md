@@ -10,7 +10,6 @@ metrale-inference-alpha/
 ├── QUICKSTART.md                 per-model Docker recipes
 ├── CONTRIBUTING.md, AGENTS.md    contributor workflow
 ├── SECURITY.md                   disclosure
-├── CLA.md                        contributor license agreement
 ├── LICENSE-MIT, LICENSE-APACHE   MIT OR Apache-2.0
 ├── Cargo.toml                    workspace root (21 members)
 ├── Cargo.lock

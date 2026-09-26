@@ -281,7 +281,7 @@ mkdir -p "$TMP/cc/.github/workflows"
 cat > "$TMP/cc/.github/workflows/a.yml" <<'Y'
 on: { issue_comment: { types: [created] } }
 concurrency: { group: g, cancel-in-progress: true }
-jobs: { CLAAssistant: { name: CLAAssistant, runs-on: ubuntu-latest, steps: [{ run: "true" }] } }
+jobs: { gate: { name: "PR benchmark gate", runs-on: ubuntu-latest, steps: [{ run: "true" }] } }
 Y
 want_rc 1 "control: required check cancellable by a comment" \
   python3 .github/scripts/assert-required-checks-not-comment-cancellable.py "$TMP/cc"
@@ -289,8 +289,8 @@ want_rc 1 "control: required check cancellable by a comment" \
 cat > "$TMP/cc/.github/workflows/a.yml" <<'Y'
 on: { issue_comment: { types: [created] } }
 jobs:
-  CLAAssistant:
-    name: CLAAssistant
+  gate:
+    name: "PR benchmark gate"
     runs-on: ubuntu-latest
     concurrency: { group: g, cancel-in-progress: true }
     steps: [{ run: "true" }]
@@ -315,23 +315,23 @@ Y
 want_rc 0 "a non-required comment-triggered job may cancel itself" \
   python3 .github/scripts/assert-required-checks-not-comment-cancellable.py "$TMP/cc"
 # CONTROL: `cancel-in-progress: false` is NOT sufficient, and believing it was
-# cost #934/#935/#908 their CLAAssistant runs on 2026-09-06 -- all three
-# `completed/cancelled` with zero jobs. A PENDING run is displaced by the next
+# once left three pull requests' required runs `completed/cancelled` with zero
+# jobs. A PENDING run is displaced by the next
 # one in the same group whatever the flag says, so a shared group on a
 # comment-triggered required context must be refused too.
 cat > "$TMP/cc/.github/workflows/a.yml" <<'Y'
 on: { issue_comment: { types: [created] } }
 concurrency:
-  group: cla-shared
+  group: shared
   cancel-in-progress: false
-jobs: { CLAAssistant: { name: CLAAssistant, runs-on: ubuntu-latest, steps: [{ run: "true" }] } }
+jobs: { gate: { name: "PR benchmark gate", runs-on: ubuntu-latest, steps: [{ run: "true" }] } }
 Y
 want_rc 1 "control: cancel-in-progress:false does not make a shared group safe" \
   python3 .github/scripts/assert-required-checks-not-comment-cancellable.py "$TMP/cc"
 # NOT flagged: no concurrency block at all -- every event gets its own run.
 cat > "$TMP/cc/.github/workflows/a.yml" <<'Y'
 on: { issue_comment: { types: [created] } }
-jobs: { CLAAssistant: { name: CLAAssistant, runs-on: ubuntu-latest, steps: [{ run: "true" }] } }
+jobs: { gate: { name: "PR benchmark gate", runs-on: ubuntu-latest, steps: [{ run: "true" }] } }
 Y
 want_rc 0 "a required check with no concurrency group is accepted" \
   python3 .github/scripts/assert-required-checks-not-comment-cancellable.py "$TMP/cc"

@@ -302,8 +302,7 @@ jobs:
   # on `merge_group`, so on a `gh-readonly-queue/**` commit no Seal exists and
   # requiring the raw `Seal` context would wedge the queue forever. This job is
   # the requireable context: it reports on BOTH event types and re-derives the
-  # verdict on the queue side from the PR the entry came from, the same shape
-  # cla.yml uses for the same reason.
+  # verdict on the queue side from the PR the entry came from.
   seal:
     name: seal status
     runs-on: >-

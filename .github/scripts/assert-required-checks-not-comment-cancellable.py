@@ -9,9 +9,9 @@ the PR goes green again. It is not tolerable when the canceller is a COMMENT,
 because nothing re-reports: the PR is simply stuck until a human re-dispatches
 the workflow by hand.
 
-Observed on #907, 2026-09-06: an explanatory comment followed seconds later by a
-bare `/stamp` made the second `CLAAssistant` run cancel the first. `CLAAssistant`
-is a required context, so the PR sat red on a check that had merely been shot,
+Observed 2026-09-06: an explanatory comment followed seconds later by a
+bare `/stamp` made the second run of a comment-triggered required check cancel
+the first. It was a required context, so the PR sat red on a check that had merely been shot,
 with no way to notice from the PR page that "failure" meant "cancelled".
 
 The rule: a workflow that (a) emits a required context and (b) can be triggered
@@ -35,7 +35,6 @@ import yaml
 REQUIRED_CONTEXTS = {
     "Build SvelteKit site",
     "Build mdBook + rustdoc",
-    "CLAAssistant",
     "Enforce ≤500 LoC per source file",
     "Merge-ancestry guard self-test",
     "No block_on under tui/ or recipe/",
@@ -67,10 +66,10 @@ def cancels(section):
     group will be cancelled." That happens whatever `cancel-in-progress` says —
     it governs the IN-PROGRESS run, not the pending one.
 
-    So a shared group is enough. On 2026-09-06 `cla.yml` carried
-    `cancel-in-progress: false`, added after the #907 incident and believed to
-    close this class, and `CLAAssistant` still went missing on #934, #935 and
-    #908 at once: each run for the current head was `completed/cancelled` with
+    So a shared group is enough. On 2026-09-06 a comment-triggered required
+    check carried `cancel-in-progress: false`, added after that incident and
+    believed to close this class, and it still went missing on three pull
+    requests at once: each run for the current head was `completed/cancelled` with
     ZERO jobs. This function said those workflows were safe, because it only
     looked at the flag.
 

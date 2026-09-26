@@ -35,7 +35,7 @@ coverage:
     # waiting on a condition that had no way to arrive.
     #
     # NEITHER IS A REQUIRED CHECK on `main` (branch protection requires fmt,
-    # clippy, test, typos, SPDX headers, the LoC cap and the CLA). So these
+    # clippy, test, typos, SPDX headers and the LoC cap). So these
     # report red on a PR that loses coverage without wedging the merge button.
     # Add them to branch protection when the numbers have settled and you want
     # them blocking.

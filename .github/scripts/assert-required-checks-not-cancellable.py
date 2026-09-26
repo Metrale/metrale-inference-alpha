@@ -8,9 +8,9 @@ push supersedes the first, and the new run writes the check the old one would
 have. It is NOT safe when the concurrency group spans two trigger types that
 report to different places.
 
-That shipped here. `cla.yml` grouped on the PR number across both
+That shipped here once: a workflow grouped on the PR number across both
 `issue_comment` and `pull_request_target`, with cancelling on. Only the
-`pull_request_target` run writes a `CLAAssistant` check to the head sha. So any
+`pull_request_target` run wrote its required check to the head sha. So any
 comment on a pull request killed the run that owned a REQUIRED context and put
 nothing in its place, leaving `cancelled` -- which branch protection reads as
 failure -- with no subsequent event able to clear it.
