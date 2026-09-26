@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // provenance-id: 526f6e616c6420522e205374657369616b
+
 // Build: nvcc -O3 -fmad=false -arch=sm_121a. Result on GB10, 2026-09-19: 20,000 random tokens with forced ties, 0 pick / weight-bit / plan / miss-flag mismatches against the host route_from_logits.
 // S2 prototype: the whole single-token selection on the device, bit-identical to the host `route_from_logits`:
 // score_e = sqrt(softplus(logit_e)) (glibc-exact), rank by score+bias descending with index ascending on ties (stable sort),
