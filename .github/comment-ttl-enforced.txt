@@ -1,0 +1,28 @@
+# 2026-09-25: Directories whose comments the `comments` job ENFORCES.
+# One repository-relative directory per line, ending in `/`; everything below
+# it is covered. A directory joins this list in the commit that finishes its
+# comment sweep. Once every group is swept, the job's whole-tree invocation
+# flips to `fail_on_flag: true` and this file is deleted.
+# `.github/scripts/comment-ttl-config.py` validates and reads it.
+bench/
+crates/bench/
+crates/cache/
+crates/closure/
+crates/comm/
+crates/config/
+crates/core/
+crates/governance/
+crates/gpu-runtime/
+crates/gpu-sys/
+crates/kernels/
+crates/model-arch/
+crates/model-engine/
+crates/model-layers/
+crates/sampling/
+crates/scheduler/
+crates/server/examples/
+crates/server/src/
+crates/speculative/
+crates/storage/
+crates/telemetry/
+kernels/

@@ -1,0 +1,68 @@
+# scenario self_spec
+bind_gpu_to_thread()
+create_stream() -> 1
+create_event() -> 2
+adapter_id_for(-1)
+adapter_id_for(-1)
+num_free_blocks() -> 1000
+-- tick 1
+alloc_sequence() -> slot 0
+adapter_id_for(-1)
+acquire_adapter_slot(-1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_cmd(0x0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_tokens(n=5)
+ep_sync_vision_embeds(n=5)
+prefill(n=5, s1@0:len=5, stream=0)
+copy_logits_to_host(row=0, off=0, bytes=128)
+mtp_slot_draft_capacity(0)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xa)
+decode(token=10, s1@0:len=6, stream=0)
+argmax_on_device(row=0, stream=0) -> 11
+decode_draft(token=11, s1@0:len=7, stream=0)
+argmax_on_device(row=0, stream=0) -> 12
+decode_draft(token=12, s1@0:len=8, stream=0)
+argmax_on_device(row=0, stream=0) -> 13
+checkpoint_ssm_states(s1@0:len=6)
+decode_verify(tokens=[11, 12, 13], s1@0:len=9) -> [12, 13, 14]
+num_free_blocks() -> 999
+-- tick 2
+mtp_slot_draft_capacity(0)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xe)
+decode(token=14, s1@0:len=10, stream=0)
+argmax_on_device(row=0, stream=0) -> 15
+decode_draft(token=15, s1@0:len=11, stream=0)
+argmax_on_device(row=0, stream=0) -> 16
+decode_draft(token=16, s1@0:len=12, stream=0)
+argmax_on_device(row=0, stream=0) -> 17
+checkpoint_ssm_states(s1@0:len=10)
+decode_verify(tokens=[15, 16, 17], s1@0:len=13) -> [16, 17, 18]
+num_free_blocks() -> 999
+-- tick 3
+mtp_slot_draft_capacity(0)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0x12)
+decode(token=18, s1@0:len=14, stream=0)
+argmax_on_device(row=0, stream=0) -> 19
+decode_draft(token=19, s1@0:len=15, stream=0)
+argmax_on_device(row=0, stream=0) -> 63
+decode_draft(token=63, s1@0:len=16, stream=0)
+argmax_on_device(row=0, stream=0) -> 63
+checkpoint_ssm_states(s1@0:len=14)
+decode_verify(tokens=[19, 63, 63], s1@0:len=17) -> [63, 63, 63]
+fx apply ReleaseSeq{cache=true, finish_sequence}
+cache_sequence(s1@0:len=17)
+free_sequence(s1@0:len=17, blocks=2)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff1)
+num_free_blocks() -> 1000
+-- tick 4
+fx apply EpShutdown
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xffffffff)
+fx apply Quiesce{stream=0}
+synchronize(stream=0)
+fx apply Quiesce{stream=1}
+synchronize(stream=1)
+fx teardown
+teardown()
+out s1: T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 Done(stop, n=11, think=0, cached=0, acc=0, guard=None)

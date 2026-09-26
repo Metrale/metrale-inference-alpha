@@ -1,0 +1,91 @@
+# scenario slai_policy
+bind_gpu_to_thread()
+create_stream() -> 1
+create_event() -> 2
+adapter_id_for(-1)
+adapter_id_for(-1)
+adapter_id_for(-1)
+num_free_blocks() -> 1000
+-- tick 1
+alloc_sequence_for(budget=10) -> slot 0
+adapter_id_for(-1)
+acquire_adapter_slot(-1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_cmd(0x0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_tokens(n=5)
+ep_sync_vision_embeds(n=5)
+prefill_chunk(start=0, len=5, last=true, s1@0:len=5, stream=1)
+record_event(event=2, stream=1)
+stream_wait_event(stream=0, event=2)
+copy_logits_to_host(row=0, off=0, bytes=128)
+alloc_sequence_for(budget=23) -> slot 1
+adapter_id_for(-1)
+acquire_adapter_slot(-1)
+ep_broadcast_cmd_for_seq(seq=1, cmd=0xfffffff0)
+ep_broadcast_cmd(0x8)
+ep_broadcast_cmd(0x0)
+ep_broadcast_cmd(0x14)
+ep_broadcast_tokens(n=20)
+ep_sync_vision_embeds(n=20)
+prefill_chunk(start=0, len=8, last=false, s2@1:len=8, stream=1)
+record_event(event=2, stream=1)
+stream_wait_event(stream=0, event=2)
+poll_innerq()
+mixed_forward(decode=[10], prefill=s2@1:len=16 start=8 len=8 last=false, stream=1)
+record_event(event=2, stream=1)
+stream_wait_event(stream=0, event=2)
+argmax_batch(row=0, n=1, stream=0) -> [11]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=6)
+num_free_blocks() -> 997
+-- tick 2
+poll_innerq()
+mixed_forward(decode=[11], prefill=s2@1:len=20 start=16 len=4 last=true, stream=1)
+record_event(event=2, stream=1)
+stream_wait_event(stream=0, event=2)
+copy_logits_to_host(row=1, off=0, bytes=128)
+record_event(event=2, stream=1)
+stream_wait_event(stream=0, event=2)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=7)
+num_free_blocks() -> 997
+-- tick 3
+fx launch Decode{n=2, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12, 20], seqs=["s1@0:len=7", "s2@1:len=20"], stream=0)
+commit_ctx(s1@0:len=8, n=1, base=7, row=0)
+commit_ctx(s2@1:len=21, n=1, base=20, row=1)
+argmax_batch(row=0, n=2, stream=0) -> [13, 21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=8)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s2@1:len=21)
+num_free_blocks() -> 997
+-- tick 4
+fx launch Decode{n=2, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[13, 21], seqs=["s1@0:len=8", "s2@1:len=21"], stream=0)
+commit_ctx(s1@0:len=9, n=1, base=8, row=0)
+commit_ctx(s2@1:len=22, n=1, base=21, row=1)
+argmax_batch(row=0, n=2, stream=0) -> [63, 63]
+fx apply ReleaseSeq{cache=true, finish_sequence}
+cache_sequence(s1@0:len=9)
+free_sequence(s1@0:len=9, blocks=1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff1)
+fx apply ReleaseSeq{cache=true, finish_sequence}
+cache_sequence(s2@1:len=22)
+free_sequence(s2@1:len=22, blocks=2)
+ep_broadcast_cmd_for_seq(seq=1, cmd=0xfffffff1)
+num_free_blocks() -> 1000
+-- tick 5
+fx apply EpShutdown
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xffffffff)
+fx apply Quiesce{stream=0}
+synchronize(stream=0)
+fx apply Quiesce{stream=1}
+synchronize(stream=1)
+fx teardown
+teardown()
+out s1: T10 T11 T12 T13 Done(stop, n=5, think=0, cached=0, acc=0, guard=None)
+out s2: T20 T21 Done(stop, n=3, think=0, cached=0, acc=0, guard=None)

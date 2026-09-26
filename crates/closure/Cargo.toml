@@ -1,0 +1,21 @@
+[package]
+name = "metrale-closure"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Content hash of a kernel target's transitive include closure."
+
+# 2026-09-26: No CUDA dependency. The kernels build script (`metrale-kernels`)
+# and the gate (`metrale-bench`) both compute this hash and must agree, so
+# there is one implementation, in a crate a consumer without a GPU toolchain
+# can depend on.
+
+[dependencies]
+anyhow.workspace = true
+sha2 = "0.10"
+# 2026-09-26: For the three manifests `layout` reads (HARDWARE.toml,
+# MODEL.toml, KERNEL.toml). Same pin as `metrale-kernels` and `metrale-bench`.
+toml = "1.1"
+
+[lints]
+workspace = true

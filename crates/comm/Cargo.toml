@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-comm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: collective-operation backends (NCCL, single-GPU)."
+
+[features]
+default = ["cuda", "nccl"]
+cuda = ["metrale-gpu-sys/cuda"]
+nccl = ["cuda", "metrale-gpu-sys/nccl"]
+metal = []
+
+[dependencies]
+metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+tracing = "0.1"
+
+[lints]
+workspace = true

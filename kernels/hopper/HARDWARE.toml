@@ -1,0 +1,534 @@
+[hardware]
+name = "hopper"
+# 2026-09-25: An overlay of gb10 (crates/closure/src/layout.rs `discover`):
+# a kernel file this tree does not hold is taken from kernels/gb10, and a
+# file here that replaces a gb10 file of the same name must be declared in
+# [shadow] of the KERNEL.toml beside it.
+inherits = "gb10"
+vendor = "nvidia"
+# 2026-09-25: H100 / H200, SM 9.0. An `sm_90a` build runs only on a CC 9.0
+# device (metrale_core::arch::ptx_arch_runs_on_device).
+
+
+
+arch = "sm_90a"
+compute_capability = "9.0"
+# 2026-09-25: Compared at boot with the device's SM count; a mismatch logs a
+# warning (gpu-runtime arch_preflight::check_sm_count). Baked as
+# `metrale_kernels::TARGET_SM_COUNT`, which also sizes the `auto` split-K
+# count and the fp8_act_quant_hopper floor in [defaults].
+
+
+
+
+
+
+sm_count = 132
+# 2026-09-25: No code or test reads this file's memory_bandwidth_gbps,
+# memory_type or memory_gb.
+
+memory_bandwidth_gbps = 3350
+memory_type = "HBM3"
+memory_gb = 80
+
+# 2026-09-25: Flags added to every kernel compiled for this target, ahead of
+# common/KERNEL.toml's and the model's (build_flags::merge_extra_flags).
+#
+# METRALE_NO_WARP_BLOCKSCALE_MMA compiles out every
+# `#ifndef METRALE_NO_WARP_BLOCKSCALE_MMA` region of the gb10 sources this
+# target inherits: the warp-level block-scaled FP4 path, which ptxas rejects
+# on sm_90a. crates/kernels/tests/blockscale_mma_guard.rs checks that every
+# such instruction in the hopper sources sits inside that guard, and
+# `scripts/hopper_ptx_gate.sh --hw hopper` compiles the set with nvcc.
+
+
+
+
+
+
+
+[build]
+extra_nvcc_flags = ["-DMETRALE_NO_WARP_BLOCKSCALE_MMA"]
+
+# 2026-09-25: Serving defaults for this target. build.rs (build_defaults.rs)
+# bakes them into `metrale_kernels::TARGET_DEFAULTS`, and `resolve` in
+# crates/model-layers/src/layers/ops/target_defaults.rs takes each row as the
+# default that a `METRALE_*` variable can override. The serve log prints the
+# resolved values on one `target defaults (hopper): ...` line, with the
+# env-sourced ones tagged `(env)`. An unknown key fails the build.
+#
+# Every row is written out, including those equal to `build_defaults::baseline`
+# (tests/target_defaults.rs `every_declaring_target_states_every_lever`).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[defaults]
+# 2026-09-25: The widest decode batch the BF16 LM head serves with the batched
+# GEMV `dense_gemv_batchm`; wider batches take the tile GEMM
+# (model-engine trait_impl/lm_head_batched.rs `project_bf16_lm_head`). The
+# resolver clamps it to the kernel's `DENSE_GEMV_BATCHM_MAX_M` (16). When
+# `lm_head_m16_tc` is on, the tensor-core arm takes 5..=16 rows first, so this
+# band decides rows 1..=4 and any width that arm declines.
+# `METRALE_LM_HEAD_BATCHM_MAX` overrides.
+
+
+
+
+
+
+
+
+
+
+
+
+lm_head_batchm_max = 16
+# 2026-09-25: One strided GDN recurrent launch for a multi-sequence decode
+# step whose SSM states are contiguous (qwen3_ssm/trait_decode_multi_seq/
+# ssm_batched_recurrent.rs). `METRALE_SSM_BATCHED_RECURRENT` overrides.
+
+ssm_batched_recurrent = true
+# 2026-09-25: The tensor-core GDN chunked-prefill family, resolved once in
+# model-layers ops/ssm_gdn_a3.rs for three kernels: the state spine
+# `gated_delta_rule_chunk_tc.cu` and the `recompute_wu` / `chunk_fwd_o` twins
+# `gdn_recompute_wu_hopper.cu` and `gdn_fwd_o_hopper.cu`, all in
+# kernels/hopper/common. `METRALE_GDN_PREFILL_TC` overrides the whole family;
+# `METRALE_NO_GDN_PREFILL_TC_REMNANTS=1` keeps the spine and runs the two
+# gb10 parents (ops/ssm_gdn_hopper_prefill.rs). No other tree holds these
+# sources, so the row is inert elsewhere.
+#
+# Measured 2026-09-11 on 1xH100 80GB, Qwen3.8-27B-FP8 (GDN-PREFILL-ATTRIBUTION.md):
+# C=1 TTFT -39.6% at 1193/256 tokens and -44.7% at 4593/512.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+gdn_prefill_tc = true
+# 2026-09-25: Selects `dense_gemm_ba_gates_prefill_hopper`
+# (kernels/hopper/common/ssm_ba_gates_hopper.cu), one CTA per token, over the
+# gb10 parent `dense_gemm_ba_gates_prefill` and its `ceil(N/4)` CTAs per token.
+# `native_ssm_ba_gates_hopper_microtest` requires the twin's `gate` and `beta`
+# to be byte-equal to the parent's. The launcher keeps the parent below
+# `MIN_CTAS_PER_SM * sm_count` tokens (model-layers
+# ops/ssm_ba_gates_hopper.rs `ssm_ba_gates_hopper_reject`), so narrow decode
+# batches stay on the parent. `METRALE_SSM_BA_GATES_HOPPER=0` pins the parent.
+# Measurements: SSM-BA-GATES-ATTRIBUTION.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ssm_ba_gates_hopper = true
+# 2026-09-25: Selects `per_token_group_quant_fp8_hopper`
+# (kernels/hopper/common/fp8_act_quant_hopper.cu) over the gb10
+# `per_token_group_quant_fp8` as the W8A8 activation quantizer. It packs
+# `FP8_QUANT_HOPPER_GROUPS_PER_CTA` (8) K-groups into one CTA, so its grid is
+# `(M, ceil(K/128/8))` against the parent's `(M, K/128)` (model-layers
+# ops/fp8_act_quant.rs `fp8_quant_grid`).
+# `native_fp8_act_quant_hopper_microtest` compares both outputs byte for byte.
+#
+# `true` does not decide every launch: the twin runs only when its grid has at
+# least `FP8_QUANT_MIN_CTAS_PER_SM * sm_count` = 264 CTAs
+# (ops/fp8_act_quant_floor.rs), which is M >= 53 at K=5120, M >= 44 at K=6144
+# and M >= 16 at K=17408. `METRALE_FP8_ACT_QUANT_HOPPER=0` keeps the parent at
+# every width. Measurements: FP8-ACT-QUANT-ATTRIBUTION.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+fp8_act_quant_hopper = true
+# 2026-09-25: `METRALE_NO_DECODE_SPLIT_SILU` (presence) turns it off.
+decode_split_silu = true
+# 2026-09-25: Paged-decode attention split-K policy
+# (metrale_kernels::attn_splitk). `auto` is `auto_splits`:
+#
+#   num_splits = clamp(ceil(2 * sm_count / num_q_heads), 1, 16)
+#
+# which is 11 for 24 query heads on 132 SMs. It depends on sm_count and
+# num_q_heads only, not on how many sequences share the step. `legacy` is
+# `sm_count / (num_q_heads * ref_seqs)`, or 1 once that product reaches
+# sm_count (`legacy_splits`).
+#
+# `METRALE_ATTN_DECODE_SPLITK` overrides with `legacy`, `auto` or a count
+# (clamped to 1..=16). `0` and `off` mean one split, which the serve log
+# prints as `attn_decode_splitk=1 (env)`. With one split the dispatch runs the
+# non-split kernel (qwen3_attention/decode/splitk_dispatch.rs
+# `splits_are_worth_it`). Where this tree's split-K kernels are loaded and
+# head_dim is SPLITK_HEAD_DIM, `splitk_dispatch` launches them instead of
+# the gb10 pair. Measurements: ATTN-DECODE-SPLITK-ATTRIBUTION.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+attn_decode_splitk = "auto"
+# 2026-09-25: `w8a16_gemm_m16` (kernels/hopper/common/w8a16_gemm_m16.cu) on the
+# dense-FFN decode arm at 5..=32 rows (model-layers layers/dense_ffn_m16_tc.rs
+# `m16_tc_plan`). `METRALE_FFN_M16_TC` overrides; when it is unset,
+# `METRALE_M16_TC` does, for this row and `attn_m16_tc` alike.
+
+
+
+
+ffn_m16_tc = false
+# 2026-09-25: `w8a16_gemm_m16` and `w8a16_gemm_m16_strided` on the multi-seq
+# FP8 Q/K/V and o_proj decode tiers (`M16TcLevers::attn` in
+# layers/dense_ffn_m16_tc.rs). `METRALE_ATTN_M16_TC` overrides; when it is
+# unset, `METRALE_M16_TC` does.
+
+
+
+
+
+attn_m16_tc = true
+# 2026-09-25: `dense_gemm_m16_bf16` (kernels/hopper/common/dense_gemm_m16_bf16.cu)
+# on the BF16 LM head at 5..=16 rows, ahead of `dense_gemv_batchm`
+# (model-engine trait_impl/lm_head_batched.rs `lm_head_m16_tc_route`). Its MMA
+# reassociates the K reduction, so the logits are not bit-identical to the
+# GEMV tiers' and a near-tie argmax can change. `METRALE_LM_HEAD_M16_TC=0`
+# keeps the GEMV tiers; `METRALE_M16_TC` does not apply to this row.
+# `METRALE_LM_HEAD_M16_TC_NTILE=64` selects the 64-wide CTA, 32 otherwise.
+
+
+
+
+
+
+
+lm_head_m16_tc = true
+# 2026-09-25: `w8a16_gemv_batch16_ncol{2,4}` (kernels/hopper/common/
+# w8a16_gemv_ncol.cu) on the decode attention projections.
+# `METRALE_ATTN_NCOL_GEMV` overrides, and `METRALE_NO_ATTN_DECODE_BATCH`
+# (presence) forces it off over both. `METRALE_ATTN_NCOL_WIDTH=4` picks the
+# 4-column kernel, 2 otherwise.
+
+
+
+attn_ncol_gemv = false
+# 2026-09-25: One block-scaled FP8 cuBLASLt GEMM over the fused gate+up weight
+# (N = 2 * intermediate) in place of separate gate and up GEMMs, on the
+# dense-FFN decode band of 5..=`GATEUP_FUSED_MAX_M` (16) rows (model-layers
+# layers/dense_ffn_gateup_fused.rs). Its SiLU consumer is `silu_mul_strided`
+# (kernels/hopper/common/silu_mul_strided.cu), which only this tree holds.
+# `native_fp8_ffn_gateup_fused_microtest` compares the fused gate and up
+# columns byte for byte against the two separate GEMMs.
+# `METRALE_FFN_GATEUP_FUSED=0` keeps the two GEMMs. Measurements:
+# FFN-GATEUP-FUSION-ATTRIBUTION.md.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ffn_gateup_fused = true
+
+# 2026-09-25: The largest prefill M that takes the W8A8 block-scaled dense-FFN
+# arm, for widening (N > K) and narrowing (N <= K) projections (model-layers
+# layers/dense_ffn_w8a8_prefill.rs `max_m_for`). 4294967295 is u32::MAX, the
+# `build_defaults::baseline` value: no cap, printed as `max` in the serve log.
+# `METRALE_W8A8_PREFILL_MAX_M_WIDENING` and `_NARROWING` override.
+
+
+
+
+
+w8a8_prefill_max_m_widening = 4294967295
+w8a8_prefill_max_m_narrowing = 4294967295
+# 2026-09-25: The sources in kernels/hopper/common. Every other kernel this
+# target compiles comes from gb10 through `inherits`.
+#
+# Replacements of a gb10 file of the same name, declared in
+# common/KERNEL.toml [shadow]:
+#   w8a16_gemv.cu, w8a16_gemv_fused.cu   the W8A16 decode GEMVs, with the
+#                                        gb10 files' entry points; both
+#                                        include w8a16_gemv_hopper.cuh
+#
+# Additions: new stems and entry points. Each consumer looks its kernel up
+# with `try_target_kernel`, which returns a zero handle on a target without
+# the file, and the gb10 path runs there.
+#   paged_decode_fp8_splitk_hopper.cu,
+#   paged_decode_bf16_splitk_hopper.cu,
+#   paged_decode_splitk_hopper.cuh       split-K paged decode and its reduce:
+#                                        `attn_decode_splitk`
+#   gated_delta_rule_chunk_tc.cu         GDN chunked-prefill state spine:
+#                                        `gdn_prefill_tc`
+#   gdn_recompute_wu_hopper.cu,
+#   gdn_fwd_o_hopper.cu,
+#   gdn_prefill_hopper.cuh               GDN prefill `recompute_wu` and
+#                                        `chunk_fwd_o` twins: `gdn_prefill_tc`
+#   ssm_ba_gates_hopper.cu               `ssm_ba_gates_hopper`
+#   fp8_act_quant_hopper.cu              `fp8_act_quant_hopper`
+#   dense_gemm_m16_bf16.cu               `lm_head_m16_tc`
+#   w8a16_gemm_m16.cu                    `ffn_m16_tc`, `attn_m16_tc`
+#   w8a16_gemv_ncol.cu                   `attn_ncol_gemv`
+#   silu_mul_strided.cu                  `ffn_gateup_fused`
+#
+# crates/kernels/tests/inherited_targets.rs checks that a replacement is
+# declared in [shadow] and an addition is not.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

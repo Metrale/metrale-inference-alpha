@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-model-layers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: generic layers (attention, SSM, MoE, FFN, norm, MTP heads, vision, ops), LoRA, weight map, the draft-proposer contract."
+
+[features]
+default = ["cuda"]
+cuda = ["metrale-core/cuda", "metrale-config/cuda", "metrale-gpu-runtime/cuda", "metrale-cache/cuda", "metrale-storage/cuda", "metrale-comm/cuda", "metrale-model-weights/cuda"]
+metal = ["metrale-core/metal", "metrale-config/metal", "metrale-gpu-runtime/metal", "metrale-cache/metal", "metrale-storage/metal", "metrale-comm/metal", "metrale-model-weights/metal"]
+
+[dependencies]
+metrale-cache = { path = "../cache", default-features = false }
+metrale-closure = { path = "../closure" }
+metrale-comm = { path = "../comm", default-features = false }
+metrale-config = { path = "../config", default-features = false }
+metrale-core = { path = "../core", default-features = false }
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+metrale-kernels = { path = "../kernels" }
+metrale-model-weights = { path = "../model-weights", default-features = false }
+metrale-storage = { path = "../storage", default-features = false }
+anyhow = { workspace = true }
+base64 = "0.22"
+half = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
+parking_lot = { workspace = true }
+serde_json = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
+metrale-model-weights = { path = "../model-weights", default-features = false, features = ["test-utils"] }
+serde = { workspace = true }
+
+[lints]
+workspace = true

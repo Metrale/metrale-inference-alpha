@@ -1,0 +1,78 @@
+[model]
+name = "glm-5.3-flash"
+hf_id = "LibertAIDAI/GLM-5.3-Flash-NVFP4"
+revision = "9e0d74e3cef17f634e84fb8e2223707e02616290"
+model_type = "glm5_next"
+architecture = "Hybrid KDA linear-attention + NoPE sparse MLA (DSA) + mHC + NVFP4 MoE"
+parameters = "320B-A18B"
+
+layers_total = 45
+layers_kda = 34
+layers_dsa = 11
+layer_pattern = "3 KDA then 1 DSA, repeating; layer 45 is the MTP head (out of scope)"
+first_k_dense_replace = 3
+
+hidden_dim = 4096
+vocab_size = 154624
+max_position_embeddings = 262144
+
+
+q_heads = 64
+kv_heads = 64
+q_lora_rank = 1536
+kv_lora_rank = 512
+qk_nope_head_dim = 256
+qk_rope_head_dim = 0
+v_head_dim = 256
+
+# 2026-09-25: NoPE: the checkpoint config has qk_rope_head_dim 0 and no rope_theta
+# (crates/model-engine/tests/fixtures/glm53-nvfp4-9e0d74e3-config.json), so a latent
+# cache token is kv_lora_rank (512) wide.
+rotary_dim = 0
+partial_rotary_factor = 0.0
+
+
+index_n_heads = 32
+index_head_dim = 128
+index_kpool = 4
+index_topk = 2048
+index_kpool_always_select_tail = true
+
+
+linear_num_heads = 64
+linear_head_dim = 128
+linear_conv_kernel = 4
+
+
+moe_experts = 288
+moe_topk = 8
+moe_intermediate = 2048
+shared_expert_intermediate = 2048
+moe_scoring_func = "sigmoid"
+moe_routing_bias = true
+n_group = 1
+routed_scaling_factor = 2.5
+
+
+hc_mult = 4
+hc_sinkhorn_iters = 20
+
+# 2026-09-25: The target matcher: ptx_for_config (crates/kernels/src/resolve.rs) matches a
+# checkpoint to this target by [[model_types]], and serve refuses a model_type that no
+# target declares (serve_load.rs). The dimension keys in [model] do not take part.
+# `glm5_next` is what parse_glm5_next sets for this checkpoint, whose text_config says
+# `glm5_next_text` (crates/config/src/parsers/glm5_next/parse.rs).
+
+
+
+[[model_types]]
+model_type = "glm5_next"
+hidden_size = 4096
+
+# 2026-09-25: Kernel lookups this model's dispatch may issue that this target does not
+# ship. The boot kernel gate refuses any other unresolved lookup unless
+# --dangerously-allow-unresolved-kernel-lookups is set (serve_phases/kernel_gate.rs).
+# layers::tgemm_kernel tries w4a16_gemm_t_p3 and takes w4a16_gemm_t when it is absent.
+
+[expected_absent.w4a16]
+w4a16_gemm_t_p3 = "3-deep p3 twin shipped only in qwen3.6-27b's shadow; layers::tgemm_kernel falls back to w4a16_gemm_t (resolves). Unmeasured for this target."

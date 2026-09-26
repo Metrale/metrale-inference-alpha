@@ -1,0 +1,59 @@
+# scenario lora_rotation_at_quiescence
+bind_gpu_to_thread()
+create_stream() -> 1
+create_event() -> 2
+adapter_id_for(-1)
+adapter_id_for(-1)
+num_free_blocks() -> 1000
+-- tick 1
+alloc_sequence() -> slot 0
+adapter_id_for(-1)
+acquire_adapter_slot(-1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_cmd(0x0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_tokens(n=5)
+ep_sync_vision_embeds(n=5)
+prefill(n=5, s1@0:len=5, stream=0)
+copy_logits_to_host(row=0, off=0, bytes=128)
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[10], seqs=["s1@0:len=5"], stream=0)
+commit_ctx(s1@0:len=6, n=1, base=5, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [11]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=6)
+num_free_blocks() -> 999
+-- tick 2
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[11], seqs=["s1@0:len=6"], stream=0)
+commit_ctx(s1@0:len=7, n=1, base=6, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=7)
+num_free_blocks() -> 999
+-- tick 3
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=7"], stream=0)
+commit_ctx(s1@0:len=8, n=1, base=7, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [63]
+fx apply ReleaseSeq{cache=true, finish_sequence}
+cache_sequence(s1@0:len=8)
+free_sequence(s1@0:len=8, blocks=1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff1)
+num_free_blocks() -> 1000
+-- tick 4
+fx lora Rotate(adapter-x)
+set_active_lora(adapter-x)
+num_free_blocks() -> 1000
+-- tick 5
+fx apply EpShutdown
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xffffffff)
+fx apply Quiesce{stream=0}
+synchronize(stream=0)
+fx apply Quiesce{stream=1}
+synchronize(stream=1)
+fx teardown
+teardown()
+rotation ack: Done
+out s1: T10 T11 T12 Done(stop, n=4, think=0, cached=0, acc=0, guard=None)

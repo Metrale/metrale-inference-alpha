@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-gpu-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: GpuBackend (CUDA/Metal), streams, buffers, op cache, pinned hosts, kernel registry, cuBLASLt/CUTLASS/FlashInfer bridges."
+
+[features]
+default = ["cuda"]
+cuda = ["dep:cudarc", "metrale-core/cuda", "metrale-config/cuda"]
+metal = ["dep:objc2", "dep:objc2-metal", "dep:objc2-foundation", "dep:dispatch2", "metrale-core/metal", "metrale-config/metal"]
+test-utils = []
+
+[dependencies]
+metrale-config = { path = "../config", default-features = false }
+metrale-core = { path = "../core", default-features = false }
+metrale-kernels = { path = "../kernels" }
+metrale-telemetry = { path = "../telemetry" }
+anyhow = { workspace = true }
+libc = "0.2"
+parking_lot = { workspace = true }
+safetensors = "0.8"
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["rt", "sync", "time", "parking_lot"] }
+tracing = "0.1"
+cudarc = { workspace = true, optional = true }
+objc2 = { version = "0.6", optional = true }
+objc2-metal = { version = "0.3", optional = true, features = ["MTLDevice", "MTLBuffer", "MTLResource", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder", "MTLComputeCommandEncoder", "MTLComputePipeline", "MTLLibrary", "MTLBlitCommandEncoder", "MTLEvent", "block2"] }
+objc2-foundation = { version = "0.3", optional = true, features = ["NSData", "NSString", "NSError"] }
+dispatch2 = { version = "0.3", optional = true }
+
+[dev-dependencies]
+half = "2"
+memmap2 = "0.9"
+
+[build-dependencies]
+toml = "1.1"
+
+[lints]
+workspace = true

@@ -1,0 +1,138 @@
+# 2026-09-25: B200 target: kernel set inherited from gb10 (HARDWARE.toml `inherits`).
+# Every table below is a copy of kernels/gb10/qwen3-next-80b-a3b/MODEL.toml,
+# [expected_absent] included: that list is gb10's, not one taken with
+# `--check-kernels` on B200.
+
+
+
+[model]
+name = "qwen3-next-80b-a3b"
+hf_id = "nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4"
+params = "80B"
+active_params = "3B"
+layers_attention = 12
+layers_ssm = 36
+moe_experts = 512
+moe_topk = 10
+hidden_dim = 2048
+head_dim = 256
+q_heads = 16
+kv_heads = 2
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[[model_types]]
+model_type = "qwen3_next"
+
+
+
+
+
+[behavior]
+# 2026-09-25: Measured 2026-06-06: without the watchdog, the model answered
+# correctly and then ran on into invented "Human:"/"assistant" turns instead of
+# emitting <|im_end|>.
+enable_loop_watchdog = true
+
+
+
+
+thinking_in_tools = true
+# 2026-09-25: A request's own thinking budget replaces this, and
+# --max-thinking-budget replaces it for every request
+# (crates/server/src/api/chat/thinking.rs, main_modules/serve_load.rs).
+max_thinking_budget = 4096
+# 2026-09-25: Off. Measured 2026-06-06: with thinking forced on, the reasoning
+# parser took the whole answer as reasoning and generation did not stop.
+
+thinking_default = false
+# 2026-09-25: Measured 2026-04-11: one draft (K=2) beat two (K=3) for this
+# model; at K=3 the verify cost outweighed the extra accepted tokens.
+default_num_drafts = 1
+
+[kernel]
+moe_gate_shmem_bytes = 4096
+
+
+
+
+
+
+[expected_absent.w4a16]
+w4a16_gemm_t_p3 = """
+3-deep weight-pipeline twin shipped ONLY in qwen3.6-27b's shadow.
+layers::tgemm_kernel probes it, falls back to w4a16_gemm_t (resolves
+here, via common). UNMEASURED for this target — candidate, not loss."""
+w4a16_gemm_t_k64_p3 = "Same family; layers::k64_kernel falls back to the required w4a16_gemm_t_k64 (resolves via common)."
+w4a16_gemm_t_k64_n64_p3 = "Narrow-N twin; layers::k64_n64_kernel returns 0-handle, dispatch gates on handle != 0."
+w4a16_gemm_t_m128_bf16 = "BF16-projection prefill twin; prefill_weights gates on handle != 0, falls back through the resolved w4a16 path."
+
+[expected_absent.w4a4]
+w4a4_gemm_mfast = """
+Shipped only in nemotron-labs-3-puzzle-75b-a9b. Dispatch falls back to
+w4a4_gemm (resolves from common). UNMEASURED — candidate, not loss."""
+
+[expected_absent.moe_w4a16]
+moe_w4a16_grouped_gemm_ptrtable_e8m0 = "Native-MXFP4 E8M0 variant, shipped only in deepseek-v4-flash. This target is NVFP4; the resolved ptrtable grouped GEMM serves it."
+moe_w4a16_grouped_gemm_ptrtable_t_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved ptrtable_t variant."
+moe_w4a16_grouped_gemm_ptrtable_t_k64_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved ptrtable_t_k64 variant."
+moe_w4a16_fused_gate_up_t_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved fused_gate_up variant."
+moe_w4a16_fused_gate_up_t_k64_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved fused_gate_up_k64 variant."
+moe_w4a16_fused_gate_up_t_k64_fp4 = """
+FUSED-FP4 gate_up (METRALE_HOLO_MOE_GATEUP_FP4, Holo-3.1 family). Dispatch
+checks handle != 0 before firing; falls back to the resolved w4a16
+fused path."""
+moe_w4a16_down_t_k64_fp4 = """
+FP4 down-projection twin; forward_prefill_routed gates on `down_fp4 &&
+handle != 0`; falls back to the resolved w4a16 down path."""
+moe_w4a16_fused_gate_up_t_k64_m128 = "M=128 Block-D variant shipped only in minimax-m2-229b; dispatch falls through to M=64."
+
+[expected_absent.gated_delta_rule_wy17]
+gated_delta_rule_wy17 = """
+wy17 fused decode (K=17) exists only in qwen3.6-35b-a3b's PTX module
+set (per the init.rs comment); decode_batched checks non-NULL before
+the fused path and keeps the sequential per-token path otherwise."""
+[expected_absent.gated_delta_rule_snap]
+gated_delta_rule_decode_f32_norm_snap = "Exact-verify snapshot twin (#435/#438), shipped only in qwen3.6-27b/nvfp4; the exact arm probes handle != 0 and falls back to the parent kernel + copy_d2d snapshots (same bits, more launches)."
+gated_delta_rule_decode_f32_strided_norm_snap = "Batched exact-verify snapshot twin (#435/#438), shipped only in qwen3.6-27b/nvfp4; the batched exact form declines on handle 0 and the per-sequence exact loop serves (still exact)."
+
+[expected_absent.gdn_verify_fused_conv_kn_f32]
+gdn_verify_fused_conv_kn_f32 = "FP32 fused verify conv for the exact-verify chain (#435/#438), shipped only in qwen3.6-27b/nvfp4; probed handle != 0, absent keeps the per-token conv launches (same bits, more launches)."
+
+# 2026-09-25: The two f16 entries below are not fallbacks. With
+# `--ssm-h-dtype f16` the GDN decode arms launch gdn_f16_norm_k and
+# gdn_f16_strided_norm_half_k without checking the handle
+# (model-layers layers/qwen3_ssm/ssm_forward.rs and
+# trait_decode_multi_seq/ssm_batched_recurrent.rs), so on a target without
+# these kernels that flag launches a zero kernel handle.
+[expected_absent.gated_delta_rule]
+gated_delta_rule_decode_f16_norm = "FP16 h-state twin; see honesty note above. F32 fused-norm arm resolves."
+gated_delta_rule_decode_f16_strided_norm_half = "FP16 h-state twin; see honesty note above. F32 strided-norm arm resolves."
+gated_delta_rule_decode_f32_strided_norm_half = "Half-register twin; selected only under the resolved half-register gate (METRALE_GDN_HALF_REG presence, off as shipped)."
+gated_delta_rule_decode_f32_strided_norm_smem = "SMEM-staged twin; gated behind METRALE_GDN_SMEM_STAGE (off as shipped) AND the half-register gate."

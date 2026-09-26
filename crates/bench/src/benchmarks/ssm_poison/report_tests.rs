@@ -1,0 +1,289 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-26: Tests for the table, tiles and metrics rendered from a Score.
+//!
+//! Owner: bench, SSM poisoning gate.
+//! Invariants: none beyond the types.
+
+use super::super::compare::{RoundVerdict, TurnDelta};
+use super::super::score::{RoundRecord, score};
+use super::{metrics, summary, table};
+use crate::result::{CellStyle, Stat};
+
+fn stat_projection(stats: &[Stat]) -> Vec<(&str, &str, &str, CellStyle)> {
+    stats
+        .iter()
+        .map(|stat| {
+            (
+                stat.label.as_str(),
+                stat.value.as_str(),
+                stat.unit.as_str(),
+                stat.style,
+            )
+        })
+        .collect()
+}
+
+fn delta(replay_tokens: usize) -> TurnDelta {
+    TurnDelta {
+        turn: 2,
+        ref_tokens: 200,
+        replay_tokens,
+        ref_finish: Some("stop".into()),
+        replay_finish: Some("stop".into()),
+    }
+}
+
+/// 2026-09-26: A round record with a nonzero turn-1 cache count.
+fn rec(round: usize, verdict: RoundVerdict) -> RoundRecord {
+    RoundRecord {
+        round,
+        verdict,
+        turn1_cached: Some(992),
+    }
+}
+
+#[test]
+fn metrics_carry_every_class_even_when_zero() {
+    let replays: Vec<_> = (1..=3).map(|n| rec(n, RoundVerdict::Invariant)).collect();
+    let m = metrics(&score(&replays));
+    assert_eq!(
+        m,
+        std::collections::BTreeMap::from([
+            ("collapsed".into(), 0.0),
+            ("invariant".into(), 3.0),
+            ("jittered".into(), 0.0),
+            ("min_cached_prompt_tokens".into(), 992.0),
+            ("rounds".into(), 3.0),
+            ("unmeasured".into(), 0.0),
+        ])
+    );
+}
+
+#[test]
+fn metrics_reflect_mixed_classes() {
+    let replays = vec![
+        rec(1, RoundVerdict::Invariant),
+        rec(
+            2,
+            RoundVerdict::Jittered {
+                turns: vec![delta(206)],
+            },
+        ),
+        rec(
+            3,
+            RoundVerdict::Collapsed {
+                turns: vec![delta(3)],
+            },
+        ),
+        RoundRecord {
+            round: 4,
+            verdict: RoundVerdict::Unmeasured {
+                reason: "reset".into(),
+            },
+            turn1_cached: None,
+        },
+    ];
+    let m = metrics(&score(&replays));
+    assert_eq!(
+        m,
+        std::collections::BTreeMap::from([
+            ("collapsed".into(), 1.0),
+            ("invariant".into(), 1.0),
+            ("jittered".into(), 1.0),
+            ("min_cached_prompt_tokens".into(), 992.0),
+            ("rounds".into(), 4.0),
+            ("unmeasured".into(), 1.0),
+        ])
+    );
+}
+
+#[test]
+fn a_zero_cache_run_records_a_zero_metric() {
+    // 2026-09-26: The gate's BENCH.toml floor reads this key, so a run whose
+    // replays restored nothing records 0 and fails it.
+    let replays: Vec<_> = (1..=3)
+        .map(|n| RoundRecord {
+            round: n,
+            verdict: RoundVerdict::Invariant,
+            turn1_cached: Some(0),
+        })
+        .collect();
+    let m = metrics(&score(&replays));
+    assert_eq!(m["min_cached_prompt_tokens"], 0.0);
+}
+
+#[test]
+fn collapsed_tile_is_red_only_when_present() {
+    let clean: Vec<_> = (1..=3).map(|n| rec(n, RoundVerdict::Invariant)).collect();
+    let s = summary(&score(&clean));
+    assert_eq!(
+        stat_projection(&s),
+        [
+            ("Invariant", "3/3", "", CellStyle::Good),
+            ("Jittered", "0", "", CellStyle::Good),
+            ("Collapsed", "0", "", CellStyle::Good),
+            ("Unmeasured", "0", "", CellStyle::Good),
+            ("Min t1 cache", "992", "tok", CellStyle::Good),
+        ]
+    );
+
+    let poisoned = vec![rec(
+        1,
+        RoundVerdict::Collapsed {
+            turns: vec![delta(3)],
+        },
+    )];
+    let s = summary(&score(&poisoned));
+    assert_eq!(
+        stat_projection(&s),
+        [
+            ("Invariant", "0/1", "", CellStyle::Neutral),
+            ("Jittered", "0", "", CellStyle::Good),
+            ("Collapsed", "1", "", CellStyle::Bad),
+            ("Unmeasured", "0", "", CellStyle::Good),
+            ("Min t1 cache", "992", "tok", CellStyle::Good),
+        ]
+    );
+}
+
+#[test]
+fn jitter_tile_is_warn_only_when_present_never_red() {
+    let jittered = vec![rec(
+        1,
+        RoundVerdict::Jittered {
+            turns: vec![delta(206)],
+        },
+    )];
+    let s = summary(&score(&jittered));
+    assert_eq!(
+        stat_projection(&s),
+        [
+            ("Invariant", "0/1", "", CellStyle::Neutral),
+            ("Jittered", "1", "", CellStyle::Warn),
+            ("Collapsed", "0", "", CellStyle::Good),
+            ("Unmeasured", "0", "", CellStyle::Good),
+            ("Min t1 cache", "992", "tok", CellStyle::Good),
+        ]
+    );
+}
+
+#[test]
+fn cache_tile_is_red_when_the_restore_path_never_ran() {
+    let warm: Vec<_> = (1..=2).map(|n| rec(n, RoundVerdict::Invariant)).collect();
+    let s = summary(&score(&warm));
+    assert_eq!(
+        stat_projection(&s),
+        [
+            ("Invariant", "2/2", "", CellStyle::Good),
+            ("Jittered", "0", "", CellStyle::Good),
+            ("Collapsed", "0", "", CellStyle::Good),
+            ("Unmeasured", "0", "", CellStyle::Good),
+            ("Min t1 cache", "992", "tok", CellStyle::Good),
+        ]
+    );
+
+    let cold = vec![RoundRecord {
+        round: 1,
+        verdict: RoundVerdict::Invariant,
+        turn1_cached: Some(0),
+    }];
+    let s = summary(&score(&cold));
+    assert_eq!(
+        stat_projection(&s),
+        [
+            ("Invariant", "1/1", "", CellStyle::Good),
+            ("Jittered", "0", "", CellStyle::Good),
+            ("Collapsed", "0", "", CellStyle::Good),
+            ("Unmeasured", "0", "", CellStyle::Good),
+            ("Min t1 cache", "0", "tok", CellStyle::Bad),
+        ]
+    );
+}
+
+#[test]
+fn unmeasured_rows_are_attributed_to_their_actual_round() {
+    // 2026-09-26: Round 3's failure must land on round 3's row.
+    let replays = vec![
+        rec(1, RoundVerdict::Invariant),
+        rec(2, RoundVerdict::Invariant),
+        RoundRecord {
+            round: 3,
+            verdict: RoundVerdict::Unmeasured {
+                reason: "connection reset".into(),
+            },
+            turn1_cached: None,
+        },
+    ];
+    let t = table(&score(&replays));
+    assert_eq!(
+        t.rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| (cell.text.as_str(), cell.style))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        [
+            vec![
+                ("r1", CellStyle::Neutral),
+                ("invariant", CellStyle::Good),
+                ("", CellStyle::Neutral),
+            ],
+            vec![
+                ("r2", CellStyle::Neutral),
+                ("invariant", CellStyle::Good),
+                ("", CellStyle::Neutral),
+            ],
+            vec![
+                ("r3", CellStyle::Neutral),
+                ("unmeasured", CellStyle::Bad),
+                (
+                    "invariant not proven this round — connection reset",
+                    CellStyle::Neutral,
+                ),
+            ],
+        ]
+    );
+    let stats = summary(&score(&replays));
+    let unmeasured = stats
+        .iter()
+        .find(|stat| stat.label == "Unmeasured")
+        .expect("unmeasured tile");
+    assert_eq!(unmeasured.style, CellStyle::Bad);
+}
+
+/// 2026-09-26: "The cache gave back nothing" (0) and "no replay reported a
+/// figure" (key absent) are different findings. `min_turn1_cached` is `None`
+/// when every replay errored.
+#[test]
+fn an_unmeasured_cache_is_absent_from_the_record_not_zero() {
+    let replays: Vec<_> = (1..=3)
+        .map(|n| RoundRecord {
+            round: n,
+            verdict: RoundVerdict::Unmeasured {
+                reason: "connection reset".into(),
+            },
+            turn1_cached: None,
+        })
+        .collect();
+    let m = metrics(&score(&replays));
+    assert!(
+        !m.contains_key("min_cached_prompt_tokens"),
+        "an unmeasured cache must not be written as the vacuity value: {m:?}"
+    );
+    // 2026-09-26: The rest of the record still reports three unmeasured rounds.
+    assert_eq!(m["rounds"], 3.0);
+    assert_eq!(m["unmeasured"], 3.0);
+    // 2026-09-26: A reported zero is still recorded as 0 (as in
+    // `a_zero_cache_run_records_a_zero_metric`).
+    let vacuous: Vec<_> = (1..=3)
+        .map(|n| RoundRecord {
+            round: n,
+            verdict: RoundVerdict::Invariant,
+            turn1_cached: Some(0),
+        })
+        .collect();
+    assert_eq!(metrics(&score(&vacuous))["min_cached_prompt_tokens"], 0.0);
+}

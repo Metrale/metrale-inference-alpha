@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-gpu-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: raw FFI only — cuFile (GDS) and NVML dlopen wrappers, NCCL bindings, RDMA verbs C shim."
+links = "metrale_rdma_shim"
+
+[features]
+cuda = []
+nccl = ["cuda"]
+# 2026-09-26: NVTX ranges through a C shim that build.rs compiles against
+# $CUDA_HOME/include. Not a default feature.
+nvtx = []
+
+[dependencies]
+anyhow = { workspace = true }
+libc = "0.2"
+libloading = "0.8"
+
+[build-dependencies]
+cc = "1"
+
+[lints]
+workspace = true

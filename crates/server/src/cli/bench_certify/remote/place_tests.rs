@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-26: Tests for placing a fetched record, on a signed fixture record.
+//!
+//! Owner: server CLI (`met benchmark certify`).
+//! The record and its signature come from `test_data/gate-records`, copied into
+//! a scratch root that carries that corpus's `.github/record-signers/`, so
+//! `place` runs the real `signing::verify_record`.
+//! Invariants: none beyond the types.
+
+use super::*;
+use std::path::Path;
+
+struct Scratch {
+    root: PathBuf,
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+/// 2026-09-26: A scratch root with the signer registry, a fetched copy of the lexically
+/// last fixture decode-floor record, its signature and a log, and its git sha.
+fn fixture(tag: &str) -> (Scratch, Vec<FetchedFile>, String) {
+    let ws = workspace().join("test_data/gate-records");
+    let root = std::env::temp_dir().join(format!("certify-place-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join(".github/record-signers")).unwrap();
+    for e in std::fs::read_dir(ws.join(".github/record-signers"))
+        .unwrap()
+        .flatten()
+    {
+        std::fs::copy(
+            e.path(),
+            root.join(".github/record-signers").join(e.file_name()),
+        )
+        .unwrap();
+    }
+    let dir = ws.join(".benchmarks/decode-floor");
+    let newest = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .max()
+        .unwrap();
+    let name = newest.file_name().unwrap().to_string_lossy().into_owned();
+    let fetched = root.join("fetched");
+    std::fs::create_dir_all(fetched.join(".benchmarks/decode-floor")).unwrap();
+    std::fs::create_dir_all(fetched.join(".certify/x")).unwrap();
+    let rec_to = fetched.join(".benchmarks/decode-floor").join(&name);
+    let sig_to = fetched
+        .join(".benchmarks/decode-floor")
+        .join(format!("{name}.sig"));
+    std::fs::copy(&newest, &rec_to).unwrap();
+    std::fs::copy(format!("{}.sig", newest.display()), &sig_to).unwrap();
+    std::fs::write(fetched.join(".certify/x/decode-floor.log"), "log").unwrap();
+    let sha = metrale_bench::gate::read_record(&newest).unwrap().git_sha;
+    let f = |name: &str, rel: &str, path: PathBuf| FetchedFile {
+        name: name.into(),
+        relative_path: rel.into(),
+        path,
+        bytes: 0,
+        sha256: String::new(),
+    };
+    let files = vec![
+        f(&name, &format!(".benchmarks/decode-floor/{name}"), rec_to),
+        f(
+            &format!("{name}.sig"),
+            &format!(".benchmarks/decode-floor/{name}.sig"),
+            sig_to,
+        ),
+        f(
+            "decode-floor.log",
+            ".certify/x/decode-floor.log",
+            fetched.join(".certify/x/decode-floor.log"),
+        ),
+    ];
+    (Scratch { root }, files, sha)
+}
+
+fn expect<'a>(anchor: &'a str) -> Expect<'a> {
+    Expect {
+        unit_id: "decode-floor",
+        shard: None,
+        log_stem: "decode-floor",
+        anchor,
+        hardware: "gb10",
+    }
+}
+
+#[test]
+fn a_genuine_record_is_placed_with_its_signature_and_log() {
+    let (s, files, sha) = fixture("ok");
+    let log_dir = s.root.join("logs");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    let placed = place(&s.root, &log_dir, &files, &expect(&sha)).expect("placed");
+    assert!(
+        placed
+            .record
+            .starts_with(s.root.join(".benchmarks/decode-floor"))
+    );
+    assert!(placed.record.exists() && placed.signature.exists());
+    assert_eq!(placed.log.as_ref().map(|l| l.exists()), Some(true));
+    // 2026-09-26: A second placement of the same record is refused: never overwrite.
+    let e = place(&s.root, &log_dir, &files, &expect(&sha)).unwrap_err();
+    assert!(format!("{e:#}").contains("already exists"), "{e:#}");
+}
+
+#[test]
+fn a_tampered_signature_leaves_nothing_behind() {
+    let (s, files, sha) = fixture("tamper");
+    let sig = &files[1].path;
+    let mut text = std::fs::read_to_string(sig).unwrap();
+    // 2026-09-26: Flip one character inside the base64 signature.
+    let i = text.find("\"sig\":\"").unwrap() + 8;
+    let c = text.as_bytes()[i];
+    let flipped = if c == b'A' { 'B' } else { 'A' };
+    text.replace_range(i..=i, &flipped.to_string());
+    std::fs::write(sig, text).unwrap();
+    let e = place(&s.root, &s.root, &files, &expect(&sha)).unwrap_err();
+    assert!(format!("{e:#}").contains("does not verify"), "{e:#}");
+    // 2026-09-26: Negative control on the cleanup: the record dir holds nothing.
+    let left = std::fs::read_dir(s.root.join(".benchmarks/decode-floor"))
+        .map(|d| d.count())
+        .unwrap_or(0);
+    assert_eq!(left, 0);
+}
+
+#[test]
+fn the_record_must_be_for_this_unit_at_the_anchor_on_this_class() {
+    let (s, files, sha) = fixture("expect");
+    let mut wrong_unit = expect(&sha);
+    wrong_unit.unit_id = "ttft-warm-gate";
+    // 2026-09-26: `sort_files` refuses first: the paths do not belong to that unit.
+    let e = place(&s.root, &s.root, &files, &wrong_unit).unwrap_err();
+    assert!(
+        format!("{e:#}").contains("not a record, signature or log of ttft-warm-gate"),
+        "{e:#}"
+    );
+    let mut wrong_anchor = expect(&sha);
+    wrong_anchor.anchor = "0000000000000000000000000000000000000000";
+    let e = place(&s.root, &s.root, &files, &wrong_anchor).unwrap_err();
+    assert!(format!("{e:#}").contains("not the anchor"), "{e:#}");
+    let mut wrong_class = expect(&sha);
+    wrong_class.hardware = "h100";
+    let e = place(&s.root, &s.root, &files, &wrong_class).unwrap_err();
+    assert!(format!("{e:#}").contains("measured on class gb10"), "{e:#}");
+    assert!(
+        !s.root.join(".benchmarks").exists(),
+        "nothing placed on refusal"
+    );
+}
+
+/// 2026-09-26: A fetched set with no record is refused with the child log's final
+/// `Error:` block. A log with no such block adds nothing.
+#[test]
+fn a_missing_record_carries_the_child_logs_final_error_block() {
+    let root = std::env::temp_dir().join(format!("certify-place-cause-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join(".certify/x")).unwrap();
+    let log = root.join(".certify/x/bfcl-subset.log");
+    std::fs::write(
+        &log,
+        "gate: serving unsloth/Qwen3.8-27B-NVFP4 from recipe qwen3.8/qwen3.8-27b-nvfp4-unsloth-bfcl\n\
+         Error: the leased server exited (exit status: 1) before it began serving \
+         \"unsloth/Qwen3.8-27B-NVFP4\" — serve-lease.log ends with:\n    \
+         Error: Failed to build model\n    \n    Caused by:\n        \
+         No memory left for KV cache: total GPU = 121.7 GB, --gpu-memory-utilization 70% → \
+         budget 85.2 GB, but 69.9 GB already consumed + 23.7 GB inference reserve = \
+         93.7 GB committed.\n",
+    )
+    .unwrap();
+    let f = |rel: &str, path: PathBuf| FetchedFile {
+        name: Path::new(rel)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        relative_path: rel.into(),
+        path,
+        bytes: 0,
+        sha256: String::new(),
+    };
+    let files = [f(".certify/x/bfcl-subset.log", log.clone())];
+    let e = sort_files(&files, "bfcl-subset").unwrap_err().to_string();
+    assert!(
+        e.starts_with("the node returned no record for bfcl-subset"),
+        "{e}"
+    );
+    assert!(e.contains("No memory left for KV cache"), "{e}");
+    assert!(e.contains("Error: the leased server exited"), "{e}");
+    assert!(!e.contains("gate: serving"), "only the error block: {e}");
+    // 2026-09-26: The same error reaches `place`, which is what the runner calls.
+    let e = place(&root, &root, &files, &expect("deadbeef")).unwrap_err();
+    assert!(
+        format!("{e:#}").contains("No memory left for KV cache"),
+        "{e:#}"
+    );
+
+    // 2026-09-26: Negative control: a log without an `Error:` block is not quoted.
+    std::fs::write(&log, "gate: serving …\nrun cancelled\n").unwrap();
+    let e = sort_files(&files, "bfcl-subset").unwrap_err().to_string();
+    assert_eq!(e, "the node returned no record for bfcl-subset");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn sort_files_wants_exactly_one_record_and_its_own_signature() {
+    let f = |rel: &str| FetchedFile {
+        name: Path::new(rel)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        relative_path: rel.into(),
+        path: PathBuf::from(rel),
+        bytes: 0,
+        sha256: String::new(),
+    };
+    let ok = [f(".benchmarks/g/r.json"), f(".benchmarks/g/r.json.sig")];
+    assert!(sort_files(&ok, "g").is_ok());
+    assert!(
+        sort_files(&[f(".benchmarks/g/r.json")], "g")
+            .unwrap_err()
+            .to_string()
+            .contains("no signature")
+    );
+    assert!(
+        sort_files(&[f(".benchmarks/g/r.json.sig")], "g")
+            .unwrap_err()
+            .to_string()
+            .contains("no record")
+    );
+    let two = [
+        f(".benchmarks/g/a.json"),
+        f(".benchmarks/g/b.json"),
+        f(".benchmarks/g/a.json.sig"),
+    ];
+    assert!(
+        sort_files(&two, "g")
+            .unwrap_err()
+            .to_string()
+            .contains("two records")
+    );
+    let mismatch = [f(".benchmarks/g/a.json"), f(".benchmarks/g/b.json.sig")];
+    assert!(
+        sort_files(&mismatch, "g")
+            .unwrap_err()
+            .to_string()
+            .contains("does not belong")
+    );
+    let foreign = [
+        f(".benchmarks/g/r.json"),
+        f(".benchmarks/g/r.json.sig"),
+        f("Cargo.toml"),
+    ];
+    assert!(
+        sort_files(&foreign, "g")
+            .unwrap_err()
+            .to_string()
+            .contains("Cargo.toml")
+    );
+}

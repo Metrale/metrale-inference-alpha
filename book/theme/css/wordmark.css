@@ -1,0 +1,51 @@
+/* The Metrale wordmark in the book's menu bar.
+
+   Colours and the two type stacks come from web-shared/metrale-tokens.css (the
+   css/metrale-tokens.css link), and the faces from fonts/fonts.css. The skin
+   (css/metrale.css) keeps every rule it has. This file only places the
+   wordmark that ../metrale.js puts where mdBook set the book's title in type,
+   with "Engine docs" beside it, and keeps the title readable for the
+   accessibility tree through the link's name. */
+
+/* mdBook centres the title in the bar with text-align, which a flex box
+   ignores, so the centring is restated for the flex layout. */
+.menu-title {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  gap: 0.65rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.menu-title .metrale-lockup {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  color: inherit;
+  text-decoration: none;
+}
+.menu-title .metrale-lockup svg {
+  height: 22px;
+  width: auto;
+  display: block;
+}
+.menu-title .metrale-docs {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t3);
+  padding-top: 0.15rem;
+}
+.menu-title .metrale-lockup:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+@media (max-width: 480px) {
+  .menu-title .metrale-docs {
+    display: none;
+  }
+}

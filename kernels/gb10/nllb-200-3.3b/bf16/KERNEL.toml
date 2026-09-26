@@ -1,0 +1,3 @@
+# 2026-09-25: This directory holds no kernel sources, so the nllb-200-3.3b bf16 target compiles gb10/common.
+# extra_nvcc_flags here is a top-level key; build.rs reads flags only from [build], so it has no effect.
+extra_nvcc_flags = []

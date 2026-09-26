@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-sampling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the sampler."
+
+[features]
+default = ["cuda"]
+cuda = ["metrale-gpu-runtime/cuda"]
+metal = ["metrale-gpu-runtime/metal"]
+
+[dependencies]
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+metrale-telemetry = { path = "../telemetry" }
+anyhow = { workspace = true }
+rand = "0.9"
+
+[dev-dependencies]
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
+
+[lints]
+workspace = true

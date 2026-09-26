@@ -1,0 +1,12 @@
+# 2026-09-26: Exact pins for the BFCL venv under <home>/artifacts/bfcl. The
+# score depends on bfcl-eval's checker, so nothing floats. Any change to this
+# file changes the provisioning stamp (`stamp_value` in bfcl/provision.rs), so
+# the next run provisions again: pip installs these pins into the existing
+# venv and provision.py rebuilds the dataset. bfcl-eval provides the AST
+# checker (score.py) and the BFCL v4 data files (provision.py).
+bfcl-eval==2026.3.23
+# 2026-09-26: soundfile is imported at module scope by qwen_agent
+# (qwen_agent/utils/utils.py), which bfcl-eval requires, but bfcl-eval does
+# not declare it. Without it the scorer cannot import. Observed 2026-09-05 on
+# gb10: ModuleNotFoundError: No module named 'soundfile'.
+soundfile==0.14.0

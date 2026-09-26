@@ -1,0 +1,132 @@
+# 2026-09-25: Kernel target for nvidia/Qwen3.5-397B-A17B-NVFP4 on GB10. Beyond gb10/common it compiles
+# the [sources] use of nvfp4/KERNEL.toml: the same w4a16_gemm, gated_delta_rule and moe_w4a16_grouped_gemm
+# sources as qwen3.5-35b-a3b, plus the qwen3-vl-30b-a3b vision encoder. moe_topk_softmax
+# (gb10/common/moe_topk.cu) reads at most MAX_EXPERTS = 512 router logits, as many as moe_experts below.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[model]
+name = "qwen3.5-397b-a17b"
+hf_id = "nvidia/Qwen3.5-397B-A17B-NVFP4"
+params = "397B"
+active_params = "17B"
+architecture = "Gated DeltaNet + Full Attention + MoE"
+
+layers_total = 60
+layers_linear_attention = 45
+layers_full_attention = 15
+layer_pattern = "3:1 (linear, linear, linear, full)"
+
+moe_experts = 512
+moe_topk = 10
+moe_intermediate = 1024
+shared_expert_intermediate = 1024
+
+hidden_dim = 4096
+head_dim = 256
+q_heads = 32
+kv_heads = 2
+
+linear_attn_key_heads = 16
+linear_attn_key_dim = 128
+linear_attn_value_heads = 64
+linear_attn_value_dim = 128
+linear_conv_kernel = 4
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+partial_rotary_factor = 0.25
+attn_output_gate = true
+
+# 2026-09-25: Not read by the build; MRoPE comes from the checkpoint's rope_parameters, and parse_config
+# (crates/config/src/dispatch.rs) rewrites a qwen3_5_moe config with interleaved MRoPE to qwen3_6_moe.
+
+
+mrope_interleaved = true
+mrope_section = [11, 11, 10]
+
+mtp_layers = 1
+mtp_type = "full_attention"
+
+
+vision = true
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+
+[behavior]
+
+
+
+
+thinking_default = false
+thinking_in_tools = false
+max_thinking_budget = 128
+# 2026-09-25: Clamps the reasoning_effort ladder at E = max_thinking_budget, so high and xhigh resolve
+# to 128 instead of 256 and 512 (effort_budget in crates/server/src/api/chat/thinking.rs). A client's
+# explicit token budget does not go through the ladder.
+
+
+effort_capped_at_ceiling = true
+
+
+enable_loop_watchdog = false
+
+
+
+default_num_drafts = 0
+
+[[model_types]]
+model_type = "qwen3_5_moe"
+hidden_size = 4096
+
+# 2026-09-25: parse_config (crates/config/src/dispatch.rs) rewrites a qwen3_5_moe config with
+# interleaved MRoPE to qwen3_6_moe; this entry accepts that form at the same hidden_size.
+
+
+
+[[model_types]]
+model_type = "qwen3_6_moe"
+hidden_size = 4096

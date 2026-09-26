@@ -1,0 +1,49 @@
+# provenance-id: 526f6e616c6420522e205374657369616b
+recipe_version: "2"
+model: vcruz305/DeepSeek-V4.1-Flash-GGUF
+runtime: metrale
+container: metrale/metrale-inference-gb10:latest
+min_nodes: 1
+max_nodes: 1
+
+metadata:
+  description: |
+    DeepSeek-V4.1 Flash, the seven-shard Q2_K GGUF, served natively by Metrale Engine
+    on one datacenter Blackwell GPU. Same engine as the single-DGX-Spark line:
+    GGUF ingestion, the V4.1 graph and loader, routed experts streamed
+    through the device-visible LRU, K-quant GEMV for decode and MMQ for
+    prefill, engram on, shared compressed attention, the decode fix.
+
+    Two shapes, one recipe. On a B300 the 247 GB checkpoint is resident and
+    nothing streams. On a B200 about three quarters of the routed experts
+    are resident and the rest stream from NVMe through the same cache that
+    runs on the DGX Spark; METRALE_DS41_EXPERT_CACHE_GIB is sized to the box.
+
+    No speculation: the GGUF carries no DSpark keys. One request at a time.
+
+    Numbers are pending and will be reported as measured, with the launch
+    line, commit sha, driver line and receipt JSON, competing engines in the
+    same table. No figure is typed here until it has been run on the box.
+  maintainer: rrstesiak
+  category: agent
+  model_params: 748B
+  model_dtype: q2_k
+  quantization: q2_k
+  kv_dtype: bf16
+
+defaults:
+  port: 8888
+  host: 0.0.0.0
+  tensor_parallel: 1
+  ep_size: 1
+  max_model_len: 32768
+  max_batch_size: 1
+  kv_cache_dtype: bf16
+  gpu_memory_utilization: 0.90
+  oom_guard_mb: 512
+
+env:
+  METRALE_DS41_EXPERT_CACHE_GIB: "88"
+  METRALE_DS41_READER_THREADS: "8"
+  METRALE_DS41_MAX_SEQ: "4096"
+  METRALE_DS41_MAX_TOKENS: "512"

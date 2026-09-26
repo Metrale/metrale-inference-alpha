@@ -1,0 +1,440 @@
+# 2026-09-25: B200 target: kernel set inherited from gb10 (HARDWARE.toml `inherits`).
+# Every table below is a copy of kernels/gb10/qwen3.6-35b-a3b/MODEL.toml except
+# [expected_absent.moe_w4a16], which adds the two W4A4 entry points that
+# HARDWARE.toml's METRALE_NO_WARP_BLOCKSCALE_MMA compiles out here. The rest of
+# [expected_absent] is gb10's list, not one taken with `--check-kernels` on B200.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[model]
+name = "qwen3.6-35b-a3b"
+hf_id = "Qwen/Qwen3.6-35B-A3B-FP8"
+params = "35B"
+active_params = "3B"
+architecture = "Gated DeltaNet + Full Attention + MoE + MRoPE"
+
+layers_total = 40
+layers_linear_attention = 30
+layers_full_attention = 10
+layer_pattern = "3:1 (linear, linear, linear, full)"
+
+moe_experts = 256
+moe_topk = 8
+moe_intermediate = 512
+shared_expert_intermediate = 512
+
+hidden_dim = 2048
+head_dim = 256
+q_heads = 16
+kv_heads = 2
+
+linear_attn_key_heads = 16
+linear_attn_key_dim = 128
+linear_attn_value_heads = 32
+linear_attn_value_dim = 128
+linear_conv_kernel = 4
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+partial_rotary_factor = 0.25
+attn_output_gate = true
+
+
+
+
+
+mrope_interleaved = true
+mrope_section = [11, 11, 10]
+
+mtp_layers = 1
+mtp_type = "full_attention"
+
+vision = true
+
+# 2026-09-25: No code reads effective_context.
+
+
+
+effective_context = 24576
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+# 2026-09-25: No repetition penalty and no DRY. Measured 2026-06-03, temp=0
+# A/B: repetition_penalty 1.1 gave mangled TOML and finish=length; 1.0 gave
+# clean code and finish=stop.
+
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+# 2026-09-25: No repetition penalty and no DRY; see [sampling.thinking_coding].
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+
+
+
+[behavior]
+# 2026-09-25: The checkpoint ships no k_scale/v_scale tensors. With an FP8 KV
+# cache, the server accumulates per-tensor K/V amax over the first 256 observed
+# tokens and then freezes the scales (main_modules/serve_phases/kv_cache.rs);
+# --fp8-kv-calibration-tokens overrides the count (main_modules/serve_load.rs).
+# The key must sit under [behavior], the only table build_parse_behavior.rs
+# reads it from.
+
+
+
+fp8_kv_calibration_tokens = 256
+
+
+
+
+
+
+
+
+
+
+enable_loop_watchdog = true
+# 2026-09-25: Every request's min_p is raised to at least min_p_floor and its
+# temperature capped at temperature_max, whatever the client sends; 0.0
+# disables either, and METRALE_FORCE_TEMP_ZERO bypasses both
+# (crates/server/src/api/chat/sampling_setup.rs). Measured 2026-06-07 with a
+# Claude Code client: min_p 0.05 cut loop-watchdog fires from 4 to 0.
+
+
+
+
+min_p_floor = 0.05
+temperature_max = 0.7
+# 2026-09-25: A request's own thinking directive overrides this, and
+# --disable-thinking turns thinking off for every request
+# (crates/server/src/api/chat/thinking.rs).
+
+thinking_default = true
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+thinking_in_tools = true
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: A request's own thinking budget replaces this, and
+# --max-thinking-budget replaces it for every request
+# (crates/server/src/api/chat/thinking.rs, main_modules/serve_load.rs).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+max_thinking_budget = 768
+# 2026-09-25: On a tool request, the most content tokens outside tool bodies
+# since the last tool call. Past it the scheduler rolls back to a boundary or,
+# if the rollback is declined, ends the response
+# (crates/server/src/scheduler/decode_logits_content.rs).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+max_inter_tool_prose = 3072
+# 2026-09-25: A request with an active grammar ends once its content tokens
+# exceed this; tool-parameter values count. Unset, the cap is 100_000
+# (crates/kernels/build_parse_behavior.rs).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+max_post_think_content_tokens = 8192
+# 2026-09-25: Measured 2026-04-10 on GB10: one draft (K=2) ran at 117.8 tok/s
+# and two drafts (K=3) at 82.4 tok/s.
+
+
+default_num_drafts = 1
+
+[[model_types]]
+model_type = "qwen3_6_moe"
+hidden_size = 2048
+
+[kernel]
+moe_gate_shmem_bytes = 4096
+
+# 2026-09-25: The drafter `--dflash` loads when no --draft-model is given
+# (main_modules/serve_phases/weights.rs).
+
+
+
+
+
+
+
+
+[dflash]
+draft_model = "z-lab/Qwen3.6-35B-A3B-DFlash"
+gamma = 16
+window_size = 4096
+mask_token_id = 248070
+target_layer_ids = [1, 10, 19, 28, 37]
+
+
+
+
+
+
+
+[expected_absent.w4a16]
+w4a16_gemm_t_p3 = """
+3-deep weight-pipeline twin of w4a16_gemm_t, shipped ONLY in
+qwen3.6-27b/nvfp4/w4a16_gemm.cu (49 globals vs this target's slimmer
+shadow). layers::tgemm_kernel probes it first, then falls back to
+w4a16_gemm_t, which resolves here. The fallback is the 2-stage parent
+the p3 twin was derived from; the twin is UNMEASURED for this target's
+shapes — treat as a candidate to measure, not a confirmed loss."""
+w4a16_gemm_t_k64_p3 = """
+Same family: shipped only in qwen3.6-27b's shadow. layers::k64_kernel
+probes it, then REQUIRES w4a16_gemm_t_k64, which resolves here."""
+w4a16_gemm_t_k64_n64_p3 = """
+Narrow-N deep-K twin, shipped only in qwen3.6-27b's shadow.
+layers::k64_n64_kernel returns 0-handle when absent; dispatch gates on
+handle != 0 before firing, so the wide-K64 tile serves these shapes."""
+w4a16_gemm_t_m128_bf16 = """
+BF16-projection prefill twin of w4a16_gemm_t_m128. prefill_weights
+gates the probe result (handle != 0); the fallback is the w4a16 m128
+twin that resolves here, applied through the standard dequant."""
+
+[expected_absent.w4a4]
+w4a4_gemm_mfast = """
+This model's w4a4_gemm.cu defines only w4a4_gemm; the mfast variant
+exists solely in nemotron-labs-3-puzzle-75b-a9b. Dispatch
+(qwen3_attention/init.rs) falls back to w4a4_gemm — same family the
+27B declares. UNMEASURED for this target."""
+
+[expected_absent.moe_w4a16]
+moe_w4a16_fused_gate_up_t_k64_fp4 = """
+W4A4 (FP4 weights AND FP4 activations) fused gate+up. Compiled out on
+this hardware: -DMETRALE_NO_WARP_BLOCKSCALE_MMA (kernels/b200/HARDWARE.toml).
+sm_100a HAS NVFP4, but issues block-scaled MMA through tcgen05; the
+warp-level form this kernel uses is sm_120/sm_121 — ptxas: "Instruction
+'mma with block scale' not supported on .target 'sm_100a'" (measured
+2026-09-05, CUDA 13.0.88). A tcgen05 rewrite would lift this. Resolved
+with try_kernel and fired only when METRALE_HOLO_MOE_GATEUP_FP4 is set AND
+the handle is non-zero; absent, prefill takes
+moe_w4a16_fused_gate_up_t_k64 (FP8 activations), which resolves here.
+UNMEASURED on B200 silicon."""
+moe_w4a16_down_t_k64_fp4 = """
+Same W4A4 family — the routed-expert down projection, in the same
+guarded region. Compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA for the
+same reason: "Instruction 'mma with block scale' not supported on
+.target 'sm_100a'", and liftable by the same tcgen05 port. Fired only
+when METRALE_HOLO_MOE_DOWN_FP4 is set AND the handle is non-zero; absent,
+the FP8 down path serves. UNMEASURED on B200 silicon."""
+moe_w4a16_grouped_gemm_ptrtable_e8m0 = """
+Native-MXFP4 (E8M0) scale-format variant. Shipped only in
+deepseek-v4-flash's moe_w4a16 module (ARM-2 Phase-K). This target is
+NVFP4; the ptrtable grouped GEMM that resolves here serves it."""
+moe_w4a16_grouped_gemm_ptrtable_t_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved ptrtable_t variant."
+moe_w4a16_grouped_gemm_ptrtable_t_k64_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved ptrtable_t_k64 variant."
+moe_w4a16_fused_gate_up_t_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved fused_gate_up variant."
+moe_w4a16_fused_gate_up_t_k64_e8m0 = "Same E8M0 family — NVFP4 target uses the resolved fused_gate_up_k64 variant."
+moe_w4a16_fused_gate_up_t_k64_m128 = """
+M=128 Block-D variant shipped only in minimax-m2-229b's shadow (per the
+dispatch comment in moe/init.rs). Dispatch falls through to M=64."""
+
+# 2026-09-25: The two f16 entries below are not fallbacks. With
+# `--ssm-h-dtype f16` the GDN decode arms launch gdn_f16_norm_k and
+# gdn_f16_strided_norm_half_k without checking the handle
+# (model-layers layers/qwen3_ssm/ssm_forward.rs and
+# trait_decode_multi_seq/ssm_batched_recurrent.rs), so on a target without
+# these kernels that flag launches a zero kernel handle.
+
+[expected_absent.gated_delta_rule]
+gated_delta_rule_decode_f16_norm = "FP16 h-state twin; see honesty note in this MODEL.toml. F32 fused-norm arm resolves."
+gated_delta_rule_decode_f16_strided_norm_half = "FP16 h-state twin; see honesty note in this MODEL.toml. F32 strided-norm arm resolves."
+gated_delta_rule_decode_f32_strided_norm_half = """
+Half-register twin of the resolved f32_strided_norm; selected only when
+the resolved half-register gate is set, and that gate is off by default
+(METRALE_GDN_HALF_REG presence). Not a live path as shipped."""
+gated_delta_rule_decode_f32_strided_norm_smem = """
+SMEM-staged twin; gated behind METRALE_GDN_SMEM_STAGE (presence, off by
+default) AND the half-register gate. Not a live path as shipped."""
+
+
+
+
+
+[expected_absent.gated_delta_rule_snap]
+gated_delta_rule_decode_f32_norm_snap = """
+Exact-verify snapshot twin (#435), shipped only in qwen3.6-27b/nvfp4.
+trait_decode_batched_conv_gdn_exact probes handle != 0; absent, the
+exact arm uses the parent gdn_f32_norm kernel + copy_d2d snapshots
+(same bits, more launches)."""
+gated_delta_rule_decode_f32_strided_norm_snap = """
+Batched exact-verify snapshot twin (#435), shipped only in
+qwen3.6-27b/nvfp4. trait_decode_batched_conv_gdn_multi_exact declines
+the batched form on handle 0 and the per-sequence exact loop serves
+(still exact)."""
+
+[expected_absent.gdn_verify_fused_conv_kn_f32]
+gdn_verify_fused_conv_kn_f32 = """
+FP32 fused verify conv for the exact-verify chain (#435), shipped only
+in qwen3.6-27b/nvfp4. Probed handle != 0; absent, the exact chain keeps
+its per-token conv launches (same bits, more launches)."""

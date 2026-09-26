@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-speculative"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: speculative-decoding policy — MTP gate, adaptive and DFlash rungs, n-gram proposer, spec capacity and stats, scheduler snapshots."
+
+[dependencies]
+metrale-model-layers = { path = "../model-layers", default-features = false }
+parking_lot = { workspace = true }
+tracing = "0.1"
+
+[lints]
+workspace = true

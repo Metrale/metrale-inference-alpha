@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 928" width="1200" height="928" font-family="Urbanist, Helvetica Neue, Helvetica, Arial, sans-serif" role="img" aria-label="Metrale Engine PR Certification — Stage 3 — Ready to merge">
+  <title>Metrale Engine — PR Certification — Stage 3 — Ready to merge</title>
+  <defs>
+    <marker id="tipInk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#D9D9DE"/></marker>
+    <marker id="tipGold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#E4C070"/></marker>
+    <marker id="tipMuted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8A8F99"/></marker>
+    <marker id="tipAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#12B981"/></marker>
+  </defs>
+  <rect width="1200" height="928" fill="#0E1318"/>
+  <g transform="translate(64 22) scale(0.08835) translate(8 128)" aria-hidden="true"><defs><linearGradient id="cert-m-v" x1="0" y1="0" x2="0.25" y2="1"><stop offset="0" stop-color="#CDBFF1"/><stop offset="1" stop-color="#9F8DD8"/></linearGradient><linearGradient id="cert-m-c" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6FD9EC"/><stop offset="1" stop-color="#5A96BD"/></linearGradient><linearGradient id="cert-m-g" x1="0.8" y1="0" x2="0.2" y2="1"><stop offset="0" stop-color="#E4C070"/><stop offset="1" stop-color="#AE8A3F"/></linearGradient><linearGradient id="cert-m-w" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F7F7F9"/><stop offset="1" stop-color="#D9D9DE"/></linearGradient></defs><path d="M0 0L189 189L189 265L47 123L47 362L0 362Z" fill="url(#cert-m-w)"/><path d="M378 0L189 189L189 265L331 123L331 362L378 362Z" fill="url(#cert-m-v)"/><rect x="105" y="326" width="168" height="36" fill="url(#cert-m-c)"/><path d="M464 -118L502 -118C506 -118 508 -116 508 -112C500 -92 468 -60 442 -44L438 -42L408 -42C404 -42 402 -44 402 -48C432 -60 460 -100 464 -118Z" fill="url(#cert-m-g)"/></g>
+  <text x="156" y="44" font-size="23" fill="#D9D9DE" font-weight="650">PR Certification</text>
+  <text x="156" y="66" font-size="13.5" fill="#8A8F99">How a change gets from opened to merged, and what knocks it back.</text>
+  <rect x="64" y="84" width="1072" height="44" rx="4" fill="#1E2631" stroke="#12B981" stroke-width="1.4"/>
+  <rect x="64" y="84" width="5" height="44" fill="#12B981"/>
+  <text x="84" y="104" font-size="14" fill="#12B981" font-weight="650">Stage 3 — Ready to merge</text>
+  <text x="84" y="120" font-size="11.5" fill="#D9D9DE">Sealed, certified, and green.</text>
+  <text x="1120" y="112" font-size="11.5" fill="#8A8F99" text-anchor="end">Nothing is waiting on a person. A PR carrying records enters the queue alone.</text>
+  <g opacity="0.5">
+  <rect x="64" y="144" width="336" height="42" rx="4" fill="#181F28" stroke="#2F3742" stroke-width="1"/>
+  <text x="232" y="170" font-size="13.5" fill="#D9D9DE" font-weight="600" text-anchor="middle">Pull request opened</text>
+  </g>
+  <path d="M 232 186 L 232 220" stroke="#D9D9DE" stroke-width="1.6" fill="none" marker-end="url(#tipInk)" opacity="0.5"/>
+  <g opacity="0.5">
+  <rect x="64" y="224" width="336" height="104" rx="4" fill="#181F28" stroke="#2F3742" stroke-width="1.0"/>
+  <rect x="64" y="224" width="4" height="104" fill="#CDBFF1"/>
+  <text x="84" y="248" font-size="14.5" fill="#CDBFF1" font-weight="650">Stage 1 — Verification</text>
+  <text x="84" y="270" font-size="11.5" fill="#D9D9DE">Formatting, clippy, typos, license headers,</text>
+  <text x="84" y="286" font-size="11.5" fill="#D9D9DE">kernel structure, tests, merge ancestry.</text>
+  <text x="84" y="302" font-size="11.5" fill="#8A8F99">Certification and the nine release-matrix</text>
+  <text x="84" y="318" font-size="11.5" fill="#8A8F99">build legs are held back.</text>
+  <text x="382" y="248" font-size="15" fill="#12B981" font-weight="650" text-anchor="end">✓</text>
+  </g>
+  <path d="M 232 328 L 232 370" stroke="#D9D9DE" stroke-width="1.6" fill="none" marker-end="url(#tipInk)" opacity="0.5"/>
+  <g opacity="0.5">
+  <rect x="86.0" y="336" width="292" height="24" rx="12" fill="#0E1318" stroke="#2F3742" stroke-width="1"/>
+  <text x="232" y="352" font-size="11" fill="#D9D9DE" text-anchor="middle">/stamp, from anyone with write access</text>
+  </g>
+  <g opacity="0.5">
+  <rect x="64" y="374" width="336" height="158" rx="4" fill="#181F28" stroke="#2F3742" stroke-width="1.0"/>
+  <rect x="64" y="374" width="4" height="158" fill="#6FD9EC"/>
+  <text x="84" y="398" font-size="14.5" fill="#6FD9EC" font-weight="650">Stage 2 — Certification</text>
+  <text x="382" y="398" font-size="15" fill="#12B981" font-weight="650" text-anchor="end">✓</text>
+  </g>
+  <g opacity="0.5">
+  <rect x="84" y="410" width="300" height="52" rx="3" fill="#1E2631" stroke="#2F3742" stroke-width="1"/>
+  <text x="96" y="428" font-size="12" fill="#D9D9DE" font-weight="600">Engineer's seal</text>
+  <text x="96" y="444" font-size="11" fill="#8A8F99">A codeowner comments /seal. The sealers'</text>
+  <text x="96" y="456" font-size="11" fill="#8A8F99">owned paths must cover the whole diff.</text>
+  <text x="372" y="428" font-size="13" fill="#12B981" font-weight="650" text-anchor="end">✓</text>
+  </g>
+  <g opacity="0.5">
+  <rect x="84" y="468" width="300" height="52" rx="3" fill="#1E2631" stroke="#2F3742" stroke-width="1"/>
+  <text x="96" y="486" font-size="12" fill="#D9D9DE" font-weight="600">Benchmark records</text>
+  <text x="96" y="502" font-size="11" fill="#8A8F99">Run the campaign on a GPU box and commit</text>
+  <text x="96" y="514" font-size="11" fill="#8A8F99">the records. CI only checks that they cover.</text>
+  <text x="372" y="486" font-size="13" fill="#12B981" font-weight="650" text-anchor="end">✓</text>
+  </g>
+  <path d="M 232 532 L 232 578" stroke="#D9D9DE" stroke-width="1.6" fill="none" marker-end="url(#tipInk)" opacity="1"/>
+  <g opacity="0.5">
+  <rect x="76.0" y="540" width="312" height="24" rx="12" fill="#0E1318" stroke="#2F3742" stroke-width="1"/>
+  <text x="232" y="556" font-size="11" fill="#D9D9DE" text-anchor="middle">the seal covers the diff and every record still stands</text>
+  </g>
+  <g opacity="1">
+  <rect x="64" y="582" width="336" height="72" rx="4" fill="#1E2631" stroke="#12B981" stroke-width="2.0"/>
+  <rect x="64" y="582" width="6" height="72" fill="#12B981"/>
+  <text x="84" y="606" font-size="14.5" fill="#12B981" font-weight="650">Stage 3 — Ready to merge</text>
+  <text x="84" y="628" font-size="11.5" fill="#D9D9DE">The certification check is green. Nothing is</text>
+  <text x="84" y="644" font-size="11.5" fill="#D9D9DE">waiting on a person.</text>
+  </g>
+  <path d="M 232 654 L 232 694" stroke="#D9D9DE" stroke-width="1.6" fill="none" marker-end="url(#tipInk)" opacity="0.28"/>
+  <g opacity="1">
+  <rect x="92.0" y="660" width="280" height="24" rx="12" fill="#0E1318" stroke="#12B981" stroke-width="1"/>
+  <text x="232" y="676" font-size="11" fill="#12B981" text-anchor="middle">a PR carrying records enters the queue alone</text>
+  </g>
+  <g opacity="0.28">
+  <rect x="64" y="698" width="336" height="80" rx="4" fill="#181F28" stroke="#2F3742" stroke-width="1.0"/>
+  <rect x="64" y="698" width="4" height="80" fill="#12B981"/>
+  <text x="84" y="722" font-size="14.5" fill="#D9D9DE" font-weight="650">Merge queue</text>
+  <text x="84" y="744" font-size="11.5" fill="#8A8F99">The whole pipeline runs again against the</text>
+  <text x="84" y="760" font-size="11.5" fill="#8A8F99">queue's merge commit, records included.</text>
+  </g>
+  <path d="M 232 778 L 232 810" stroke="#D9D9DE" stroke-width="1.6" fill="none" marker-end="url(#tipInk)" opacity="0.28"/>
+  <g opacity="0.28">
+  <rect x="64" y="814" width="336" height="42" rx="4" fill="#12B981"/>
+  <text x="232" y="840" font-size="13.5" fill="#0E1318" font-weight="650" text-anchor="middle">Merged</text>
+  </g>
+  <path d="M 64 618 C 30 618, 30 448, 60 448" stroke="#E4C070" stroke-width="1.5" fill="none" marker-end="url(#tipGold)" opacity="0.22" stroke-dasharray="5 4"/>
+  <path d="M 64 738 C 12 738, 12 420, 60 420" stroke="#E4C070" stroke-width="1.5" fill="none" marker-end="url(#tipGold)" opacity="0.22" stroke-dasharray="5 4"/>
+  <text x="42" y="404" font-size="10.5" fill="#E4C070" opacity="0.22" transform="rotate(-90 42 404)">demoted</text>
+  <path d="M 400 262 C 428 262, 430 198, 448 182" stroke="#8A8F99" stroke-width="1.5" fill="none" marker-end="url(#tipMuted)" opacity="0.22" stroke-dasharray="5 4"/>
+  <g opacity="0.22">
+  <rect x="452" y="144" width="340" height="82" rx="4" fill="#181F28" stroke="#8A8F99" stroke-width="1.4" stroke-dasharray="6 4"/>
+  <text x="468" y="168" font-size="14.5" fill="#D9D9DE" font-weight="650">Blocked</text>
+  <text x="468" y="189" font-size="11.5" fill="#8A8F99">A merge conflict, or no common ancestor with</text>
+  <text x="468" y="203" font-size="11.5" fill="#8A8F99">main. Green checks on a conflicting PR describe</text>
+  <text x="468" y="217" font-size="11.5" fill="#8A8F99">a tree nobody will merge. Reachable at any stage.</text>
+  </g>
+  <rect x="812" y="144" width="324" height="82" rx="4" fill="#181F28" stroke="#2F3742" stroke-width="1"/>
+  <path d="M 830 172 L 872 172" stroke="#D9D9DE" stroke-width="1.6" fill="none" marker-end="url(#tipInk)" opacity="1"/>
+  <text x="884" y="176" font-size="11.5" fill="#D9D9DE">advance</text>
+  <path d="M 830 200 L 872 200" stroke="#E4C070" stroke-width="1.5" fill="none" marker-end="url(#tipGold)" opacity="1" stroke-dasharray="5 4"/>
+  <text x="884" y="204" font-size="11.5" fill="#D9D9DE">demotion</text>
+  <text x="452" y="264" font-size="15" fill="#D9D9DE" font-weight="650">What survives what</text>
+  <rect x="452" y="278" width="684" height="30" fill="#1E2631"/>
+  <text x="466" y="298" font-size="11.5" fill="#D9D9DE" font-weight="650">Event</text>
+  <text x="736" y="298" font-size="11.5" fill="#D9D9DE" font-weight="650">Stamp</text>
+  <text x="846" y="298" font-size="11.5" fill="#D9D9DE" font-weight="650">Seal</text>
+  <text x="956" y="298" font-size="11.5" fill="#D9D9DE" font-weight="650">Records</text>
+  <g opacity="1">
+  <text x="466" y="330" font-size="11.5" fill="#D9D9DE">A new commit is pushed to the PR</text>
+  <text x="736" y="330" font-size="11.5" fill="#12B981">holds</text>
+  <text x="846" y="330" font-size="11.5" fill="#E4C070" font-weight="600">voided</text>
+  <text x="956" y="330" font-size="11.5" fill="#E4C070">voided if a perf path moved</text>
+  </g>
+  <g opacity="1">
+  <text x="466" y="364" font-size="11.5" fill="#D9D9DE">main advances, no perf path touched</text>
+  <text x="736" y="364" font-size="11.5" fill="#12B981">holds</text>
+  <text x="846" y="364" font-size="11.5" fill="#12B981">holds</text>
+  <text x="956" y="364" font-size="11.5" fill="#12B981">holds</text>
+  </g>
+  <g opacity="1">
+  <text x="466" y="398" font-size="11.5" fill="#D9D9DE">main advances through a perf path</text>
+  <text x="736" y="398" font-size="11.5" fill="#12B981">holds</text>
+  <text x="846" y="398" font-size="11.5" fill="#12B981">holds</text>
+  <text x="956" y="398" font-size="11.5" fill="#E4C070" font-weight="600">voided</text>
+  </g>
+  <g opacity="1">
+  <text x="466" y="432" font-size="11.5" fill="#D9D9DE">The queue composes another record PR</text>
+  <text x="736" y="432" font-size="11.5" fill="#12B981">holds</text>
+  <text x="846" y="432" font-size="11.5" fill="#12B981">holds</text>
+  <text x="956" y="432" font-size="11.5" fill="#E4C070" font-weight="600">voided</text>
+  </g>
+  <g opacity="1">
+  <text x="466" y="466" font-size="11.5" fill="#D9D9DE">The PR falls into conflict</text>
+  <text x="736" y="466" font-size="11.5" fill="#12B981">holds</text>
+  <text x="846" y="466" font-size="11.5" fill="#12B981">holds</text>
+  <text x="956" y="466" font-size="11.5" fill="#8A8F99">moot until it clears</text>
+  </g>
+  <line x1="452" y1="308" x2="1136" y2="308" stroke="#2F3742"/>
+  <line x1="452" y1="342" x2="1136" y2="342" stroke="#232A34"/>
+  <line x1="452" y1="376" x2="1136" y2="376" stroke="#232A34"/>
+  <line x1="452" y1="410" x2="1136" y2="410" stroke="#232A34"/>
+  <line x1="452" y1="444" x2="1136" y2="444" stroke="#232A34"/>
+  <line x1="452" y1="478" x2="1136" y2="478" stroke="#2F3742"/>
+  <text x="452" y="530" font-size="15" fill="#D9D9DE" font-weight="650">Why the two behave differently</text>
+  <line x1="452" y1="546" x2="452" y2="624" stroke="#12B981" stroke-width="2"/>
+  <text x="470" y="564" font-size="12" fill="#D9D9DE" font-weight="600">A seal survives main moving.</text>
+  <text x="470" y="582" font-size="11.5" fill="#8A8F99">The sealer vouched for this diff, and the queue re-runs the full pipeline against the</text>
+  <text x="470" y="598" font-size="11.5" fill="#8A8F99">composed tree. Reviewed work is allowed to compose. Re-seal only when the diff itself</text>
+  <text x="470" y="614" font-size="11.5" fill="#8A8F99">changes.</text>
+  <line x1="452" y1="640" x2="452" y2="718" stroke="#E4C070" stroke-width="2"/>
+  <text x="470" y="658" font-size="12" fill="#D9D9DE" font-weight="600">Records never do.</text>
+  <text x="470" y="676" font-size="11.5" fill="#8A8F99">Two campaigns measured apart do not compose — the interaction between them was never</text>
+  <text x="470" y="692" font-size="11.5" fill="#8A8F99">measured, and calling it measured is the exact class of silent regression this gate exists</text>
+  <text x="470" y="708" font-size="11.5" fill="#8A8F99">to prevent. Freeze the branch, run the campaign, queue alone.</text>
+  <line x1="452" y1="734" x2="452" y2="796" stroke="#6FD9EC" stroke-width="2"/>
+  <text x="470" y="752" font-size="12" fill="#D9D9DE" font-weight="600">A perf path is any of these.</text>
+  <text x="470" y="770" font-size="11.5" fill="#8A8F99" font-family="ui-mono, ui-monospace, SFMono-Regular, Menlo, monospace">crates  kernels  Cargo.toml  Cargo.lock  vendor  jinja-templates</text>
+  <text x="470" y="786" font-size="11.5" fill="#8A8F99" font-family="ui-mono, ui-monospace, SFMono-Regular, Menlo, monospace">rust-toolchain.toml</text>
+  <text x="452" y="836" font-size="11" fill="#8A8F99">A change under kernels/ that compiles to byte-identical device code does not void a record.</text>
+  <text x="452" y="852" font-size="11" fill="#8A8F99">Site, blog, book and docs paths reach no record's inputs, so certification is skipped outright.</text>
+  <line x1="64" y1="878" x2="1136" y2="878" stroke="#232A34"/>
+  <text x="64" y="900" font-size="11" fill="#8A8F99">Copyright 2026 Metrale Corp.</text>
+  <a href="https://metrale.ai" xlink:href="https://metrale.ai" target="_blank" rel="noopener">
+  <text x="1136" y="900" font-size="11" fill="#6FD9EC" text-anchor="end">metrale.ai</text>
+  </a>
+</svg>

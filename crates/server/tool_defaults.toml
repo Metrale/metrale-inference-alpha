@@ -1,0 +1,49 @@
+# 2026-09-26: Default tool-call parser per model_type, used by
+# `resolve_tool_call_parser` (serve_phases/runtime.rs) when neither
+# --tool-call-parser nor MODEL.toml `[behavior].tool_call_parser` names one.
+# Values are the names `ToolCallFormat::from_str` accepts (tool_parser.rs).
+# A model_type with no entry here, and no override, runs with the tool parser
+# disabled, so `prepare_chat_prompt` treats its requests as having no tools.
+
+[model_type]
+qwen3_5_moe = "qwen3_coder"
+qwen3_5     = "qwen3_coder"
+qwen3_6_moe = "qwen3_coder"
+holo3_1_moe = "qwen3_coder"
+nemotron_h  = "qwen3_coder"
+qwen4_exp   = "qwen3_coder"
+qwen3_next  = "hermes"
+qwen3_vl_moe = "hermes"
+mistral     = "mistral"
+gemma4      = "gemma4"
+minimax_m2  = "minimax_xml"
+laguna      = "poolside_v1"
+glm5_next   = "poolside_v1"
+deepseek_v4 = "deepseek_v4"
+deepseek_v41 = "deepseek_v4"
+
+# 2026-09-26: Reasoning parser per model_type (serve_phases/tokenizer_runtime.rs).
+# There is no CLI override. A model_type with no entry gets the qwen parser
+# when its capabilities report `supports_thinking` (SSM or Mamba-2 layers),
+# and no reasoning parser otherwise, so a pure-attention model that thinks
+# needs an entry here.
+#
+# Formats (reasoning_parser/parsers.rs):
+#   qwen, deepseek_r1, minimax: <think>...</think>, with the block opened by
+#     the prompt (`prompt_opens_think`); one implementation under three names
+#   mistral: [THINK]...[/THINK]
+#   gemma4: the <|channel>thought ... <channel|> channel format
+
+[reasoning]
+qwen3_5_moe = "qwen"
+qwen3_5     = "qwen"
+qwen3_6_moe = "qwen"
+holo3_1_moe = "qwen"
+nemotron_h  = "deepseek_r1"
+deepseek_v4 = "deepseek_r1"
+deepseek_v41 = "deepseek_r1"
+qwen3_next  = "qwen"
+qwen3_vl_moe = "qwen"
+mistral     = "mistral"
+minimax_m2  = "minimax"
+laguna      = "qwen"

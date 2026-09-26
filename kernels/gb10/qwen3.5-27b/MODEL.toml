@@ -1,0 +1,197 @@
+[model]
+name = "qwen3.5-27b"
+hf_id = "Kbenkhaled/Qwen3.5-27B-NVFP4"
+params = "27B"
+active_params = "27B"
+architecture = "Hybrid Attention + SSM (Dense FFN)"
+
+# 2026-09-25: Needle for crates/kernels/src/resolve.rs. No other gb10 MODEL.toml declares this target's
+# (qwen3_5, any hidden_size) wildcard, so build.rs does not require it. A qwen3_5 checkpoint with
+# hidden_size 5120 matches the exact (qwen3_5, 5120) tier first, where qwen3.6-27b and qwen3.8-27b
+# collide and qwen3.6-27b's needles include "qwen3.5-27b"; the wildcard tier is tried only when no
+# exact entry matches.
+
+
+
+
+match_names = ["qwen3.5-27b"]
+
+layers_total = 64
+layers_full_attention = 16
+layers_linear_attention = 48
+
+hidden_dim = 5120
+head_dim = 256
+q_heads = 24
+kv_heads = 4
+intermediate_size = 17408
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+attn_output_gate = true
+partial_rotary_factor = 0.25
+
+mtp_layers = 0
+vision = true
+
+[[model_types]]
+model_type = "qwen3_5"
+
+# 2026-09-25: The local Kbenkhaled/Qwen3.5-27B-NVFP4 config.json enables interleaved MRoPE, but
+# parse_config (crates/config/src/dispatch.rs) rewrites only qwen3_5_moe and qwen3_vl_moe configs to
+# qwen3_6_moe, so this dense checkpoint keeps model_type qwen3_5.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.1
+dry_multiplier = 0.5
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.1
+dry_multiplier = 0.5
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.1
+dry_multiplier = 0.5
+
+[behavior]
+# 2026-09-25: Arms the content-loop watchdog (a CLI flag or METRALE_CONTENT_LOOP_WATCHDOG overrides it),
+# which detects a repeated token pattern in the content and rolls back or ends the response
+# (crates/server/src/scheduler/helpers.rs).
+
+
+enable_loop_watchdog = true
+
+thinking_default = true
+thinking_in_tools = true
+# 2026-09-25: Set explicitly: the built-in default is 256.
+max_thinking_budget = 2048
+
+# 2026-09-25: Lookups this target's dispatch may issue and fail to resolve without failing the boot
+# audit (crates/kernels/build_parse.rs parse_expected_absent); each value is the stated reason.
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: With --ssm-h-dtype f16 the GDN decode paths launch the FP16 twins (gdn_f16_norm_k,
+# gdn_f16_strided_norm_half_k) without a zero-handle check (qwen3_ssm/ssm_forward.rs,
+# qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs), and this target defines neither.
+
+
+
+[expected_absent.gated_delta_rule]
+gated_delta_rule_decode_f16_norm = "FP16 h-state twin; see honesty note above. F32 fused-norm arm resolves."
+gated_delta_rule_decode_f16_strided_norm_half = "FP16 h-state twin; see honesty note above. F32 strided-norm arm resolves."
+gated_delta_rule_decode_f32_strided_norm_half = "Half-register twin; selected only under the resolved half-register gate (METRALE_GDN_HALF_REG presence, off as shipped)."
+gated_delta_rule_decode_f32_strided_norm_smem = "SMEM-staged twin; gated behind METRALE_GDN_SMEM_STAGE (off as shipped) AND the half-register gate."
+
+[expected_absent.gated_delta_rule_wy17]
+gated_delta_rule_wy17 = """
+wy17 fused decode (K=17) exists only in qwen3.6-35b-a3b's PTX module
+set (per the init.rs comment); decode_batched checks non-NULL before
+the fused path and keeps the sequential per-token path otherwise."""
+[expected_absent.gated_delta_rule_snap]
+gated_delta_rule_decode_f32_norm_snap = "Exact-verify snapshot twin (#435/#438), shipped only in qwen3.6-27b/nvfp4; the exact arm probes handle != 0 and falls back to the parent kernel + copy_d2d snapshots (same bits, more launches)."
+gated_delta_rule_decode_f32_strided_norm_snap = "Batched exact-verify snapshot twin (#435/#438), shipped only in qwen3.6-27b/nvfp4; the batched exact form declines on handle 0 and the per-sequence exact loop serves (still exact)."
+
+[expected_absent.gdn_verify_fused_conv_kn_f32]
+gdn_verify_fused_conv_kn_f32 = "FP32 fused verify conv for the exact-verify chain (#435/#438), shipped only in qwen3.6-27b/nvfp4; probed handle != 0, absent keeps the per-token conv launches (same bits, more launches)."
+
+[expected_absent.nvfp4_mmq]
+metrale_nvfp4_mmq128_nc = """
+Vendored llama Blackwell block-scale FP4 MMQ dense-FFN prefill family —
+no nvfp4_mmq source ships in THIS target's set (only qwen3.6-27b's).
+finalize gates on ALL family handles != 0 and only fires for
+METRALE_FFN_NVFP4_MMQ opt-in SiLU models (dense_ffn.rs:473); the resolved
+t_m128 prefill path serves by default. UNMEASURED."""
+metrale_nvfp4_mmq128_wc = "Same MMQ family — family-wide handle gate plus METRALE_FFN_NVFP4_MMQ opt-in."
+metrale_nvfp4_mmq16_nc = "Same MMQ family — family-wide handle gate plus METRALE_FFN_NVFP4_MMQ opt-in."
+metrale_nvfp4_mmq16_wc = "Same MMQ family — family-wide handle gate plus METRALE_FFN_NVFP4_MMQ opt-in."
+metrale_nvfp4_mmq32_nc = "Same MMQ family — family-wide handle gate plus METRALE_FFN_NVFP4_MMQ opt-in."
+metrale_nvfp4_mmq32_wc = "Same MMQ family — family-wide handle gate plus METRALE_FFN_NVFP4_MMQ opt-in."
+metrale_nvfp4_mmq64_nc = "Same MMQ family — family-wide handle gate plus METRALE_FFN_NVFP4_MMQ opt-in."
+metrale_nvfp4_mmq64_wc = "Same MMQ family — family-wide handle gate plus METRALE_FFN_NVFP4_MMQ opt-in."
+metrale_nvfp4_quantize_bf16 = "MMQ activation-quantize helper — only materialized when the MMQ family resolves and is opted in."
+metrale_nvfp4_repack = "MMQ weight-repack helper — same family-wide gating."
+metrale_nvfp4_scale_bf16 = "MMQ scale helper — same family-wide gating."
+metrale_nvfp4_silu_mul_quant = "MMQ fused SiLU-mul-quant helper — same family-wide gating."
+metrale_nvfp4_silu_mul_scaled = "MMQ fused scaled-SiLU-mul helper — same family-wide gating."
+
+[expected_absent.q4k_mmq]
+metrale_q4k_mmq128_nc = """
+Q4_K FFN MMQ family (METRALE_FFN_MMQ opt-in) — no q4k source ships in
+THIS target's set. finalize_q4k_load gates on ALL four q4k handles
+!= 0 AND the env flag (dense_ffn.rs:382). The resolved NVFP4 path
+serves by default. UNMEASURED."""
+metrale_q4k_mmq128_wc = "Same Q4_K family — family-wide handle gate plus METRALE_FFN_MMQ opt-in."
+metrale_q8_1_quantize_ds4_bf16 = "Q4_K activation-quantize helper — only materialized under the same family-wide gating."
+
+[expected_absent.q4k_quantize]
+q4k_quantize = "Q4_K weight-quantize helper — same family-wide gating as the q4k_mmq arms above."
+
+[expected_absent.w4a16]
+int8_gemm_faith2 = """
+Lossy W4A8 dense-FFN prefill twin. Dispatch is DOUBLE-GATED: handle != 0
+AND the METRALE_INT8_PREFILL env opt-in (dense_ffn.rs:1512), so the
+resolved NVFP4 prefill path serves by default. UNMEASURED."""
+int8_gemm_i32acc = "i32-accumulator variant of the same opt-in int8 family (METRALE_INT8_PREFILL); handle != 0 gate in dense_ffn.rs."
+requant_w_nvfp4_int8 = "Weight requant helper for the opt-in int8 family — only materialized when METRALE_INT8_PREFILL is set and the int8 GEMM handles resolve."
+requant_a_bf16_int8 = "Activation requant helper for the same opt-in int8 family; identical gating."
+w4a16_gemm_t_p3 = """
+3-deep weight-pipeline twin shipped ONLY in qwen3.6-27b's shadow.
+layers::tgemm_kernel probes it, then falls back to w4a16_gemm_t, which
+resolves on this target's shadow. UNMEASURED — candidate, not loss."""
+w4a16_gemm_t_k64_p3 = "Same family; layers::k64_kernel falls back to the required w4a16_gemm_t_k64 (resolves here)."
+w4a16_gemm_t_k64_n64_p3 = "Narrow-N deep-K twin; layers::k64_n64_kernel returns 0-handle when absent, dispatch gates on handle != 0 before firing (probed from both the attention and SSM modules)."
+w4a16_gemm_t_m128_bf16 = "BF16-projection prefill twin of w4a16_gemm_t_m128; prefill_weights gates on handle != 0, falls back through the resolved w4a16 m128 path."
+w4a16_gemm_t_m128_bf16_v2 = "Second-generation BF16-projection twin (w4a16_v2_kernel); same handle != 0 gate, falls back to the resolved m128 arm."
+
+[expected_absent.w4a4]
+w4a4_gemm = """
+Dense-FFN native-FP4 prefill arm (METRALE_FP4_PREFILL env opt-in, lossy
+cos~0.99). Dispatch gates on handle != 0 AND the env flag
+(dense_ffn.rs:1585). UNMEASURED."""
+w4a4_gemm_mfast = """
+Shipped only in nemotron-labs-3-puzzle-75b-a9b's shadow. The attention
+W4A4 prefill path is additionally OPT-IN ONLY (METRALE_ATTN_W4A4 env) and
+dispatch gates on handle != 0 (paged_qkv.rs:49, paged_oproj.rs:32).
+UNMEASURED."""

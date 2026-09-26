@@ -1,0 +1,13 @@
+[hardware]
+name = "metal"
+vendor = "apple"
+# 2026-09-25: `arch` is passed to `xcrun metal` as `-std=<arch>`
+# (crates/kernels/build_target.rs).
+arch = "metal3.1"
+device_family = "apple7"
+# 2026-09-25: device_family and the memory_* keys are descriptive: no build
+# or runtime code reads them.
+memory_bandwidth_gbps = 200
+memory_type = "LPDDR5"
+
+memory_gb = 16

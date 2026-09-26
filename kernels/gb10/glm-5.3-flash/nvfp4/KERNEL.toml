@@ -1,0 +1,22 @@
+# 2026-09-25: GLM-5.3-Flash NVFP4 kernel target. The build compiles common/ and this
+# directory; a .cu file with no [modules] entry takes its file stem as its module name, so
+# the GLM kernels in common/ (glm5next_mhc, glm5next_ffn, dsa_indexer, kda_*) need no
+# aliases. This directory holds the kernels only GLM uses: glm5next_dsa_mla_decode,
+# glm5next_mla_latent_write and glm_vit. glm5next_dsa_mla_decode.cu fixes the latent width
+# at GLM_KV_LORA_DIM 512 and Glm5NextDsaConfig::validate refuses any other kv_lora_rank.
+
+
+
+
+
+
+
+
+
+
+
+
+[build]
+
+
+extra_nvcc_flags = ["--fmad=false"]

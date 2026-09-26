@@ -1,0 +1,7 @@
+# 2026-09-25: Files this directory compiles from elsewhere in kernels/ (paths
+# relative to kernels/<hardware>). The build stages them into this layer, so
+# their quoted #includes resolve here (crates/kernels/build_stage.rs).
+[sources]
+use = [
+  "kimi-k3/bf16/dense_f32io.cu",
+]

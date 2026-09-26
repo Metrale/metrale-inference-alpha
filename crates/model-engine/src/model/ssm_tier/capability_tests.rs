@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: Tests for the SSM tier capability gate: rejection on models without
+//! recurrent state, acceptance on hybrid models and when no tier var is set.
+//!
+//! Owner: model-engine SSM tier.
+//! Invariants: none beyond the types.
+
+use metrale_config::{LayerType, ModelConfig};
+
+use super::*;
+
+/// 2026-09-25: Hybrid SSM+attention MoE config.
+fn hybrid() -> ModelConfig {
+    ModelConfig::qwen3_next_80b_nvfp4()
+}
+
+/// 2026-09-25: Pure-attention dense config: no recurrent state, no experts.
+fn dense() -> ModelConfig {
+    let mut c = ModelConfig::qwen3_next_80b_nvfp4();
+    c.model_type = "qwen3".to_string();
+    c.num_hidden_layers = 28;
+    c.layer_types = vec![LayerType::FullAttention; 28];
+    c.num_experts = 0;
+    c.linear_num_key_heads = 0;
+    c.linear_key_head_dim = 0;
+    c.linear_num_value_heads = 0;
+    c.linear_value_head_dim = 0;
+    c
+}
+
+#[test]
+fn capability_predicates_are_honest() {
+    assert!(hybrid().has_recurrent_state());
+    assert!(hybrid().has_experts());
+    assert!(!dense().has_recurrent_state());
+    assert!(!dense().has_experts());
+    let mut moe = dense();
+    moe.num_experts = 512;
+    assert!(moe.has_experts());
+    assert!(!moe.has_recurrent_state());
+}
+
+#[test]
+fn dense_model_with_ssm_tier_var_is_rejected() {
+    let err = ensure_ssm_tier_capability_from(&dense(), &["METRALE_SSM_TIER"]).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("qwen3"), "names the model: {msg}");
+    assert!(msg.contains("METRALE_SSM_TIER"), "names the var: {msg}");
+    assert!(msg.contains("no recurrent state"), "says why: {msg}");
+}
+
+#[test]
+fn attention_only_moe_with_ssm_tier_var_is_rejected() {
+    let mut moe = dense();
+    moe.model_type = "attention-moe".to_string();
+    moe.num_experts = 512;
+    let err = ensure_ssm_tier_capability_from(&moe, &["METRALE_SSM_TIER"]).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("attention-moe"), "names the model: {msg}");
+    assert!(
+        msg.contains("no recurrent state"),
+        "rejects by SSM capability: {msg}"
+    );
+}
+
+#[test]
+fn dense_model_rejects_every_tier_selector_var() {
+    for var in [
+        "METRALE_SSM_TIER",
+        "METRALE_SSM_RDMA_TIER",
+        "METRALE_SSM_SWAP",
+        "METRALE_SSM_DECODE_TIER",
+        "METRALE_SSM_DECODE_RING_ROLL",
+    ] {
+        let err = ensure_ssm_tier_capability_from(&dense(), &[var]).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(var),
+            "gate must reject and name {var}"
+        );
+    }
+}
+
+#[test]
+fn dense_model_error_lists_all_set_vars() {
+    let err =
+        ensure_ssm_tier_capability_from(&dense(), &["METRALE_SSM_TIER", "METRALE_SSM_DECODE_TIER"])
+            .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("METRALE_SSM_TIER") && msg.contains("METRALE_SSM_DECODE_TIER"));
+}
+
+#[test]
+fn dense_model_without_tier_vars_is_ok() {
+    ensure_ssm_tier_capability_from(&dense(), &[]).unwrap();
+}
+
+#[test]
+fn hybrid_model_with_all_tier_vars_is_ok() {
+    ensure_ssm_tier_capability_from(
+        &hybrid(),
+        &[
+            "METRALE_SSM_TIER",
+            "METRALE_SSM_RDMA_TIER",
+            "METRALE_SSM_SWAP",
+            "METRALE_SSM_DECODE_TIER",
+            "METRALE_SSM_DECODE_RING_ROLL",
+        ],
+    )
+    .unwrap();
+}

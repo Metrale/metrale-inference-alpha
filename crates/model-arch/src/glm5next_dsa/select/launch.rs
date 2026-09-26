@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: `select_tokens`, the launcher for one DSA selection pass.
+//!
+//! Owner: model-arch (GLM-5.3 DSA).
+//! Invariants: none beyond the types.
+
+use super::*;
+
+/// 2026-09-25: Run the selection kernels, leaving `[q_rows, out_width]` token ids in
+/// [`DsaSelectScratch::tokens`].
+///
+/// Fails before any launch when `scratch` is too small for `geom`, or when a ceiling launch
+/// has no `geom_dev` or has `q_rows > 1`. The kernels are enqueued on `stream`; nothing here
+/// synchronises.
+#[allow(clippy::too_many_arguments)]
+pub fn select_tokens(
+    gpu: &dyn GpuBackend,
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    launch: DsaSelectLaunch,
+    stream: u64,
+) -> Result<()> {
+    scratch.fits(cfg, geom)?;
+
+    let d = geom.index_head_dim;
+    let kp = geom.index_kpool;
+
+    let ceiling = match launch {
+        DsaSelectLaunch::Exact => None,
+        DsaSelectLaunch::Ceiling { max_pools } => {
+            if inputs.geom_dev.0 == 0 {
+                bail!(
+                    "DSA select: a ceiling launch has no host geometry to fall back on and \
+                     needs `geom_dev`; passing NULL would run the frozen scalars."
+                );
+            }
+            if geom.q_rows != 1 {
+                bail!(
+                    "DSA select: ceiling launch is decode-only (q_rows must be 1, got {}). \
+                     At q_rows > 1 the row strides vary with the context and a replayed \
+                     graph would index the wrong rows.",
+                    geom.q_rows
+                );
+            }
+            Some(max_pools)
+        }
+    };
+    let gd = inputs.geom_dev;
+
+    // 2026-09-25: Under a ceiling launch the kernels read S, the pool counts, the tile and
+    // select_k from `geom_dev`, so the scalar arguments are unused. They are set from the
+    // ceiling, so every capture at the same ceiling passes the same values.
+    let (seq_a, npools_a, np2_a, selk_a) = match ceiling {
+        Some(m) => (
+            m * kp,
+            m,
+            m.next_power_of_two().max(2).min(topk_tile()),
+            cfg.select_k(m),
+        ),
+        None => (geom.seq, geom.n_pools, geom.topk_np2, geom.select_k),
+    };
+
+    // 2026-09-25: Below `index_kpool` tokens there are no pools to score or sort, and a
+    // zero-extent grid is not a valid launch, so `dsa_index_scores` and `dsa_topk_pools` are
+    // skipped. `dsa_kpool_compress` still runs (`n_pools_full >= 1`), and
+    // `dsa_expand_selection` writes the row to -1 and appends the visible tail, which is the
+    // whole selection here. Under a ceiling launch both always run; with no live pools
+    // `dsa_index_scores` blocks return at once and `dsa_topk_pools` selects nothing.
+    let has_pools = geom.n_pools > 0 || ceiling.is_some();
+
+    // 2026-09-25: Pool compression over the full pool count; the trailing partial pool is
+    // written and marked invalid, and no later kernel reads it.
+    KernelLaunch::new(gpu, kernels.kpool_compress)
+        .grid([ceiling.map_or(geom.n_pools_full, |m| m + 1) as u32, 1, 1])
+        .block([d.min(1024) as u32, 1, 1])
+        .arg_ptr(inputs.k_normed)
+        .arg_ptr(inputs.gate)
+        .arg_ptr(inputs.valid)
+        .arg_ptr(inputs.ape)
+        .arg_ptr(scratch.pool_keys)
+        .arg_ptr(scratch.pool_indices)
+        .arg_ptr(scratch.pool_valid)
+        .arg_u32(seq_a as u32)
+        .arg_u32(d as u32)
+        .arg_u32(kp as u32)
+        .arg_i32(inputs.first_key)
+        .arg_ptr(gd)
+        .launch(stream)?;
+
+    if has_pools {
+        KernelLaunch::new(gpu, kernels.index_scores)
+            .grid([
+                ceiling.unwrap_or(geom.n_pools) as u32,
+                geom.q_rows as u32,
+                1,
+            ])
+            .block([SCORES_BLOCK, 1, 1])
+            // 2026-09-25: `dsa_index_scores` keeps one f32 per index head in shared memory and
+            // sums them in head order.
+            .shared_mem(SCORES_BLOCK.max((geom.index_heads * 4) as u32))
+            .arg_ptr(inputs.q)
+            .arg_ptr(scratch.pool_keys)
+            .arg_ptr(inputs.weights)
+            .arg_ptr(scratch.pool_indices)
+            .arg_ptr(scratch.pool_valid)
+            .arg_ptr(inputs.valid)
+            .arg_ptr(inputs.q_pos)
+            .arg_ptr(scratch.scores)
+            .arg_ptr(scratch.valid_cand)
+            .arg_u32(geom.q_rows as u32)
+            .arg_u32(npools_a as u32)
+            .arg_u32(geom.index_heads as u32)
+            .arg_u32(d as u32)
+            .arg_u32(kp as u32)
+            .arg_u32(seq_a as u32)
+            .arg_f32((d as f32).powf(-0.5))
+            .arg_ptr(gd)
+            .launch(stream)?;
+
+        // 2026-09-25: `np2_a` is at most `topk_tile()`, so the request is at most
+        // `topk_smem_for_tile(topk_tile())`, within `TOPK_SMEM_CEILING`.
+        KernelLaunch::new(gpu, kernels.topk_pools)
+            .grid([geom.q_rows as u32, 1, 1])
+            .block([ROW_BLOCK, 1, 1])
+            .shared_mem(topk_smem_for_tile(np2_a) as u32)
+            .arg_ptr(scratch.scores)
+            .arg_ptr(scratch.selected)
+            .arg_u32(geom.q_rows as u32)
+            .arg_u32(npools_a as u32)
+            .arg_u32(np2_a as u32)
+            .arg_u32(selk_a as u32)
+            .arg_ptr(gd)
+            .launch(stream)?;
+    }
+
+    KernelLaunch::new(gpu, kernels.expand_selection)
+        .grid([geom.q_rows as u32, 1, 1])
+        .block([ROW_BLOCK, 1, 1])
+        .arg_ptr(scratch.selected)
+        .arg_ptr(scratch.pool_indices)
+        .arg_ptr(scratch.valid_cand)
+        .arg_ptr(inputs.valid)
+        .arg_ptr(inputs.q_pos)
+        .arg_ptr(inputs.q_mask)
+        .arg_ptr(scratch.tokens)
+        .arg_u32(geom.q_rows as u32)
+        .arg_u32(npools_a as u32)
+        .arg_u32(kp as u32)
+        .arg_u32(seq_a as u32)
+        .arg_u32(selk_a as u32)
+        .arg_u32(geom.out_width as u32)
+        .arg_i32(inputs.first_key)
+        .arg_i32(cfg.always_select_tail as i32)
+        .arg_ptr(gd)
+        .launch(stream)?;
+
+    Ok(())
+}

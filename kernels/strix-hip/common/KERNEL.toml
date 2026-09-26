@@ -1,0 +1,170 @@
+[build]
+extra_nvcc_flags = ["--fmad=false"]
+
+# 2026-09-26: Entry points a model shadow may omit without a shadow-drop build
+# warning, keyed by module name (after the [modules] mapping). This silences
+# only the build warning (crates/kernels/build_plan.rs, `reportable`): the boot
+# gate still refuses any lookup that fails and is not declared in the model's
+# [expected_absent] (server serve_phases/kernel_gate.rs, audit_and_gate).
+#
+# No crate looks up w4a16::w4a16_dequant or moe_w4a16::moe_w4a16_grouped_gemm;
+# the MoE dispatch uses the moe_w4a16_grouped_gemm_ptrtable* entry points
+# (model-layers layers/moe/init.rs).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[shadow_exempt]
+w4a16 = ["w4a16_dequant"]
+moe_w4a16 = ["moe_w4a16_grouped_gemm"]
+
+# 2026-09-25: File stem → module name overrides.
+# Any .cu file not listed here uses its file stem as the module name.
+[modules]
+e2m1_branchless = "e2m1"
+moe_permute = "moe"
+dense_gemm_bf16 = "gemm"
+dense_gemm_splitk = "gemm_splitk"
+dense_gemm_tc = "gemm_tc"
+rms_norm = "norm"
+argmax_bf16 = "argmax"
+dense_gemv_bf16 = "gemv"
+dense_gemv_fp8w = "gemv_fp8w"
+moe_shared_expert_fused_batch2 = "moe_fused_batch2"
+quantize_bf16_to_nvfp4 = "quantize_nvfp4"
+paged_decode_attn = "paged_decode"
+paged_decode_attn_fp8 = "paged_decode_fp8"
+paged_decode_attn_nvfp4 = "paged_decode_nvfp4"
+w4a16_gemm = "w4a16"
+kv_cache_append = "kv_cache"
+moe_w4a16_grouped_gemm = "moe_w4a16"
+moe_sorted_prefill = "moe_sorted"
+moe_shared_expert_fused_batch3 = "moe_fused_batch3"
+attn_prefill_paged = "prefill_paged"
+attn_prefill_paged_fp8 = "prefill_paged_fp8"
+attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
+attn_prefill_fp8kv = "prefill_fp8kv"
+nemotron_moe_prefill = "nemotron_moe_prefill"
+
+# 2026-09-25: A [modules] rename makes the compiled module name match the name
+# the dispatch looks up. common/ is the base layer and a model KERNEL.toml
+# overrides it per key (crates/kernels/build.rs).
+#
+# The paged_decode_attn_turbo* stems carry no rename here, so the
+# turbo KV-cache dtypes cannot resolve on a target that does not add one; the
+# boot requirement check refuses them there
+# (model-layers qwen3_attention/init_kernel_dispatch.rs).
+
+
+
+
+mamba2_ssm_decode = "mamba2_ssm"
+moe_expert_relu2_down_shared = "moe_relu2_fused"
+moe_topk_sigmoid = "moe_topk_sig"
+moe_topk_sqrtsoftplus = "moe_topk_sqrt"
+relu_squared = "relu2"
+
+# 2026-09-25: Sources compiled from elsewhere in kernels/ (paths relative to
+# kernels/<hardware>), in this directory's role, so their quoted #includes
+# resolve against its headers (crates/closure/src/layout.rs).
+[sources]
+use = [
+  "../gb10/common/argmax_bf16.cu",
+  "../gb10/common/bf16_add.cu",
+  "../gb10/common/causal_conv1d.cu",
+  "../gb10/common/dense_gemm_splitk.cu",
+  "../gb10/common/dense_gemv_bf16.cu",
+  "../gb10/common/dense_gemv_fp8w.cu",
+  "../gb10/common/dequant_fp8_blockscaled_bf16.cu",
+  "../gb10/common/e2m1_branchless.cu",
+  "../gb10/common/e4m3_lut.cuh",
+  "../gb10/common/embed_from_argmax.cu",
+  "../gb10/common/gated_delta_rule.cu",
+  "../gb10/common/gated_delta_rule_persistent.cu",
+  "../gb10/common/gated_delta_rule_wy.cu",
+  "../gb10/common/gated_delta_rule_wy3.cu",
+  "../gb10/common/gated_delta_rule_wy4.cu",
+  "../gb10/common/gated_delta_rule_wy64_prefill.cu",
+  "../gb10/common/gdn_reduce.cuh",
+  "../gb10/common/attn_prefill_paged.cu",
+  "../gb10/common/attn_prefill_paged_512.cu",
+  "../gb10/common/attn_prefill_paged_batched.cu",
+  "../gb10/common/attn_prefill_paged_fp8.cu",
+  "../gb10/common/attn_prefill_paged_fp8_batched.cu",
+  "../gb10/common/attn_prefill_paged_nvfp4.cu",
+  "../gb10/common/attn_prefill_paged_nvfp4_batched.cu",
+  "../gb10/common/lora_bgmv.cu",
+  "../gb10/common/mamba2_ssm_decode.cu",
+  "../gb10/common/metadata_fill.cu",
+  "../gb10/common/moe_expert_gemv.cu",
+  "../gb10/common/moe_expert_gemv_fused.cu",
+  "../gb10/common/moe_expert_relu2_down_shared.cu",
+  "../gb10/common/moe_fp8_grouped_blend.cu",
+  "../gb10/common/moe_gate_topk.cu",
+  "../gb10/common/moe_permute.cu",
+  "../gb10/common/moe_prefill.cu",
+  "../gb10/common/moe_shared_expert_fused.cu",
+  "../gb10/common/moe_shared_expert_fused_batch2.cu",
+  "../gb10/common/moe_shared_expert_fused_batch2_t.cu",
+  "../gb10/common/moe_shared_expert_fused_batch3.cu",
+  "../gb10/common/moe_shared_expert_fused_batch3_t.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch2.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch2_t.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch3.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch3_t.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_grouped.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_t.cu",
+  "../gb10/common/moe_shared_expert_fused_t.cu",
+  "../gb10/common/moe_silu_mul.cu",
+  "../gb10/common/moe_sorted_prefill.cu",
+  "../gb10/common/moe_topk.cu",
+  "../gb10/common/moe_topk_sigmoid.cu",
+  "../gb10/common/moe_transpose_batched.cu",
+  "../gb10/common/mx_block_scale.cuh",
+  "../gb10/common/nemotron_moe_prefill.cu",
+  "../gb10/common/paged_decode_attn.cu",
+  "../gb10/common/paged_decode_attn_fp8.cu",
+  "../gb10/common/paged_decode_attn_nvfp4.cu",
+  "../gb10/common/paged_decode_attn_turbo3.cu",
+  "../gb10/common/paged_decode_attn_turbo3_128.cu",
+  "../gb10/common/paged_decode_attn_turbo4.cu",
+  "../gb10/common/paged_decode_attn_turbo4_128.cu",
+  "../gb10/common/paged_decode_attn_turbo4_512.cu",
+  "../gb10/common/paged_decode_attn_turbo8.cu",
+  "../gb10/common/paged_decode_attn_turbo8_128.cu",
+  "../gb10/common/paged_decode_attn_turbo8_512.cu",
+  "../gb10/common/per_token_group_quant_fp8.cu",
+  "../gb10/common/quantize_bf16_to_nvfp4.cu",
+  "../gb10/common/relu_squared.cu",
+  "../gb10/common/reshape_and_cache.cu",
+  "../gb10/common/reshape_and_cache_turbo.cu",
+  "../gb10/common/residual_add.cu",
+  "../gb10/common/rms_norm.cu",
+  "../gb10/common/rms_norm_vanilla.cu",
+  "../gb10/common/rope.cu",
+  "../gb10/common/rope_mrope_interleaved.cu",
+  "../gb10/common/ssm_preprocess.cu",
+  "../gb10/common/ssm_state_norm.cu",
+  "../gb10/common/transpose_u8.cu",
+  "../gb10/common/vector_add.cu",
+  "../gb10/common/w4a16_gemv.cu",
+  "../gb10/common/w4a16_gemv_fused.cu",
+  "../gb10/common/w8a16_gemv.cu",
+  "../gb10/common/widen_block_scale_f32.cu",
+]

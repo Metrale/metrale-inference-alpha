@@ -1,0 +1,386 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: Shared helpers of the `metal_backend` tests: the test backend,
+//! byte conversion, a synthetic MLX-int8 fixture, CPU references for the
+//! TurboQuant kernels, and the cosine / norm-ratio gate.
+//!
+//! Owner: gpu-runtime (metal tests).
+//! Invariants: none beyond the types.
+
+use crate::metal_backend::MetalGpuBackend;
+
+/// 2026-09-25: Whether `METRALE_METAL_NO_DEVICE` declares a run that may have no
+/// Metal device: only the exact value `1` does. Pure, so the rule is tested
+/// without a device and without touching the process environment.
+pub(super) fn no_device_is_declared(v: Option<&str>) -> bool {
+    v == Some("1")
+}
+
+/// 2026-09-25: The test backend over `metrale_kernels::metallib_modules()`.
+///
+/// When `MetalGpuBackend::new` fails (no Metal device, for one) it panics, unless
+/// the run declares `METRALE_METAL_NO_DEVICE=1`; then it returns `None` and the
+/// caller skips with
+/// `let Some(backend) = maybe_backend() else { return };`. libtest reports such
+/// an early return as `ok`, which is why the skip must be declared.
+pub(super) fn maybe_backend() -> Option<MetalGpuBackend> {
+    let modules = metrale_kernels::metallib_modules();
+    match MetalGpuBackend::new(0, &modules) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            if !no_device_is_declared(std::env::var("METRALE_METAL_NO_DEVICE").ok().as_deref()) {
+                panic!(
+                    "no Metal device ({e}), and METRALE_METAL_NO_DEVICE is not set.\n\
+                     A leg that genuinely has no device must say so: set \
+                     METRALE_METAL_NO_DEVICE=1 on that step. Without it, skipping \
+                     would report this suite as passing having executed nothing."
+                );
+            }
+            eprintln!("skipping metal_backend test (METRALE_METAL_NO_DEVICE=1 declared): {e}");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod no_device_rule_tests {
+    use super::no_device_is_declared;
+
+    #[test]
+    fn only_an_explicit_one_declares_a_device_less_run() {
+        assert!(no_device_is_declared(Some("1")));
+        for v in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("yes"),
+            Some(" 1"),
+        ] {
+            assert!(
+                !no_device_is_declared(v),
+                "{v:?} must NOT count as a declaration"
+            );
+        }
+    }
+}
+
+pub(super) fn u32_slice_to_bytes(values: &[u32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * 4);
+    for v in values {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes
+}
+
+pub(super) fn bf16_slice_to_bytes(values: &[half::bf16]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * 2);
+    for v in values {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes
+}
+
+pub(super) fn bytes_to_bf16_vec(bytes: &[u8]) -> Vec<half::bf16> {
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for chunk in bytes.chunks_exact(2) {
+        out.push(half::bf16::from_le_bytes([chunk[0], chunk[1]]));
+    }
+    out
+}
+
+/// 2026-09-25: Synthetic MLX-int8 weights for an `n_rows x n_cols` matrix:
+/// `(packed, scales, biases)` as little-endian bytes, and the BF16 dequantised
+/// reference. `n_cols` must be a multiple of 4 and of `group_size`.
+pub(super) fn build_mlx_fixture(
+    n_rows: usize,
+    n_cols: usize,
+    group_size: usize,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<half::bf16>) {
+    assert!(n_cols % 4 == 0 && n_cols % group_size == 0);
+    let groups_per_row = n_cols / group_size;
+
+    let mut bytes_flat: Vec<u8> = Vec::with_capacity(n_rows * n_cols);
+    for r in 0..n_rows {
+        for c in 0..n_cols {
+            bytes_flat.push(((r * 13 + c * 5 + 17) % 256) as u8);
+        }
+    }
+    let mut packed: Vec<u32> = Vec::with_capacity(n_rows * n_cols / 4);
+    for r in 0..n_rows {
+        for c in (0..n_cols).step_by(4) {
+            let base = r * n_cols + c;
+            let word = (bytes_flat[base] as u32)
+                | ((bytes_flat[base + 1] as u32) << 8)
+                | ((bytes_flat[base + 2] as u32) << 16)
+                | ((bytes_flat[base + 3] as u32) << 24);
+            packed.push(word);
+        }
+    }
+    let mut scales: Vec<half::bf16> = Vec::with_capacity(n_rows * groups_per_row);
+    let mut biases: Vec<half::bf16> = Vec::with_capacity(n_rows * groups_per_row);
+    for r in 0..n_rows {
+        for g in 0..groups_per_row {
+            scales.push(half::bf16::from_f32(
+                0.001 + 0.0005 * r as f32 + 0.0007 * g as f32,
+            ));
+            biases.push(half::bf16::from_f32(
+                -0.05 + 0.01 * r as f32 + 0.005 * g as f32,
+            ));
+        }
+    }
+
+    let mut w_dequant: Vec<half::bf16> = vec![half::bf16::ZERO; n_rows * n_cols];
+    for r in 0..n_rows {
+        for c in 0..n_cols {
+            let byte = bytes_flat[r * n_cols + c] as f32;
+            let g = c / group_size;
+            let s = scales[r * groups_per_row + g].to_f32();
+            let b = biases[r * groups_per_row + g].to_f32();
+            w_dequant[r * n_cols + c] = half::bf16::from_f32(byte * s + b);
+        }
+    }
+    (
+        u32_slice_to_bytes(&packed),
+        bf16_slice_to_bytes(&scales),
+        bf16_slice_to_bytes(&biases),
+        w_dequant,
+    )
+}
+
+/// 2026-09-25: f32 to FP8 E4M3 byte, the same steps as `f32_to_e4m3` in
+/// `kv_cache_append_turbo8.metal`: saturates at 448, rounds half away from zero.
+pub(super) fn cpu_f32_to_e4m3(f: f32) -> u8 {
+    let sign: u8 = if f < 0.0 { 0x80 } else { 0x00 };
+    let a = f.abs();
+    if a >= 448.0 {
+        return sign | 0x7E;
+    }
+    if a < 0.001953125 {
+        let m = (a * 512.0).round() as u32;
+        return sign | m as u8;
+    }
+    let mut e = a.log2().floor() as i32;
+    if e < -6 {
+        e = -6;
+    }
+    let man = a / (e as f32).exp2();
+    let mut m3 = ((man - 1.0) * 8.0).round() as u32;
+    if m3 == 8 {
+        e += 1;
+        m3 = 0;
+    }
+    sign | (((e + 7) as u8) << 3) | m3 as u8
+}
+
+/// 2026-09-25: FP8 E4M3 byte to f32, the same steps as `e4m3_to_f32` in
+/// `attention_decode_turbo8.metal`.
+pub(super) fn cpu_e4m3_to_f32(b: u8) -> f32 {
+    let sign = if b & 0x80 != 0 { -1.0f32 } else { 1.0 };
+    let e = (b >> 3) & 0xF;
+    let m = b & 7;
+    if e == 0 {
+        return sign * m as f32 * 0.001953125;
+    }
+    sign * (1.0 + m as f32 * 0.125) * ((e as i32 - 7) as f32).exp2()
+}
+
+/// 2026-09-25: Deterministic pseudo-random BF16-representable value in [-2, 2].
+pub(super) fn test_val(i: usize) -> f32 {
+    let raw = ((i * 2654435761) >> 7) % 4001;
+    f32::from(half::bf16::from_f32(raw as f32 / 1000.0 - 2.0))
+}
+
+// 2026-09-25: The `TQP_SIGNS*` tables of `wht_bf16.metal`, which the metal build
+// compiles with `-DTQ_PLUS_SIGNS` (`kernels/metal/common/KERNEL.toml`).
+#[rustfmt::skip]
+pub(super) const TQP_SIGNS1_128: [f32; 128] = [-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0];
+pub(super) const TQP_SIGNS2_128: [f32; 128] = [
+    1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0,
+    1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+    -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0,
+    1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0,
+    -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0,
+    -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0,
+    -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0,
+    -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0,
+];
+pub(super) const TQP_SIGNS1_256: [f32; 256] = [
+    -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0,
+    1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0,
+    1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0,
+    1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0,
+    1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0,
+    -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0,
+    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0,
+    -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,
+    -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0,
+    -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0,
+    -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0,
+    -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0,
+    -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0,
+    -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+    -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0,
+    -1.0,
+];
+pub(super) const TQP_SIGNS2_256: [f32; 256] = [
+    -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0,
+    1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0,
+    -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0,
+    1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+    1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0,
+    1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0,
+    -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0,
+    1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,
+    1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+    -1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, -1.0,
+    1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, 1.0,
+    1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0,
+    -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0,
+    -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0,
+    -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0,
+];
+
+/// 2026-09-25: The minimum cosine, and norm ratio, that `real_model_gemv.rs`
+/// asserts; the same value as `COSINE_GATE` in
+/// `crates/model-arch/examples/gdn_regresident_microtest.rs`.
+/// Unlike an absolute difference bound it does not depend on the output's scale,
+/// and it rejects an all-zero output (see [`cosine_bf16`]).
+pub(super) const COSINE_GATE: f64 = 0.9999;
+
+/// 2026-09-25: Cosine similarity accumulated in f64, as `cos_bf16` in
+/// `gdn_regresident_microtest.rs`. Returns NaN when either side has zero norm,
+/// and every comparison with NaN is false, so `cosine_bf16(..) >= COSINE_GATE`
+/// rejects an all-zero output.
+pub(super) fn cosine_bf16(a: &[half::bf16], b: &[half::bf16]) -> f64 {
+    let (mut d, mut na, mut nb) = (0f64, 0f64, 0f64);
+    for i in 0..a.len() {
+        let (x, y) = (a[i].to_f32() as f64, b[i].to_f32() as f64);
+        d += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return f64::NAN;
+    }
+    d / (na.sqrt() * nb.sqrt())
+}
+
+/// 2026-09-25: Ratio of the two sides' L2 norms, smaller over larger, so it lies in
+/// [0, 1] and is judged by [`COSINE_GATE`] too. Cosine is scale-free and passes a
+/// uniform gain; this catches it. Returns NaN when either norm is zero, which
+/// fails the gate.
+pub(super) fn norm_ratio_f32(a: &[f32], b: &[f32]) -> f64 {
+    let na: f64 = a
+        .iter()
+        .map(|v| (*v as f64) * (*v as f64))
+        .sum::<f64>()
+        .sqrt();
+    let nb: f64 = b
+        .iter()
+        .map(|v| (*v as f64) * (*v as f64))
+        .sum::<f64>()
+        .sqrt();
+    if na == 0.0 || nb == 0.0 {
+        return f64::NAN;
+    }
+    na.min(nb) / na.max(nb)
+}
+
+/// 2026-09-25: [`norm_ratio_f32`] over BF16 inputs.
+pub(super) fn norm_ratio_bf16(a: &[half::bf16], b: &[half::bf16]) -> f64 {
+    let fa: Vec<f32> = a.iter().map(|v| v.to_f32()).collect();
+    let fb: Vec<f32> = b.iter().map(|v| v.to_f32()).collect();
+    norm_ratio_f32(&fa, &fb)
+}
+
+/// 2026-09-25: One BF16 ulp at magnitude `x`: 8 significand bits, so
+/// ulp = 2^(exp-7). The same rule as `bf16_ulp` in
+/// `crates/model-arch/examples/glm5next_ffn_microtest.rs`, which this crate
+/// cannot import.
+pub(super) fn bf16_ulp(x: f32) -> f32 {
+    if x == 0.0 {
+        return f32::MIN_POSITIVE;
+    }
+    let e = x.abs().log2().floor() as i32;
+    2.0f32.powi(e - 7)
+}
+
+/// 2026-09-25: [`cosine_bf16`] over f32 inputs, with the same zero-norm rule.
+pub(super) fn cosine_f32(a: &[f32], b: &[f32]) -> f64 {
+    let (mut d, mut na, mut nb) = (0f64, 0f64, 0f64);
+    for i in 0..a.len() {
+        let (x, y) = (a[i] as f64, b[i] as f64);
+        d += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return f64::NAN;
+    }
+    d / (na.sqrt() * nb.sqrt())
+}
+
+#[cfg(test)]
+mod cosine_tests {
+    use super::{COSINE_GATE, cosine_bf16, cosine_f32};
+
+    /// 2026-09-25: An all-zero output fails the gate, including against values small
+    /// enough to pass an absolute 0.02 bound.
+    #[test]
+    fn an_all_zero_side_never_passes_the_gate() {
+        let truth: Vec<half::bf16> = (0..256)
+            .map(|i| half::bf16::from_f32(0.001 * ((i as f32) * 0.0123).sin()))
+            .collect();
+        let zeros = vec![half::bf16::ZERO; truth.len()];
+        let max_abs = truth
+            .iter()
+            .map(|v| v.to_f32().abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs < 0.02,
+            "precondition: these values are small enough that the OLD 0.02 bound \
+             accepted an all-zero output ({max_abs} < 0.02)"
+        );
+        assert!(
+            !(cosine_bf16(&truth, &zeros) >= COSINE_GATE),
+            "an all-zero output passed the cosine gate"
+        );
+        assert!(!(cosine_f32(&[0.0, 0.0], &[1.0, 2.0]) >= COSINE_GATE));
+    }
+
+    /// 2026-09-25: An identical side passes, so the gate does not reject everything.
+    #[test]
+    fn an_identical_side_scores_one() {
+        let v: Vec<half::bf16> = (0..64)
+            .map(|i| half::bf16::from_f32((i as f32) * 0.01 - 0.3))
+            .collect();
+        assert!(cosine_bf16(&v, &v) >= COSINE_GATE);
+        assert!(cosine_f32(&[1.0, -2.0, 3.5], &[1.0, -2.0, 3.5]) >= COSINE_GATE);
+    }
+
+    /// 2026-09-25: One flipped sign in four elements fails the gate.
+    #[test]
+    fn a_single_flipped_element_is_caught() {
+        let a: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0];
+        let b: Vec<f32> = vec![1.0, 1.0, 1.0, -1.0];
+        assert!(!(cosine_f32(&a, &b) >= COSINE_GATE));
+    }
+
+    /// 2026-09-25: Cosine passes a uniform 1.005 gain; the norm ratio fails it.
+    #[test]
+    fn a_uniform_gain_is_invisible_to_cosine_and_caught_by_the_norm_ratio() {
+        let a: Vec<f32> = (0..128)
+            .map(|i| 0.001 * ((i as f32) * 0.0123).sin())
+            .collect();
+        let b: Vec<f32> = a.iter().map(|v| v * 1.005).collect();
+        assert!(
+            cosine_f32(&a, &b) >= COSINE_GATE,
+            "precondition: cosine is scale-free and must NOT flag a pure gain"
+        );
+        assert!(
+            !(super::norm_ratio_f32(&a, &b) >= COSINE_GATE),
+            "the norm ratio must catch the gain cosine cannot see"
+        );
+    }
+}

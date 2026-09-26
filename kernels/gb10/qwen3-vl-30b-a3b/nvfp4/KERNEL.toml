@@ -1,0 +1,88 @@
+[build]
+extra_nvcc_flags = ["--fmad=false", "-DHDIM=128"]
+
+# 2026-09-25: File stem to module name. A stem that no layer's [modules] lists keeps its stem as the
+# module name (crates/kernels/build.rs).
+[modules]
+e2m1_branchless = "e2m1"
+moe_permute = "moe"
+dense_gemm_bf16 = "gemm"
+rms_norm = "norm"
+argmax_bf16 = "argmax"
+dense_gemv_bf16 = "gemv"
+dense_gemv_fp8w = "gemv_fp8w"
+moe_shared_expert_fused_batch2 = "moe_fused_batch2"
+quantize_bf16_to_nvfp4 = "quantize_nvfp4"
+paged_decode_attn = "paged_decode"
+paged_decode_attn_fp8 = "paged_decode_fp8"
+paged_decode_attn_nvfp4 = "paged_decode_nvfp4"
+w4a16_gemm = "w4a16"
+kv_cache_append = "kv_cache"
+moe_w4a16_grouped_gemm = "moe_w4a16"
+moe_sorted_prefill = "moe_sorted"
+moe_shared_expert_fused_batch3 = "moe_fused_batch3"
+attn_prefill_paged = "prefill_paged"
+attn_prefill_paged_fp8 = "prefill_paged_fp8"
+attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
+attn_prefill_paged_turbo2 = "prefill_paged_turbo2"
+attn_prefill_paged_turbo3 = "prefill_paged_turbo3"
+attn_prefill_paged_turbo4 = "prefill_paged_turbo4"
+attn_prefill_paged_turbo8 = "prefill_paged_turbo8"
+paged_decode_attn_bf16k_turbo4v = "paged_decode_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo3v = "paged_decode_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo2v = "paged_decode_bf16k_turbo2v"
+paged_decode_attn_turbo4k_turbo3v = "paged_decode_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo8v = "paged_decode_turbo4k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v = "paged_decode_turbo3k_turbo8v"
+paged_decode_attn_turbo2 = "paged_decode_turbo2"
+attn_prefill_paged_bf16k_turbo3v = "prefill_paged_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo3v_128 = "paged_decode_bf16k_turbo3v_128"
+attn_prefill_paged_bf16k_turbo4v = "prefill_paged_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo4v_128 = "paged_decode_bf16k_turbo4v_128"
+attn_prefill_paged_bf16k_turbo2v = "prefill_paged_bf16k_turbo2v"
+paged_decode_attn_bf16k_turbo2v_128 = "paged_decode_bf16k_turbo2v_128"
+vision_encoder = "vision_encoder"
+reshape_and_cache_turbo = "reshape_and_cache_turbo"
+paged_decode_attn_turbo4 = "paged_decode_turbo4"
+wht_bf16 = "wht_bf16"
+tq_plus_innerq_apply = "tq_plus_innerq_apply"
+paged_decode_attn_turbo8 = "paged_decode_turbo8"
+paged_decode_attn_turbo4_512 = "paged_decode_turbo4_512"
+paged_decode_attn_turbo8_512 = "paged_decode_turbo8_512"
+paged_decode_attn_turbo3 = "paged_decode_turbo3"
+paged_decode_attn_turbo3_128 = "paged_decode_turbo3_128"
+paged_decode_attn_turbo2_128 = "paged_decode_turbo2_128"
+paged_decode_attn_turbo4_128 = "paged_decode_turbo4_128"
+paged_decode_attn_turbo8_128 = "paged_decode_turbo8_128"
+attn_prefill_paged_fp8k_turbo3v = "prefill_paged_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo3v_128 = "paged_decode_fp8k_turbo3v_128"
+attn_prefill_paged_fp8k_turbo4v = "prefill_paged_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo4v_128 = "paged_decode_fp8k_turbo4v_128"
+attn_prefill_paged_fp8k_turbo2v = "prefill_paged_fp8k_turbo2v"
+paged_decode_attn_fp8k_turbo2v_128 = "paged_decode_fp8k_turbo2v_128"
+attn_prefill_paged_turbo4k_turbo3v = "prefill_paged_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo3v_128 = "paged_decode_turbo4k_turbo3v_128"
+attn_prefill_paged_turbo4k_turbo8v = "prefill_paged_turbo4k_turbo8v"
+paged_decode_attn_turbo4k_turbo8v_128 = "paged_decode_turbo4k_turbo8v_128"
+attn_prefill_paged_turbo3k_turbo8v = "prefill_paged_turbo3k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v_128 = "paged_decode_turbo3k_turbo8v_128"
+paged_decode_attn_fp8k_turbo3v = "paged_decode_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo4v = "paged_decode_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo2v = "paged_decode_fp8k_turbo2v"
+
+# 2026-09-25: Files this layer compiles from elsewhere in kernels/, as paths relative to kernels/<hardware>.
+# The build stages them with this layer's role (leaf or common), so their quoted #includes resolve against
+# that role's headers (crates/closure/src/layout.rs).
+[sources]
+use = [
+  "deepseek-v4-flash/nvfp4/w4a16_gemm.cu",
+  "gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu",
+]
+
+# 2026-09-26: Stems whose .cu entry in this layer (its own file or a `use`d source) wins over a common/
+# source of the same stem. Each win needs a reason here, and a key that wins nothing is an error
+# (crates/closure/src/layout.rs). kernels/FORKS.md lists the diff distances.
+[shadow]
+moe_w4a16_grouped_gemm = "uses gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu over gb10/common/moe_w4a16_grouped_gemm.cu (1625 of 1369 lines differ); see kernels/FORKS.md"
+rms_norm = "fork of gb10/common/rms_norm.cu (1515 of 1433 lines differ); see kernels/FORKS.md"
+w4a16_gemm = "uses gb10/deepseek-v4-flash/nvfp4/w4a16_gemm.cu over gb10/common/w4a16_gemm.cu (1402 of 1410 lines differ); see kernels/FORKS.md"

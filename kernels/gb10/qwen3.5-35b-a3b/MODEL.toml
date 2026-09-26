@@ -1,0 +1,190 @@
+# 2026-09-25: The checkpoint in the local HF cache, Sehyo/Qwen3.5-35B-A3B-NVFP4 (this hf_id), enables
+# interleaved MRoPE, so parse_config (crates/config/src/dispatch.rs) rewrites its model_type to
+# qwen3_6_moe. In a build that also has qwen3.6-35b-a3b it then resolves to that target's exact
+# (qwen3_6_moe, 2048) entry, not to this target's (qwen3_5_moe, any hidden_size) wildcard. This
+# target's KERNEL.toml [modules] map is the same as qwen3.6-35b-a3b's.
+
+
+
+
+
+[model]
+name = "qwen3.5-35b-a3b"
+hf_id = "Sehyo/Qwen3.5-35B-A3B-NVFP4"
+params = "35B"
+active_params = "3B"
+architecture = "Gated DeltaNet + Full Attention + MoE"
+
+layers_total = 40
+layers_linear_attention = 30
+layers_full_attention = 10
+layer_pattern = "3:1 (linear, linear, linear, full)"
+
+moe_experts = 256
+moe_topk = 8
+moe_intermediate = 512
+shared_expert_intermediate = 512
+
+hidden_dim = 2048
+head_dim = 256
+q_heads = 16
+kv_heads = 2
+
+linear_attn_key_heads = 16
+linear_attn_key_dim = 128
+linear_attn_value_heads = 32
+linear_attn_value_dim = 128
+linear_conv_kernel = 4
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+partial_rotary_factor = 0.25
+attn_output_gate = true
+
+mtp_layers = 1
+mtp_type = "full_attention"
+vision = true
+
+# 2026-09-25: Not read by the server: serve_load.rs sets AppState::effective_context to 0.
+
+
+
+effective_context = 24576
+
+
+
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[sampling.tools]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.6
+frequency_penalty = 0.0
+lz_penalty = 0.2
+dry_multiplier = 0.8
+dry_base = 1.75
+dry_allowed_length = 4
+
+
+
+
+[behavior]
+
+
+
+
+
+enable_loop_watchdog = false
+
+thinking_default = true
+thinking_in_tools = true
+max_thinking_budget = 2048
+
+
+
+
+default_num_drafts = 1
+
+[[model_types]]
+model_type = "qwen3_5_moe"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[kernel]
+moe_gate_shmem_bytes = 4096

@@ -1,0 +1,65 @@
+# 2026-09-25: Kimi K3 on B300. Each quant directory's KERNEL.toml lists the gb10
+# sources it compiles on top of kernels/b300/common.
+#
+# The build matches a checkpoint by [[model_types]]
+# (build_parse::parse_model_types). No build or runtime code reads the [model]
+# dimension keys.
+
+
+[model]
+name = "kimi-k3"
+hf_id = "inference-optimization/Kimi-K3-0.40B"
+params = "0.40B"
+active_params = "0.06B"
+architecture = "KDA + gated MLA + AttnRes + Stable LatentMoE"
+
+
+layers_total = 8
+
+layer_pattern = "3 KDA then 1 gated MLA, repeating; last layer is always global MLA"
+first_k_dense_replace = 1
+
+hidden_dim = 7168
+
+
+
+q_heads = 96
+q_lora_rank = 1536
+kv_lora_rank = 512
+qk_nope_head_dim = 128
+qk_rope_head_dim = 64
+v_head_dim = 128
+mla_use_nope = true
+mla_use_output_gate = true
+
+
+linear_num_heads = 96
+linear_head_dim = 128
+linear_conv_kernel = 4
+use_full_rank_gate = true
+gate_lower_bound = -5.0
+
+
+attn_res_block_size = 12
+
+
+moe_experts = 896
+moe_topk = 16
+shared_experts = 2
+routed_expert_hidden_size = 3584
+moe_intermediate = 3072
+
+
+hidden_act = "situ"
+activation_situ_beta = 4.0
+activation_situ_linear_beta = 25.0
+# 2026-09-25: Production moonshotai/Kimi-K3, hidden 7168
+# (docs/k3/fixtures/moonshotai-Kimi-K3-config.json).
+[[model_types]]
+model_type = "kimi_k3"
+hidden_size = 7168
+# 2026-09-25: The inference-optimization/Kimi-K3-0.40B test twin, hidden 1024
+# (docs/k3/fixtures/Kimi-K3-0.40B-config.json).
+[[model_types]]
+model_type = "kimi_k3"
+hidden_size = 1024

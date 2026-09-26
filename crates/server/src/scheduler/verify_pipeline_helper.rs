@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: the verify-time token pick: each speculative verify position's
+//! logits go through `logit_processors::process_position_logits`, the same
+//! per-position function the non-MTP decode path calls.
+//!
+//! Owner: scheduler.
+//! Invariants:
+//! - `verify_pick_all_with_pipeline` returns with the grammar matcher at the
+//!   history depth it entered with, and with `inside_thinking`,
+//!   `think_ended` and `think_just_ended` unchanged. Speculative
+//!   `accept_token` advances are rolled back by history delta, and the
+//!   thinking flags are restored (pick_all.rs, pick_positions.rs).
+//! - `a.output_tokens` does not grow during a pick, so every position sees
+//!   the step-start history. Only the two `min_tokens` checks
+//!   (`MinTokensEosMask`, `ForcedTokenFastPath`) and the sampling seed add
+//!   `verify_pos` to compensate.
+
+mod argmax;
+mod fast_masked;
+mod pick_all;
+mod pick_positions;
+#[cfg(test)]
+mod pick_positions_tests;
+mod scratch;
+
+use crate::scheduler::ActiveSeq;
+use crate::scheduler::helpers::bf16_to_f32;
+use crate::scheduler::logit_processors::LogitsContext;
+use metrale_model_engine::traits::Model;
+
+/// 2026-09-25: pick the token for one verify position.
+///
+/// Dequantises `logits_bytes` (`vocab_size` BF16 values, or FP32 when
+/// `is_fp32`) and runs `process_position_logits` with `PositionKind::Verify`
+/// penalties. Returns the first of:
+/// - the token `process_position_logits` returns (the
+///   `METRALE_FORCE_TEMP_ZERO` raw argmax, or a forced grammar token);
+/// - a sample from the processed logits, when `mtp_verify_sample` is on and
+///   the sequence's temperature is above 0;
+/// - the first-index argmax of the processed logits.
+///
+/// The pipeline stages mutate `a` (for example the F2ConfidenceEarlyStop
+/// streak and `sentence_defer_count`). `verify_pos` is this position's index
+/// in the verify span; it offsets the sampling seed and the token count of
+/// the `min_tokens` checks.
+pub fn verify_pick_with_pipeline(
+    logits_bytes: &[u8],
+    is_fp32: bool,
+    vocab_size: usize,
+    a: &mut ActiveSeq,
+    ctx: &LogitsContext,
+    verify_pos: usize,
+) -> u32 {
+    use crate::scheduler::mtp_timing::Phase;
+    // 2026-09-25: dequantise into the reused thread-local buffer
+    // (`scratch.rs`). `clear` then `extend` writes all `vocab_size` entries
+    // before any read.
+    let t_dequant = ctx.clock.now();
+    let mut f32_logits = scratch::DEQUANT_SCRATCH.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    f32_logits.clear();
+    f32_logits.reserve(vocab_size);
+    if is_fp32 {
+        f32_logits.extend((0..vocab_size).map(|j| {
+            let off = j * 4;
+            f32::from_le_bytes([
+                logits_bytes[off],
+                logits_bytes[off + 1],
+                logits_bytes[off + 2],
+                logits_bytes[off + 3],
+            ])
+        }));
+    } else {
+        f32_logits.extend((0..vocab_size).map(|j| {
+            let lo = logits_bytes[j * 2];
+            let hi = logits_bytes[j * 2 + 1];
+            bf16_to_f32(lo, hi)
+        }));
+    }
+    ctx.tel.mark(Phase::Dequant, t_dequant);
+    // 2026-09-25: the guard hands the buffer back to `DEQUANT_SCRATCH` on
+    // every return below.
+    let mut f32_logits = scratch::ScratchGuard(f32_logits);
+
+    // 2026-09-25: verify positions take the sequence's repetition, presence,
+    // frequency, LZ and DRY penalties and the min-reasoning `</think>` floor
+    // bias, with temperature 0, no seed and no request bias
+    // (`penalty_params_for`). Built before `a` is borrowed mutably below.
+    let penalties = crate::scheduler::sample_step::penalty_params_for(
+        a,
+        crate::scheduler::sample_step::PositionKind::Verify,
+        0.0,
+        None,
+        Vec::new(),
+        ctx.watchdog.min_reasoning_floor,
+    );
+
+    // 2026-09-25: a `Some(tok)` from `process_position_logits` is the
+    // force-temp-zero argmax or a forced grammar token, emitted as is. That
+    // call never advances the grammar matcher; the position loop in
+    // `pick_positions.rs` does.
+    let t_proc = ctx.clock.now();
+    // 2026-09-25: the `min_tokens` checks count
+    // `output_tokens.len() + verify_pos`.
+    let pos_ctx = LogitsContext {
+        verify_pos,
+        ..ctx.clone()
+    };
+    if let Some(tok) = crate::scheduler::logit_processors::process_position_logits(
+        &mut f32_logits,
+        a,
+        &pos_ctx,
+        &penalties,
+        crate::scheduler::sample_step::PositionKind::Verify,
+    ) {
+        ctx.tel.mark(Phase::PipelineProc, t_proc);
+        return tok;
+    }
+    ctx.tel.mark(Phase::PipelineProc, t_proc);
+
+    // 2026-09-25: sample instead of taking the argmax when
+    // `mtp_verify_sample` is on (`METRALE_NO_MTP_VERIFY_SAMPLE=1` turns it
+    // off), the temperature is above 0 and `force_temp_zero` is off. The
+    // penalties were applied in place above, so the sampler gets neutral
+    // penalty fields, and masked tokens are already at -inf. min_p is
+    // `effective_min_p` (0.0 under `METRALE_NO_MTP_MINP=1`). The seed offset
+    // `output_tokens.len() + verify_pos` is the one the non-MTP path
+    // (`decode_logits_seq::process_seq_logits`) uses for the same emitted
+    // position.
+    if ctx.sampling.mtp_verify_sample && a.temperature > 0.0 && !ctx.sampling.force_temp_zero {
+        let t_sample = ctx.clock.now();
+        let step_seed = a
+            .seed
+            .map(|s| s.wrapping_add((a.output_tokens.len() + verify_pos) as u64));
+        let sampler_shape = metrale_sampling::SamplingParams {
+            temperature: a.temperature,
+            top_k: a.top_k,
+            top_p: a.top_p,
+            top_n_sigma: a.top_n_sigma,
+            min_p: crate::scheduler::sample_step::effective_min_p(a.min_p, &ctx.sampling),
+            logit_bias: Vec::new(),
+            repetition_penalty: 1.0,
+            repetition_penalty_window: 0,
+            presence_penalty: 0.0,
+            frequency_penalty: 0.0,
+            lz_penalty: 0.0,
+            dry_multiplier: 0.0,
+            dry_base: penalties.dry_base,
+            dry_allowed_length: penalties.dry_allowed_length,
+            dry_sequence_breakers: Vec::new(),
+            max_tokens: 0,
+            stop_token_ids: Vec::new(),
+            seed: step_seed,
+        };
+        // 2026-09-25: SAFETY: `f32_logits` holds exactly `vocab_size`
+        // initialised f32s, so `vocab_size * 4` bytes are in bounds, and u8
+        // has no alignment requirement.
+        let f32_bytes: &[u8] =
+            unsafe { std::slice::from_raw_parts(f32_logits.as_ptr() as *const u8, vocab_size * 4) };
+        let sampled = metrale_sampling::sample_with_params_history(f32_bytes, &sampler_shape, &[]);
+        // 2026-09-25: timed as `Phase::Argmax` because the sample takes the
+        // argmax's place.
+        ctx.tel.mark(Phase::Argmax, t_sample);
+        return sampled;
+    }
+
+    // 2026-09-25: first-index-wins argmax. The sampler's own greedy branch
+    // breaks ties on the last index (`greedy_pick_last_wins`), so the two
+    // can differ on exact ties.
+    let t_argmax = ctx.clock.now();
+    let best_id = argmax::argmax_first_wins(&f32_logits);
+    ctx.tel.mark(Phase::Argmax, t_argmax);
+    best_id
+}
+
+pub use pick_all::verify_pick_all_with_pipeline;

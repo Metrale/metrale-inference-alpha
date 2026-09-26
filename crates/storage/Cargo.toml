@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: GDS/RDMA tiers, expert paging, cache peers, tiered-cache core (SlotArena/SwapStore/Residency)."
+
+[features]
+default = ["cuda"]
+cuda = []
+metal = []
+
+[dependencies]
+metrale-core = { path = "../core", default-features = false }
+metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
+anyhow = { workspace = true }
+getrandom = "0.4"
+half = "2"
+io-uring = "0.7"
+libc = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = "0.1"
+rand = "0.8"
+rand_chacha = "0.3"
+rand_distr = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
+
+[target.'cfg(windows)'.dependencies]
+getrandom = "0.4"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+[build-dependencies]
+toml = "1.1"
+
+[[example]]
+name = "gds-probe"
+path = "examples/gds_probe.rs"
+
+[[example]]
+name = "iouring-bench"
+path = "examples/iouring_bench.rs"
+
+[[example]]
+name = "long-context-bench"
+path = "examples/long_context_bench.rs"
+
+[lints]
+workspace = true

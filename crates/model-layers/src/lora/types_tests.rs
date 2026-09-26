@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: Tests over hand-built [`LoraWeights`] with no GPU: name-to-slot
+//! resolution, the adapter id per slot and after a generation bump, ref-count
+//! and LRU bookkeeping, and the target-module and rank checks of
+//! `validate_peft_config`.
+//!
+//! Owner: model-layers (lora).
+//! Invariants: none beyond the types.
+
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
+
+use metrale_config::PeftAdapterConfig;
+use metrale_gpu_runtime::gpu::DevicePtr;
+
+use crate::lora::*;
+
+#[test]
+fn adapter_names_and_slot_resolve() {
+    let peft = PeftAdapterConfig {
+        r: 4,
+        lora_alpha: 8.0,
+        target_modules: vec!["k_proj".into()],
+        target_modules_pattern: None,
+        use_rslora: false,
+        layers_to_transform: None,
+        trainable_token_indices: Vec::new(),
+        modules_to_save: Vec::new(),
+        lora_embedding: false,
+    };
+    let mk_slot = |name: &str| AdapterSlot {
+        name: name.to_string(),
+        adapter_config: peft.clone(),
+        layers: Vec::new(),
+        generation: 0,
+    };
+    let lw = LoraWeights {
+        name: "alpha".into(),
+        adapter_config: peft.clone(),
+        max_rank: 4,
+        max_loras: 8,
+        pool: DevicePtr(0),
+        pool_bytes: 0,
+        expert_pool: None,
+        expert_pool_bytes: 0,
+        slots: vec![mk_slot("alpha"), mk_slot("beta"), mk_slot("")],
+        active: 0,
+        tables: BTreeMap::new(),
+        scale_table: DevicePtr(0),
+        ref_counts: (0..8).map(|_| AtomicUsize::new(0)).collect(),
+        pinned: 2,
+        last_used: (0..8).map(|_| AtomicU64::new(0)).collect(),
+        lru_tick: AtomicU64::new(0),
+        overlay_raw: Vec::new(),
+    };
+    assert_eq!(lw.adapter_names(), vec!["alpha", "beta"]);
+    assert_eq!(lw.slot_of("beta"), Some(1));
+    assert_eq!(lw.slot_of("missing"), None);
+    assert_eq!(lw.slot_of(""), None, "empty cache slots are not resident");
+
+    let id_alpha = adapter_id_hash("alpha", 0);
+    let id_beta = adapter_id_hash("beta", 0);
+    assert_ne!(id_alpha, id_beta, "distinct names must not collide");
+    assert_ne!(
+        id_alpha, 0,
+        "a real adapter must never alias the base sentinel"
+    );
+    assert_eq!(lw.adapter_id_for_slot(0), id_alpha);
+    assert_eq!(lw.adapter_id_for_slot(1), id_beta);
+    assert_eq!(lw.adapter_id_for_slot(2), 0, "empty cache slot is base");
+    assert_eq!(lw.adapter_id_for_slot(-1), id_alpha);
+    assert_eq!(lw.adapter_id_for_slot(99), 0);
+}
+
+#[test]
+fn slot_generation_bump_freshens_adapter_id() {
+    let peft = PeftAdapterConfig {
+        r: 4,
+        lora_alpha: 8.0,
+        target_modules: vec!["k_proj".into()],
+        target_modules_pattern: None,
+        use_rslora: false,
+        layers_to_transform: None,
+        trainable_token_indices: Vec::new(),
+        modules_to_save: Vec::new(),
+        lora_embedding: false,
+    };
+    let mut lw = LoraWeights {
+        name: "sol".into(),
+        adapter_config: peft.clone(),
+        max_rank: 4,
+        max_loras: 4,
+        pool: DevicePtr(0),
+        pool_bytes: 0,
+        expert_pool: None,
+        expert_pool_bytes: 0,
+        slots: vec![AdapterSlot {
+            name: "sol".into(),
+            adapter_config: peft.clone(),
+            layers: Vec::new(),
+            generation: 0,
+        }],
+        active: 0,
+        tables: BTreeMap::new(),
+        scale_table: DevicePtr(0),
+        ref_counts: (0..4).map(|_| AtomicUsize::new(0)).collect(),
+        pinned: 1,
+        last_used: (0..4).map(|_| AtomicU64::new(0)).collect(),
+        lru_tick: AtomicU64::new(0),
+        overlay_raw: Vec::new(),
+    };
+    let id_v1 = lw.adapter_id_for_slot(0);
+    assert_eq!(id_v1, adapter_id_hash("sol", 0));
+    // 2026-09-25: The same increment the disk and peer swaps apply, with the
+    // name unchanged.
+    lw.slots[0].generation = lw.slots[0].generation.wrapping_add(1);
+    let id_v2 = lw.adapter_id_for_slot(0);
+    assert_ne!(id_v1, id_v2, "re-staged slot must yield a fresh id");
+    assert_eq!(id_v2, adapter_id_hash("sol", 1));
+}
+
+#[test]
+fn ref_count_and_lru_bookkeeping_follow_resolved_slots() {
+    let peft = PeftAdapterConfig {
+        r: 4,
+        lora_alpha: 8.0,
+        target_modules: vec!["k_proj".into()],
+        target_modules_pattern: None,
+        use_rslora: false,
+        layers_to_transform: None,
+        trainable_token_indices: Vec::new(),
+        modules_to_save: Vec::new(),
+        lora_embedding: false,
+    };
+    let mk_slot = |name: &str| AdapterSlot {
+        name: name.to_string(),
+        adapter_config: peft.clone(),
+        layers: Vec::new(),
+        generation: 0,
+    };
+    let lw = LoraWeights {
+        name: "alpha".into(),
+        adapter_config: peft.clone(),
+        max_rank: 4,
+        max_loras: 4,
+        pool: DevicePtr(0),
+        pool_bytes: 0,
+        expert_pool: None,
+        expert_pool_bytes: 0,
+        slots: vec![mk_slot("alpha"), mk_slot("beta")],
+        active: 1,
+        tables: BTreeMap::new(),
+        scale_table: DevicePtr(0),
+        ref_counts: (0..4).map(|_| AtomicUsize::new(0)).collect(),
+        pinned: 2,
+        last_used: (0..4).map(|_| AtomicU64::new(0)).collect(),
+        lru_tick: AtomicU64::new(0),
+        overlay_raw: Vec::new(),
+    };
+
+    assert_eq!(lw.acquire_slot(0), 0);
+    assert_eq!(lw.slot_ref_count(0), 1);
+    assert_eq!(lw.slot_last_used(0), 1);
+    assert!(lw.slot_ref_count(0) > 0);
+    assert_eq!(lw.slot_ref_count(1), 0, "other slots untouched");
+
+    assert_eq!(lw.acquire_slot(-1), 1);
+    assert_eq!(lw.slot_ref_count(1), 1);
+    assert_eq!(lw.slot_last_used(1), 2);
+
+    assert_eq!(lw.acquire_slot(0), 0);
+    assert_eq!(lw.slot_ref_count(0), 2);
+    assert_eq!(lw.slot_last_used(0), 3);
+
+    lw.release_slot(0);
+    assert_eq!(lw.slot_ref_count(0), 1);
+    lw.release_slot(0);
+    assert_eq!(lw.slot_ref_count(0), 0);
+    assert!(lw.slot_ref_count(0) == 0, "gate clears after full release");
+    lw.release_slot(1);
+    assert_eq!(lw.slot_ref_count(1), 0);
+    assert_eq!(lw.slot_last_used(0), 3, "release does not change recency");
+    assert_eq!(lw.slot_last_used(1), 2, "release does not change recency");
+
+    lw.touch_slot(1);
+    assert_eq!(lw.slot_last_used(1), 4, "promotion touch advances recency");
+
+    lw.release_slot(0);
+    assert_eq!(lw.slot_ref_count(0), 0);
+
+    assert_eq!(lw.acquire_slot(99), -1, "bad slot acquires nothing");
+    lw.release_slot(-1);
+    assert_eq!(lw.slot_ref_count(99), 0);
+}
+
+/// 2026-09-25: A target module that is neither a [`LoraModule`] PEFT name nor
+/// the router `gate` is refused unless `METRALE_LORA_ALLOW_PARTIAL` is set, and
+/// the error names the module and that variable. `in_proj_qkv`, a GDN input
+/// projection, is such a module.
+#[test]
+fn unsupported_target_modules_are_refused_and_name_the_escape_hatch() {
+    let peft = PeftAdapterConfig {
+        r: 32,
+        lora_alpha: 32.0,
+        target_modules: vec!["down_proj".into(), "o_proj".into(), "in_proj_qkv".into()],
+        target_modules_pattern: None,
+        use_rslora: false,
+        layers_to_transform: None,
+        trainable_token_indices: Vec::new(),
+        modules_to_save: Vec::new(),
+        lora_embedding: false,
+    };
+    let err = crate::lora::env::validate_peft_config(&peft, 64)
+        .expect_err("out_proj is not applicable — the load must refuse");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("REJECT[unsupported-target]"),
+        "wrong reject class: {msg}"
+    );
+    assert!(
+        msg.contains("in_proj_qkv"),
+        "the reject must NAME the offending module: {msg}"
+    );
+    assert!(
+        msg.contains("METRALE_LORA_ALLOW_PARTIAL"),
+        "the reject must point at the deliberate-partial opt-in: {msg}"
+    );
+    assert!(!msg.contains("'o_proj'"), "o_proj is supported: {msg}");
+}
+
+/// 2026-09-25: The rank check: r=32 fits a pool of max rank 64, r=128 does
+/// not.
+#[test]
+fn rank_gate_is_independent_of_the_target_gate() {
+    let mk = |r: usize| PeftAdapterConfig {
+        r,
+        lora_alpha: 32.0,
+        target_modules: vec!["q_proj".into()],
+        target_modules_pattern: None,
+        use_rslora: false,
+        layers_to_transform: None,
+        trainable_token_indices: Vec::new(),
+        modules_to_save: Vec::new(),
+        lora_embedding: false,
+    };
+    assert!(crate::lora::env::validate_peft_config(&mk(32), 64).is_ok());
+    let err = crate::lora::env::validate_peft_config(&mk(128), 64).unwrap_err();
+    assert!(format!("{err:#}").contains("REJECT[rank-exceeds-pool]"));
+}

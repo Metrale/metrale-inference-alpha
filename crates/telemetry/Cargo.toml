@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: run metrics, kernel audit, launch trace, progress hooks, and the metal-up instruments (NVML device sampling, energy attribution, GPU spans, scheduler/request telemetry) with their exporters."
+
+[features]
+# 2026-09-26: The OTLP/HTTP JSON metrics body (`export::otlp`); not a default feature.
+otlp = []
+# 2026-09-26: NVTX ranges around the serve lanes; builds gpu-sys's NVTX shim against the toolkit's NVTX3 headers.
+nvtx = ["metrale-gpu-sys/nvtx"]
+
+[dependencies]
+metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = "0.1"
+
+[lints]
+workspace = true

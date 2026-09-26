@@ -1,0 +1,2197 @@
+# 2026-09-25: Gate benchmarks for Qwen3.8-27B on GB10, and the bounds their records must meet.
+#
+# Owner: gb10 kernels.
+# Read by gate::bench (crates/bench/src/gate/bench.rs), scripts/check_bench_threshold_prose.py
+# and the site's bench-toml reader. BENCH.toml is outside every target's closure hash
+# (taxon::configs) and is listed in coverage::NON_COMPILED_KERNEL_FILES, so editing a bound
+# invalidates no record.
+#
+# Invariants:
+# - A [benchmarks.*] sub-table belongs to the [[benchmarks]] entry above it.
+# - gate::bench::load_all refuses a `measured` entry with no metrics, an `unmeasured` entry
+#   with metrics, a `port` serve pin, a `hermetic` pin without the keys it closes, and a
+#   `noise` above 5% of its bound or on an exact pin (min == max).
+# - gate::bench::baseline_for refuses a gate with two measured `default = true` entries on
+#   one hardware, or none.
+# Scoring (gate::scoring): `min` passes when value + noise >= min, `max` when
+# value - noise <= max. Every declared metric must be on the record, and every serve and
+# param pin must be on it at the pinned value.
+
+
+
+
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "agentic-webserver"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+
+
+# 2026-09-25: Not the default: the agentic-webserver default on gb10 is the qwen3.6-35b-a3b
+# entry. Select this variant with `--checkpoint unsloth/Qwen3.8-27B-NVFP4`.
+default = false
+status = "measured"
+note = """\
+The DENSE variant of the agentic gate. Not comparable to the 35B MoE entry in \
+any direction: a dense 27B activates every parameter per token where the 35B \
+MoE activates ~3B, so its wall band is roughly 2x — which is why this is a \
+separate baseline entry with its own ceiling rather than a shared bar. \
+REFERENCE RUN (the definition of these numbers): 2026-08-14, dgx2, binary main \
+680b3a568, N=10 — webserver_ok 10/10, followed_directions 10/10, Sigma-wall \
+1925.1 s, per-run walls 156.0/187.3/274.2/144.7/230.5/243.3/205.2/117.3/185.2/\
+181.4 s (range 117-274 s, 2.3x min-to-max). That run FAILED only the \
+35B-calibrated 1000 s budget while both correctness counts were perfect — the \
+exact miscomparison per-variant thresholds exist to remove; under this entry's \
+own ceiling it is a PASS. Serve profile of the reference run (what the recipe \
+must pin): --gpu-memory-utilization 0.85 --max-batch-size 1 --max-seq-len \
+32768 --kv-cache-dtype bf16 --lm-head-dtype bf16 --scheduler slai \
+--speculative --mtp-quantization bf16 --enable-prefix-caching \
+--ssm-cache-slots 256 --ssm-checkpoint-interval 16 --kv-high-precision-layers \
+auto, thinking ON. The 35B Gate-A profile (0.70 util, batch 2) CANNOT serve \
+this model at all — it dies at boot with no memory left for KV cache — so the \
+recipe is part of the variant, not a detail. The recipe id above now EXISTS in \
+metrale-recipes (merged 2026-08-14 as metrale-recipes#19, commit 20ac6e8), \
+pinning exactly the profile stated above, so this variant can self-start \
+under --pull-request-gate. ★ Note the recipe pins `num_drafts: 3` (K=4), \
+matching the reference run; the qwen3.8-27b target deliberately omits \
+`default_num_drafts`, so an unpinned run would instead take the engine \
+default K=2. When running against an operator-started endpoint pass \
+`--param wall_budget_s=5000` explicitly -- 5000 is this entry's committed \
+ceiling, NOT the 2500 an earlier revision of this note named: threshold_params \
+substitution happens only under the gate (and in the TUI's variant step), so a \
+plain `benchmark run` keeps the schema default 1000 s and a healthy dense tier \
+(Sigma-wall ~1925 s) FAILS its run verdict on wall alone. \
+★ SPEED IS NOT GATED ON THIS VARIANT. `s_per_turn_budget` defaults to 0.0 = \
+non-gating and this entry commits no `[benchmarks.metrics.s_per_turn]` bound, \
+because none has been measured here. That is deliberate: the 35B's measured \
+8.5 s/turn is meaningless against the 18-40 s/turn documented below, and \
+applying it would fail every dense run on a number drawn from another model. \
+`s_per_turn`, `sum_agent_wall_s`, `sum_turns` and `decode_tps` ARE recorded on \
+every run, so a bound can be ratcheted in from real tiers when they exist. \
+The two 10/10 counts are ABSOLUTE correctness \
+bounds and take no noise, same footing as the 35B entry; `iterations` is \
+PINNED at exactly 10 for the same reason stated there — a count bound alone \
+does not describe the run that produced it."""
+
+[benchmarks.serve_overrides]
+
+# 2026-09-25: `--w4a4-downcast` (off by default; see its doc in serve_args.rs) runs the
+# 1..=32-row NVFP4 projections and the 2..=8-row dense-FFN steps as W4A4. The bfcl-subset
+# and kat-equality-gate entries do not pin it.
+w4a4_downcast = "true"
+
+
+
+# 2026-09-25: `--w4a4-downcast-wide` extends the same W4A4 path to 33..=64 rows. It takes
+# effect only with `--w4a4-downcast` (the serve warns otherwise), so every entry here that
+# pins one pins both.
+w4a4_downcast_wide = "true"
+
+
+[benchmarks.metrics.followed_directions]
+min = 10.0
+
+[benchmarks.metrics.iterations]
+min = 10.0
+max = 10.0
+
+[benchmarks.metrics.sum_wall_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: Under --pull-request-gate this max becomes the driver's `wall_budget_s`
+# (threshold_params in benchmarks/agentic/descriptors.rs).
+max = 5000.0
+
+[benchmarks.metrics.webserver_ok]
+min = 10.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "bfcl-subset"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth-bfcl"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+
+
+
+# 2026-09-25: The bfcl-subset default on gb10; the qwen3.6-27b entry is default = false.
+default = true
+
+
+
+status = "measured"
+note = """\
+The DENSE 3.8 leg of the BFCL gate. Exists so a Qwen3.8-27B score can be read \
+directly against the recorded Qwen3.6-27B results — same golden ST-995 draw \
+(62/10/10, floor 25, n=995, seed 42, temp 0), same scorer, and a serve recipe \
+whose defaults are byte-identical to the 3.6 sibling's (metrale-recipes#20; only \
+the checkpoint differs). That identity is load-bearing: BFCL's normalized \
+score moves with serve config as well as with the draw, so the two legs must \
+share a config or the generation-over-generation delta means nothing. \
+Thresholds are ABSENT until a run establishes them; until then a run here \
+BASELINES rather than gates. ★ Do NOT copy the 3.6 entry's floors \
+(87.44 / 88.59) or the MLPerf floor (83.64 / 85.32) into this entry: same \
+architecture and same draw, but DIFFERENT WEIGHTS, so neither transfers. The \
+MLPerf-edge submission rides on 3.6, and nothing here guards it. \
+★ One discontinuity vs the recorded 3.6 history: `num_drafts = 1` (K=2) was \
+silently discarded before the 2026-08-14 --num-drafts precedence fix, so those \
+3.6 numbers were measured at K=4. Speculative decode is lossless, so ACCURACY \
+is comparable across that boundary; wall and TPOT are not. \
+★ CERTIFIED BY SHARDS SINCE 2026-09-13 (gate::check_group): a complete partition \
+of `--param shard=i/n` runs at one commit, any n — the campaign sizes n to its \
+fleet (met bench certify --shards) and the records say what they are \
+(shard.index / shard.count; filed here as -s<i>of<n>). A whole-draw record under \
+.benchmarks/bfcl-subset/ no longer satisfies this gate. ★ SCORED OPEN by owner decision: cross-request \
+SSM snapshot reuse stays ON (no --hermetic pin here — contrast \
+kat-equality-gate below, which pins the closed regime as its SUBJECT). The \
+consequence is measured and named: 12 of the 995 answers differ between the \
+whole draw and its four shards (#936, pin e897463b54) — \
+live_irrelevance_2-0-2, live_irrelevance_8-0-8, live_irrelevance_14-2-2, \
+live_irrelevance_15-2-3, live_irrelevance_16-2-4, live_irrelevance_40-2-28, \
+live_irrelevance_47-2-35, live_irrelevance_55-2-43, live_irrelevance_71-2-59, \
+live_irrelevance_79-2-67, live_multiple_57-22-4, live_parallel_multiple_3-2-1 \
+(the list lives in benchmarks::bfcl::sensitive and every run reports \
+known_partition_sensitive). The floors below are therefore cut from the \
+SHARDED aggregate, never from a whole-draw run."""
+
+[benchmarks.metrics.samples]
+
+# 2026-09-25: The golden draw is 995 samples, pinned at both ends: a run with another count
+# scored a different draw. Under certification the gate checks the union of one complete
+# shard partition at one commit (gate::check_group).
+min = 995.0
+max = 995.0
+
+[benchmarks.metrics.overall_accuracy]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 83.00
+noise = 0.4
+
+[benchmarks.metrics.normalized_single_turn_score]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 82.96
+noise = 0.4
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: decode-floor, a required gate (gate::coverage::REQUIRED). The driver pins the
+# request (its MinHeap code prompt, temperature 0, seed 0, max_tokens 1500, reasoning_effort
+# "none"), makes 3 runs and reports the median server decode rate. The run is inconclusive,
+# a failing verdict, if any run emits under 750 tokens (MIN_OUTPUT_TOKENS), reports no
+# server rate or no accepted draft tokens, or if accept_len_mean is under 1.5
+# (decode_floor/score.rs).
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "decode-floor"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+default = true
+status = "measured"
+note = """\
+BOX RULE (2026-09-13): this is a Speed-class gate; a campaign spread with \
+`met bench certify --with-nodes` measures it on another box ONLY when that \
+box is equivalent by hardware::equivalence::SPEED_SPREAD (same GPU and driver \
+line, clock ceiling within 1 %, memory within 5 %, no thermal throttle, \
+chassis within 15 °C), decided from the records' own captures — otherwise \
+every Speed unit is bundled on one node. Two GB10s otherwise identical read \
+0.66 tok/s apart at 65 vs 89 °C, ten times this entry's sigma. \
+CALIBRATED 2026-08-15, dgx1, this branch's binary: n=12 runs across 4 driver \
+passes, every run 28.0-28.1 tok/s, mean 28.03, sigma ~0.05. Fingerprint (the \
+instrument these bounds belong to): the DRIVER'S OWN MinHeap fixture, \
+per-request reasoning_effort "none", temperature 0, seed 0, max_tokens 1500 \
+with a deterministic 915-token natural stop, K4 num_drafts=3 (the recipe \
+pins num_drafts: 3), accepted 569/915 per run, serve --max-batch-size 32 \
+--gpu-memory-utilization 0.85 (the stock recipe serve). ★ SUPERSEDED BASIS, \
+kept for the history: the previous floor (29.0, noise 1.0) came from an n=3 \
+basis of 31.5/29.6/30.5 (median 30.5), 2026-08-15 — measured with a \
+DIFFERENT instrument (batch-1 serve, an ad-hoc probe prompt, not the \
+driver's fixture). Mechanism of the shift: different fixture + serve config \
+moved the LEVEL by -2.4 tok/s while run-to-run sigma on the fixed instrument \
+is 0.05 — an instrument change, not a regression. The gate is calibrated to \
+ITS OWN instrument; never mix bases, and never ratchet from a best run. \
+★ The gate serve needs NO operator flags for thinking: thinking-off arrives \
+per-request (reasoning_effort "none" in the body — honored since the \
+medium-default change), NOT from the recipe, so the stock recipe serve is \
+the correct subject. ★ The accept pin depends on the accept-stats \
+instrumentation (real accepted_prediction_tokens in usage); a binary \
+without it reports INCONCLUSIVE by name, which is correct — a floor \
+measured without proof of speculative engagement is the 2026-08-15 decode \
+flip-flop all over again."""
+
+
+
+# 2026-09-25: `--w4a4-downcast` is not pinned here, so this gate runs the engine default (off).
+
+
+[benchmarks.metrics.server_decode_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: Median-of-3 server decode rate, tok/s. The floor of 25.5 with noise 0.5 passes a
+# record at 25.0 or above (gate::scoring). Under the gate the driver's own verdict uses the
+# same 25.0: min_tok_s is filled as min - noise (bench_resolve::apply_threshold_params).
+min = 25.5
+noise = 0.5
+[benchmarks.metrics.output_tokens]
+
+
+
+# 2026-09-25: The driver reports the minimum completion_tokens over its 3 runs, so this bound
+# means every run emitted at least 750 of its 1500-token budget: the driver's own vacuity pin
+# (MIN_OUTPUT_TOKENS, decode_floor/score.rs), repeated where the gate record shows it.
+min = 750.0
+
+[benchmarks.metrics.runs]
+# 2026-09-25: An exact pin: the metric is a median over 3 runs, and a median over another
+# count is a different benchmark.
+min = 3.0
+max = 3.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: concurrency-sweep, a required gate (gate::coverage::REQUIRED), measured on a
+# pinned instrument. The schema defaults sweep C=1..32 at osl 128 over four ISLs with the
+# natural fixture, so [benchmarks.param_overrides] below pins the ladder. Gate self-start
+# applies those pins (bench_resolve::apply_param_overrides), the record carries them in
+# `params`, and check_record fails a record without them.
+# Under the gate the driver judges its own run against min_c1..min_c128 and min_peak, each
+# filled from its bound below as min - noise. A request error, or a vacuous cell, fails the
+# run whatever the floors say (concurrency_verdict::sweep_verdict).
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "concurrency-sweep"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-throughput"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+default = true
+status = "measured"
+note = """\
+BOX RULE (2026-09-13): Speed-class; spread across nodes only under \
+hardware::equivalence::SPEED_SPREAD, else bundled — see the decode-floor \
+note and docs/provable-benchmark-work.md §5c. \
+★ INSTRUMENT RE-POINTED 2026-09-21 TO THE PUBLISHED LADDER'S, owner's call. \
+This gate now measures ISL 128 / OSL 1024, ctx 2048, batch 128, fp8 KV, \
+ESSAY fixture — the instrument bench/ladder38 measured for the published \
+Metrale-vs-vLLM ladder, axis for axis. It previously measured ISL 512 / OSL \
+320, ctx 4096, natural fixture. site/src/lib/ladder-baselines.js exists \
+because those two instruments were being read as one engine (~478 vs ~116 \
+tok/s on the same checkpoint, same day); the fix asked for is not a chart \
+change but this one — the site's top chart must show the LIVE Metrale Engine against \
+the measured vLLM bar, and that requires the live gate record to fingerprint \
+as the published instrument on every REQUIRED axis (isl, osl, prompt_mode, \
+max_model_len, max_batch_size, kv_cache_dtype). \
+★ RE-CUT 2026-09-23: the nine rung floors and min_completion_tokens now carry \
+bars cut from the first gate record on this instrument plus the same-instrument \
+ladder38 history on all three boxes -- see the derivation block directly \
+above [benchmarks.metrics.c1_aggregate_tok_s]. The paragraph that follows is \
+the 2026-09-21 state, kept so the sequence stays legible. \
+★ EVERY RUNG FLOOR IS THEREFORE OFF (min = 0.0), NOT LOWERED. The committed \
+floors were cut at the retired instrument and sit 1.15x to 4.3x below what \
+this one produces — published Metrale Engine on it reads C1 23.59, C2 41.02, C4 \
+74.21, C8 125.95, C16 203.36, C32 291.01, C64 386.63, C128 478.11 — so \
+leaving them in place would report a guard that cannot fail anywhere above \
+C=2 while risking a false FAIL at C=1, where 20.5 sits 13% under. `RUNGS` in \
+concurrency.rs names 0.0 as the record-without-gating state and that is \
+exactly what it is for: measure, then declare. The sweep is NOT unguarded \
+meanwhile — vacuous_cells = 0 and min_completion_tokens keep their bars, and \
+a sweep with any request error never passes, whatever the floors say. Re-cut \
+all nine together from >=3 records on THIS instrument under the speed-bound \
+policy and its guard, in a follow-up PR. \
+★ THIS RE-POINT INVALIDATES EVERY CONCURRENCY-SWEEP RECORD COMMITTED BEFORE \
+IT, because check_record demands an exact serve-pin and param match. That is \
+correct; they measured a different instrument. \
+★ NOTHING IS STILL UNPINNED, as of 2026-09-22: this entry's `recipe =` \
+line now names qwen3.8/qwen3.8-27b-nvfp4-throughput, and that recipe IS the \
+published leg's CLI frozen as a file -- verified key for key against \
+published.json `series[0].cli`, including the two the gate had been getting \
+wrong by inheritance (--ssm-cache-slots 8, and NO --lm-head-dtype, i.e. the \
+native NVFP4 head). serve_overrides therefore drops from seventeen pins to \
+three, and the three that remain are there for the site fingerprint, not for \
+the serve -- see the block below. Three of the four env-only levers it \
+also carried cannot be pinned there (no ServeArgs flag exists for FP8_ROWWISE, \
+MTP_DCUT_RATIO or MTP_K_LADDER; PREFILL_CODISPATCH became --prefill-codispatch \
+on 2026-09-22 and IS pinned below). Until #1242 they were set in each node's \
+bench.yaml env: map, the only input the agent's env_clear() passes through -- \
+and which is NODE-WIDE, so arming them re-tuned every other gate on that node \
+too: campaign 8 attempt 7 failed ttft-warm-gate at +5.4%% median with \
+METRALE_PREFILL_CODISPATCH=1, against three control records at 0 that agree to \
+0.045%%, and bfcl-subset at util 0.70 could not boot under the FP8 twins. \
+They are pinned PER GATE in [benchmarks.serve_env] below since #1242: the \
+harness applies exactly that set to the serve it starts and refuses, by name, \
+any METRALE_* lever its own environment carries that the recipe or this table \
+did not declare -- so a node's bench.yaml env: must be toolchain-only. \
+Speculation IS shared — the recipe pins --speculative --mtp-quantization \
+bf16 with num_drafts 3, the same drafter and K the published leg ran — so \
+the live leg is not a weakened Metrale Engine against a speculating vLLM. The \
+remainder is the engine under test, which is the point of a live series: \
+the WORKLOAD is pinned here, the configuration is whatever main ships. \
+★ READ FIRST — EVERY LADDER FIGURE IN THIS NOTE IS SUPERSEDED HISTORY, NOT \
+THE BOUNDS IN FORCE. The floors this entry enforces were re-cut 2026-08-30 \
+from the WIDENED instrument (C=1..128 at bs=128, concurrent warm-up); their \
+derivation is the block comment directly above \
+[benchmarks.metrics.c1_aggregate_tok_s] and the numbers are the metric tables \
+themselves. The 2026-08-15 ladder described below is a DIFFERENT instrument \
+(C=1/4/8/16 at bs=32) and its five floors no longer exist. Kept because the \
+osl=320 calibration and the serve-profile reasoning still hold. || \
+MEASURED 2026-08-15, dgx1, this branch's binary: 3 reps of the full ladder \
+on the FIXED instrument — C=1/4/8/16, isl 512, osl 320, natural (MinHeap) \
+code fixture, per-request reasoning_effort "none", temperature 0, seed 0, \
+warmup 1 — zero vacuous cells and zero request errors in every rep. \
+Aggregate tok/s (incl. TTFT), per C: C1 25.6/25.5/25.5 (mean 25.5, sigma \
+0.05); C4 45.6/48.7/48.3 (mean 47.5, sigma 1.4); C8 66.7/69.0/67.1 (mean \
+67.6, sigma 1.0); C16 98.3/99.2/99.1 (mean 98.9, sigma 0.4). TTFT p50 \
+~1.3/4.5/8.4/15.9 s at C=1/4/8/16. ★ WHY osl=320: the natural fixture's \
+minimum deterministic completion WAS 334 tokens when this was cut — it is 296 \
+today, after the serial-in-think fix (2c80bf2f7); see min_completion_tokens \
+below, and note the 320 budget still binds — so a 320-token budget makes \
+EVERY request hit the budget ("length" finish) and every cell comparable — \
+at osl=512 the C=16 cell was ALWAYS vacuity-flagged, deterministically, \
+i.e. the default budget cannot measure the top rung on this model. That is \
+the vacuity guarantee min_completion_tokens pins below. Floors are set at \
+mean minus max(3*sigma, ~5%) per rung, so a sub-noise wobble passes and a \
+real regression does not. Recalibrate all five together, from >=3 fresh \
+reps on this same instrument, never from a best rep. \
+★ SERVE PROFILE (2026-08-15): the recipe is the shared AGENTIC profile — a \
+serial reproduction config (batch 1, bf16 KV, 256 Marconi slots, 32K \
+context) that strangles a concurrency instrument: the first certified run \
+served it verbatim and measured C=1..16 all ~19 tok/s with TTFT stacking \
+linearly, and its serve sized only ~0.6-1.1 GB of KV — nowhere near 16 \
+concurrent ~832-token sequences. That reasoning stands, but its REMEDY was replaced on 2026-09-22: rather than \
+override the agentic recipe key by key, the entry now points at the \
+throughput recipe, which is the published leg's own profile. The \
+lm_head_dtype sentence that stood here -- "stays the recipe's bf16 \
+correctness pin" -- was wrong and is retracted; see the serve_overrides \
+block. \
+★ THOSE FIVE FLOORS ARE GONE — RE-CUT 2026-08-30; this paragraph is kept so \
+the sequence stays legible, and it described the file's state for weeks after \
+it stopped being true. The five placeholders were 24/43/63/94/94, cut from \
+the 2026-08-15 hand-built batched calibration serve rather than from a \
+certified run on the pinned profile (fp8 KV, 8 Marconi slots, 4K context \
+change the memory geometry). They were replaced by the EIGHT floors now in \
+the metric tables (C=1..128), cut together from 3 fresh reps of the widened \
+bs=128 instrument — see the block comment above the first metric table for \
+their derivation, and for the stated fact that the mid-ladder rungs are \
+loose. \
+★ WARM-UP SEMANTICS CHANGED: historical records sent one unrelated `warm` \
+prompt per cell, then measured `c0..cN`; later rungs also reused prompts from \
+earlier rungs. `warmup = 1` now runs every exact measured prompt once before \
+timing. The floors quoted above predate that controlled-cache instrument and \
+could not calibrate it — and the replacement HAPPENED: the 2026-08-30 re-cut \
+ran on the concurrent-warm-up instrument, and the metric tables below are its \
+output."""
+
+
+
+
+# 2026-09-25: Keep each [benchmarks.*] sub-table below the [[benchmarks]] header it belongs
+# to: TOML attaches it to the nearest header above. bench_serve_pin_tests
+# (the_trees_serve_pins_sit_on_the_gates_that_need_them) checks which entry carries each pin.
+[benchmarks.serve_overrides]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: max_batch_size, kv_cache_dtype and max_model_len are three of the six
+# REQUIRED_AXES in site/src/lib/ladder-baselines.js. It builds a gate record's fingerprint
+# from the record's params and serve_overrides (never serve_resolved) and counts an
+# undeclared axis as a difference, so these pins keep the live series comparable to
+# bench/ladder38/published.json (site/src/lib/concurrency-instrument-parity.test.js). isl,
+# osl and prompt_mode come from [benchmarks.param_overrides] below.
+max_batch_size = "128"
+kv_cache_dtype = "fp8"
+max_model_len = "2048"
+
+
+
+
+# 2026-09-25: A serve pin. The flag applies to this serve only, where
+# METRALE_PREFILL_CODISPATCH in a node's environment would reach every gate on that node
+# (serve_args.rs). The published ladder's run had it on (published.json, series metrale,
+# env).
+prefill_codispatch = "true"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+w4a4_downcast = "true"
+
+
+
+
+
+
+w4a4_downcast_wide = "true"
+
+[benchmarks.serve_env]
+
+
+
+
+
+
+
+
+
+# 2026-09-25: The METRALE_* levers the ladder is measured under. They are not recipe keys, so
+# serve_overrides cannot carry them. Self-start merges the recipe's `env:` under this table
+# (the pin wins, serve_env::merge_declared), refuses a lever in the harness environment that
+# neither declares (serve_env::reconcile), fingerprints the set into the leased server's
+# identity (env_sha256) and records it as `serve_env`. check_record does not demand it.
+METRALE_FP8_ROWWISE = "1"
+METRALE_MTP_DCUT_RATIO = "1.0"
+
+
+
+
+
+
+METRALE_MTP_K_LADDER = "1:3,2:2,4:1,8:1,16:1"
+
+[benchmarks.param_overrides]
+
+
+
+# 2026-09-25: Each value is parsed by its parameter's own kind, like `--param KEY=VALUE`, and
+# an explicit --param still wins (bench_resolve::apply_param_overrides). The rungs are the
+# published ladder's, C=1..128 (bench/ladder38/published.json).
+concurrencies = "1,2,4,8,16,32,64,128"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: The published instrument: isl 128 (about 200 rendered prompt tokens), osl 1024
+# and the essay fixture (`Fixture::Essay` in concurrency.rs). Its prompt is the SUFFIX_ESSAY
+# of bench/ladder38/harness_w55_conc_ladder.py byte for byte, with presence and frequency
+# penalties pinned to 0.0; concurrency_essay_tests pins it by SHA-256.
+isls = "128"
+osl = "1024"
+prompt_mode = "essay"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: The rung floors, cut 2026-09-23 on this instrument. Basis record:
+# test_data/gate-records/.benchmarks/concurrency-sweep/2026-09-23-6c75c09da4.json (PASS).
+# Regime: that record plus the clean same-instrument runs committed under bench/ladder38/:
+# l38_r10_*, l38_r11_*, c2_metrale_dgx2_20260818.json, c8_metrale_dgx2_20260818.json,
+# metrale_c64_c128_dgx1_20260820.json and the 2026-08-20 stack-tip sweeps
+# sweep_metrale_stacktip_dgx1_idle, _dgx2 and _dgx3. sweep_metrale_stacktip_dgx1_20260820.json
+# is left out: RESULTS.md records that dgx1 had just served another session.
+# Every floor is at most both the policy bar (basis value x 0.975) and the slowest regime
+# rep x 0.975, each rounded down to its step (0.5 below 100, 10 from 100 to 1000). The site
+# parity test checks the first. Each rung's noise is 0.0, so the bar is the number written.
+#
+#     rung  basis   policy  slowest regime rep (file)                   written
+#     C1    22.78   22.0    22.78  (the basis record)                   22.0
+#     C2    41.47   40.0    39.15  (sweep_metrale_stacktip_dgx2)        38.0
+#     C4    73.58   71.5    70.00  (l38_r10_c4)                         67.0
+#     C8    125.46  120     120.82 (sweep_metrale_stacktip_dgx1_idle)   110
+#     C16   199.82  190     192.22 (sweep_metrale_stacktip_dgx1_idle)   180
+#     C32   285.74  270     274.68 (sweep_metrale_stacktip_dgx1_idle)   260
+#     C64   385.89  370     375.08 (metrale_c64_c128_dgx1_20260820)     360
+#     C128  478.91  460     459.32 (metrale_c64_c128_dgx1_20260820)     440
+#     peak  478.91  460     the C128 cell (the basis record's peak)     440
+#
+# The published vLLM+MTP bars at C=4/8/16/32 (71.61, 124.48, 197.03, 283.48; the means of
+# bench/ladder38/vllm_fp8_mtp_reference.json) sit above those floors: the floors guard the
+# engine against itself, and the site's chart is where the vLLM comparison is read.
+# The floors must not all be 0.0: then Floors::gating() is false, the sweep verdict is
+# INFO, GateRecord::verdict_passes accepts only PASS, and the gate could never pass.
+
+[benchmarks.metrics.c1_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 22.0
+noise = 0.0
+
+[benchmarks.metrics.c2_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 38.0
+noise = 0.0
+
+[benchmarks.metrics.c4_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 67.0
+noise = 0.0
+
+[benchmarks.metrics.c8_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 110
+noise = 0.0
+
+[benchmarks.metrics.c16_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 180
+noise = 0.0
+
+[benchmarks.metrics.c32_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 260
+noise = 0.0
+
+[benchmarks.metrics.c64_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 360
+noise = 0.0
+
+[benchmarks.metrics.c128_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 440
+noise = 0.0
+
+[benchmarks.metrics.peak_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 440
+noise = 0.0
+
+[benchmarks.metrics.min_completion_tokens]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: The minimum completion over every request of the run. It bounds the requests
+# the vacuity rule lets through: a cell is vacuous only if it delivers under 80% of its
+# total budget or fewer than half its requests reach 0.8 x osl (concurrency_vacuity.rs).
+# Cut 2026-09-23 with the rung floors: the lowest per-run minimum in the regime above is 676
+# (C=128, metrale_c64_c128_dgx1_20260820.json), and 676 x 0.975 = 659.1 rounds down to the
+# 10-step, 650. The basis record reads 892.
+min = 650.0
+
+[benchmarks.metrics.vacuous_cells]
+# 2026-09-25: The driver already leaves vacuous and errored cells out of every throughput key
+# (ConcurrencySweep::metrics); this bound fails the record itself.
+max = 0.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: J/token ceilings, one per rung. c<C>_gpu_rail_joules_per_token is the cell's
+# GPU-rail joules over the output tokens delivered in the same window
+# (hardware/energy.rs joules_per_token); c<C>_gpu_rail_energy_j and
+# c<C>_gpu_rail_energy_window_tokens are recorded beside it.
+# GPU rail only: nvidia-smi power.draw.average sampled every 250 ms and integrated over the
+# window. The module rail (Grace cores and LPDDR5X) reads N/A on GB10 and is not included.
+# A missing key fails: joules_per_token yields no value for a window with no tokens or no
+# positive energy, and check_record fails a declared metric the record lacks. The sweep's
+# own verdict judges only the tok/s floors; the ceilings are judged by the gate.
+
+[benchmarks.metrics.c1_gpu_rail_joules_per_token]
+
+max = 1.7
+
+[benchmarks.metrics.c2_gpu_rail_joules_per_token]
+
+max = 1.0
+
+[benchmarks.metrics.c4_gpu_rail_joules_per_token]
+
+max = 0.62
+
+[benchmarks.metrics.c8_gpu_rail_joules_per_token]
+
+max = 0.44
+
+[benchmarks.metrics.c16_gpu_rail_joules_per_token]
+
+max = 0.30
+
+[benchmarks.metrics.c32_gpu_rail_joules_per_token]
+
+max = 0.23
+
+[benchmarks.metrics.c64_gpu_rail_joules_per_token]
+
+max = 0.19
+
+[benchmarks.metrics.c128_gpu_rail_joules_per_token]
+
+max = 0.16
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: concurrency-sweep-dflash2, a required gate: the ladder with the DFlash2
+# drafter. A gate holds one entry per checkpoint on a hardware (gate::bench::baseline_for
+# refuses a second), so this ladder on the same checkpoint needs its own gate id. Its bounds
+# are independent of concurrency-sweep's: drafter, batch cap and instrument all differ.
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "concurrency-sweep-dflash2"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-dflash2"
+label = "Qwen3.8-27B dense (NVFP4, unsloth) + DFlash2"
+default = true
+status = "measured"
+note = """\
+MEASURED 2026-08-30, spark-256a, this branch's binary: 3 reps of the full \
+ladder — C=1/2/4/8/16, isl 512, osl 200, natural (MinHeap) fixture, temp 0, \
+seed 0, warmup 1 — zero vacuous cells and zero request errors in every rep. \
+Aggregate tok/s per C: C1 23.42/26.60/26.63; C2 37.67/38.62/37.56; C4 \
+44.58/44.17/44.77; C8 53.35/53.39/52.83; C16 60.90/60.76/60.89. Floors at \
+mean - max(3*sigma, ~5%) per rung, cut together, never from a best rep. \
+★ WHY osl=200 AND NOT THE PLAIN GATE'S 320. At 320 this gate is uncertifiable \
+at ANY floor: the C=1 cell is deterministically vacuity-flagged. Measured \
+three times before and three times after four throughput fixes, identically — \
+vacuous cells 0/1/2 and min_completion 262/229/229 — because DFlash2's \
+completion on this fixture is ~229 tokens, i.e. 71.5% of a 320 budget against \
+an 80% vacuity floor. A vacuous cell fails unconditionally, so no threshold \
+choice helps. This is the SAME calibration the plain entry documents making \
+for itself in the other direction ("at osl=512 the C=16 cell was ALWAYS \
+vacuity-flagged ... the default budget cannot measure the top rung"): lower \
+the budget until every request hits it. RAISING osl so 229 clears 80% would \
+be tuning to hide the rule — requests would keep ending naturally and only \
+the bar would move. Lowering it below the natural stop makes every finish a \
+"length" finish, which is the comparability property the rule protects. \
+★ WHY gamma 8 AND NOT 15. Single-stream, gamma 15 is faster (57.0 median vs \
+49.9) — but the verify pool is gamma-sized and gamma 15 at bs=16 refuses to \
+START: 57.7 GB consumed + 45.7 GB reserve = 103.4 GB, exactly the util-0.85 \
+budget, measured on a verified-idle box. gamma 8 also holds the best \
+acceptance (73.5% vs 48.6%), which is what matters when the verify pool is \
+shared across sequences. gamma 15's 57.0 is a SINGLE-STREAM result and must \
+not be quoted as a concurrency one. \
+★ NOT COMPARABLE TO concurrency-sweep, in either direction: different batch \
+cap (16 vs 128) and different osl (200 vs 320). Each gate is scored against \
+its own committed history; crossing them is meaningless."""
+
+[benchmarks.serve_overrides]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: The DFlash2 serve. Its batch cap is 16, and the ladder below stops at C=16 to
+# match: a rung wider than the cap measures the cap, not the engine.
+max_batch_size = "16"
+kv_cache_dtype = "fp8"
+
+
+
+
+ssm_cache_slots = "32"
+max_model_len = "4096"
+
+# 2026-09-25: --dflash conflicts with --speculative at the clap level (serve_args.rs), so the
+# recipe must not also enable MTP.
+dflash = "true"
+
+
+# 2026-09-25: MODEL.toml has no [dflash] section to fall back on, so the drafter is named
+# here, which also puts it on the record. It was trained on Qwen3.8-27B hidden states: its
+# dflash_config.target_layer_ids are [5, 19, 33, 47, 61].
+draft_model = "incoai/Qwen3.8-27B-DFlash2"
+
+
+
+# 2026-09-25: 8 is the drafter's trained dflash_config.block_size, which an unset
+# --dflash-gamma also resolves to (serve_args.rs); the pin puts it on the record.
+dflash_gamma = "8"
+
+
+
+
+w4a4_downcast = "true"
+
+
+
+
+
+
+w4a4_downcast_wide = "true"
+
+[benchmarks.param_overrides]
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: Not concurrency-sweep's instrument: isl 512, osl 200 and the default natural
+# fixture, against its 128 / 1024 / essay. The rungs stop at this serve's batch cap.
+concurrencies = "1,2,4,8,16"
+isls = "512"
+
+# 2026-09-25: The entry note says why osl is 200.
+osl = "200"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[benchmarks.metrics.c1_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+min = 24.0
+noise = 0.95
+
+[benchmarks.metrics.c2_aggregate_tok_s]
+
+
+
+
+
+
+
+
+min = 40.5
+noise = 0.62
+
+[benchmarks.metrics.c4_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+
+min = 42.5
+noise = 0.73
+
+[benchmarks.metrics.c8_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+min = 54.0
+noise = 0.88
+
+[benchmarks.metrics.c16_aggregate_tok_s]
+
+
+
+
+
+
+
+
+min = 59.0
+noise = 1.0
+
+[benchmarks.metrics.peak_aggregate_tok_s]
+
+
+
+
+
+
+
+
+
+
+
+min = 59.0
+noise = 1.00
+
+[benchmarks.metrics.min_completion_tokens]
+
+# 2026-09-25: 164 is above 0.8 x osl (160, the per-request vacuity threshold), so this bound
+# is the stricter of the two.
+min = 164.0
+
+[benchmarks.metrics.vacuous_cells]
+
+
+
+max = 0.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: vision-fidelity, declared on this target, qwen3.6-27b and qwen3.6-35b-a3b.
+# The bounds are absolute, with no noise: expected vision-token counts are computed from the
+# patch grid (vision/geometry.rs), so there is no run-to-run variance to absorb.
+#   geometry_matched    cells whose token count matched the expectation (correctness).
+#   geometry_asserted   cells measured at all, match or mismatch. An unmeasured cell is not
+#                       a mismatch, so this catches an encoder that stops answering.
+#   integrity_passed, integrity_measured   the integrity legs, passed and measured.
+#   probes_passed       the capability probes (vision/probes.rs).
+#   control_held        the no-image control did not read the size label a probe asks for.
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "vision-fidelity"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+default = false
+status = "measured"
+note = """\
+REFERENCE RUN 2026-08-14, dgx-00, binary feat/video-support @ 5a22d7ce: PASS, 14/14 geometry \
+cells matched, 3/3 probes, 10/10 integrity legs, control held, 26.5 s. Geometry was IDENTICAL across all \
+three vision targets (49/121/192/220/576/576/920/405/1400/1/128/49/49/49 merged \
+tokens) -- token \
+count is a property of the preprocessor rather than the checkpoint, so agreement \
+across a dense NVFP4, an unsloth NVFP4 and an FP8 MoE is evidence the arithmetic is \
+right rather than a coincidence. Ships preprocessor_config.json plus a separate \
+video_preprocessor_config.json (unused until video support lands), so it resolved \
+16.7M px before the resolver fix as well; clamped to the encoder's 16384-patch \
+ceiling. Run at --max-seq-len 32768 for this record."""
+
+[benchmarks.serve_overrides]
+
+
+
+
+w4a4_downcast = "true"
+
+
+
+
+
+
+w4a4_downcast_wide = "true"
+
+
+[benchmarks.metrics.geometry_matched]
+min = 14.0
+
+[benchmarks.metrics.geometry_asserted]
+min = 14.0
+
+[benchmarks.metrics.integrity_passed]
+min = 10.0
+
+[benchmarks.metrics.integrity_measured]
+min = 10.0
+
+[benchmarks.metrics.probes_passed]
+min = 3.0
+
+[benchmarks.metrics.control_held]
+min = 1.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: video-fidelity, declared on this target, qwen3.6-27b (the default) and
+# qwen3.6-35b-a3b. A leg the server cannot decode (no ffmpeg, or no --video-allow-ffmpeg) is
+# skipped, not failed (video/driver.rs), so the legs_skipped bound is what fails that run.
+# The bounds are absolute, with no noise.
+#   legs_passed     every leg.
+#   legs_skipped    none may skip.
+#   control_held    the no-video control did not name the full colour sequence.
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "video-fidelity"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: Not the default: qwen3.6-27b's entry is this gate's default on gb10. On this
+# checkpoint the video-before-image leg sits at its capability edge (12/13 on this recipe on
+# 2026-08-15, per the note), so a required gate on it would report the model's edge rather
+# than the video pipeline. This entry shares the agentic-webserver entry's recipe.
+default = false
+status = "measured"
+note = """\
+REFERENCE RUN 2026-08-14, dgx-00, binary feat/video-support: PASS, 13/13 legs, 0 \
+skipped, control held. Re-measured 2026-08-15 after the fixture fix: 13/13 on a manual \
+vision-style serve, 12/13 under this entry's own agentic recipe (video-before-image \
+one colour short) -- see the default = false comment above. group-proportionality \
+1s=67 2s=116 4s=214 tokens -> 1/2/4 \
+temporal groups at 49 tok/group with an 18-token template overhead; forward clip read \
+"red, green, blue, yellow" and the reversed clip "Yellow, Blue, Green, Red"; MP4 and \
+GIF both 214 prompt tokens; image+video 286; two-videos 437; video-before-image 288; \
+video-in-history 249; C=1/2/4 all correct on one geometry. || THE REVERSED CLIP IS THE \
+GATE. Identical geometry, identical prompt, frames in the opposite order -- no language \
+prior gets that right twice, which is what makes the other legs evidence rather than \
+plausible prose. || Requires ffmpeg; without it the MP4 legs SKIP and only the GIF \
+subset runs (measured: PASS 5/5, 4 skipped)."""
+
+
+
+
+
+
+
+
+
+# 2026-09-25: legs_passed is a count, so its floor tracks the driver's legs_asserted exactly
+# (14 in the committed records); a lower floor would pass a run that silently lost a leg.
+
+# 2026-09-25: `--w4a4-downcast` is not pinned here, so this gate runs the engine default (off).
+
+[benchmarks.metrics.legs_passed]
+min = 14.0
+
+[benchmarks.metrics.legs_skipped]
+max = 0.0
+
+[benchmarks.metrics.control_held]
+min = 1.0
+
+
+
+
+# 2026-09-25: kat-equality-gate, a required gate (gate::coverage::REQUIRED): one BFCL draw
+# issued in two orders against one server, compared per sample_id.
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "kat-equality-gate"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth-bfcl"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+# 2026-09-25: The only kat-equality-gate entry, so it must be the default:
+# gate::bench::baseline_for refuses a gate with no default on a hardware.
+default = true
+status = "measured"
+note = """\
+Does the same sample answer the same, whatever ran before it? One draw issued \
+in two orders against ONE server, diffed byte-exact per `sample_id`. \
+★ It rides the BFCL checkpoint and recipe DELIBERATELY: the gate replays \
+BFCL's request body, so a different subject would answer about a workload \
+nobody scores. ★ BUT DO NOT READ A GREEN HERE AS CERTIFYING THE BFCL GATE'S \
+OWN CONDITIONS. This entry pins the CLOSED regime; the bfcl-subset entry pins \
+no serve_overrides at all and is scored OPEN, which is the regime this gate \
+measures at 36 divergences of 257. So a green says the BFCL workload is \
+order-independent WHEN THE CHANNELS ARE CLOSED, and says nothing about the \
+conditions the committed 84.22 / 84.12 were taken under. Closing that gap \
+would mean pinning hermetic on bfcl-subset; the owner's decision (2026-09-13) \
+is the opposite — bfcl-subset is certified by a partition of shards and stays OPEN, with \
+the twelve partition-sensitive samples named in its own note — so the gap is \
+documented rather than closed. That is \
+also why `max_new_tokens` is pinned to BFCL's 1024 and not the driver's old \
+512 — see the MAX_NEW_TOKENS commit. \
+★ THE BOUNDS BELOW ARE INVARIANTS, NOT MEASURED PERFORMANCE. `diverged` and \
+`unmeasured` are pinned at 0 because the gate's whole claim is that they ARE \
+0 — the same shape as ssm-poison's `collapsed max = 0`, and the reason this \
+gate may be promoted on a run it itself judges: no bar here was cut from that \
+run. The one quantity taken from measurement is the sample count. \
+★ THE SERVE PINS ARE THE SUBJECT, NOT CONFIGURATION. With the channels OPEN \
+this gate reads 36 divergences of 257 on this checkpoint — measured 2026-09-10 \
+on spark-43fa, 3878 s, identical 221, unmeasured 0, empty_replies 0 — and \
+under the pinned regime it reads 0. That open-arm run is this gate's negative \
+control, and it was run at THIS cap rather than inherited from the whole-draw \
+measurement, because truncating the draw changes what ran before every \
+surviving sample. \
+★ Note 36, not the 12-of-995 that #936 records: those are different \
+instruments. #936 compared the whole draw against its own four shards; this \
+gate reverses the request order against ONE server, which is a stronger \
+perturbation, so it sees more. Do not read the two numbers as a regression \
+between them. \
+The three keys are pinned together because --hermetic EXPANDS into the other \
+two and check_record compares the two sets in both directions — a record \
+carrying three against a baseline pinning one fails after the GPU hours are \
+spent."""
+
+[benchmarks.serve_overrides]
+
+
+
+
+
+# 2026-09-25: All three, not only `hermetic`: --hermetic expands into the other two, the record
+# carries all three, and check_record compares serve pins in both directions, so
+# gate::bench::load_all refuses a hermetic pin without them (gate::hermetic::missing_pins).
+hermetic = "true"
+enable_prefix_caching = "false"
+mtp_gate = "force"
+
+[benchmarks.param_overrides]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: The instrument; each value backs a bound below.
+#   orders          the `orders` pin describes the instrument only if the param is pinned too.
+#   sample_cap      `samples` depends on it. The cap keeps a prefix of the golden draw,
+#                   whose subsets are concatenated in sorted name order, so it chooses which
+#                   subsets are compared. 257 ends exactly at live_parallel_multiple, so it
+#                   covers the subsets of all twelve KNOWN_PARTITION_SENSITIVE samples
+#                   (bfcl/sensitive.rs). It leaves out live_simple (25) and multiple through
+#                   simple_python (713).
+#   max_new_tokens  BFCL's own budget (bfcl::MAX_NEW_TOKENS).
+orders = "2"
+sample_cap = "257"
+max_new_tokens = "1024"
+
+[benchmarks.metrics.orders]
+# 2026-09-25: An exact pin: a run comparing a different number of orders is not this instrument.
+min = 2.0
+max = 2.0
+
+[benchmarks.metrics.samples]
+# 2026-09-25: Pinned to the sample cap, so a run over a different sample set fails.
+min = 257.0
+max = 257.0
+
+[benchmarks.metrics.diverged]
+# 2026-09-25: Any divergence is the failure this gate exists for.
+max = 0.0
+
+[benchmarks.metrics.unmeasured]
+# 2026-09-25: A timeout or transport error is not evidence that the orders agreed, so an
+# unmeasured sample fails.
+max = 0.0
+
+[benchmarks.metrics.empty_replies]
+
+
+
+
+# 2026-09-25: Two empty replies agreeing is not evidence the orders agreed. compare already
+# fails a run whose replies are all empty; this bound also fails a partly empty one.
+max = 0.0
+
+
+
+
+
+
+# 2026-09-25: scheduler-equivalence: the same BFCL draw under `--scheduler-config sync` and
+# `async`, compared per sample_id, per lane and per concurrency. A promotion candidate
+# (gate::coverage::PROMOTION_CANDIDATES), not yet required; this entry lets the gate
+# self-start under --pull-request-gate.
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "scheduler-equivalence"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth-bfcl"
+label = "Qwen3.8-27B dense (NVFP4, unsloth)"
+# 2026-09-25: The only scheduler-equivalence entry, so it must be the default (gate::bench::baseline_for).
+default = true
+status = "measured"
+note = """\
+Does the asynchronous device router answer every sample exactly as the \
+synchronous one? One BFCL draw (the gate's default cap of 64 samples: a prefix \
+of the sorted-subset concatenation, stated on every report), issued at C=1, 4 \
+and 16 against a serve of each router, once with speculation off and once \
+with --mtp-gate force, diffed byte-exact per sample_id and reported per cell; \
+the sync serve is measured twice, and a control that diverges makes the run \
+UNPROVEN rather than green. \
+★ It rides the BFCL checkpoint and recipe like kat-equality-gate, and pins the \
+same closed regime (hermetic, no prefix caching): the routers are compared under \
+ONE regime, and it is the regime the order-independence gate already certifies \
+deterministic on this checkpoint — the control leg checks that, run by run. \
+★ THE BOUNDS BELOW ARE INVARIANTS, NOT MEASURED PERFORMANCE. `diverged`, \
+`control_diverged`, `unmeasured` and `empty_replies` are pinned at 0 because \
+the gate's whole claim is that they ARE 0 (the kat/ssm-poison shape); no bar \
+here was cut from a run. `cells` pins the instrument: two lanes x three \
+concurrencies. \
+★ NO COMMITTED RECORD YET: the gate was implemented and proved on the CPU \
+(the trace harness runs every scheduler scenario under the async router and \
+requires byte-identical client streams, with a negative control); its first \
+GPU run on this checkpoint is what writes the first record. The async \
+router's KV-reservation drift is recorded as `async_*` metrics beside the \
+verdict and takes no part in it. \
+The serve pins are the SUBJECT: `scheduler_config = sync` names the starting \
+router, and the gate swaps routers itself per leg."""
+
+[benchmarks.serve_overrides]
+hermetic = "true"
+enable_prefix_caching = "false"
+mtp_gate = "force"
+scheduler_config = "sync"
+
+[benchmarks.param_overrides]
+# 2026-09-26: This recipe serves one sequence at a time (the scheduler logs max_batch=1), so at
+# C=16 a request waits for up to 15 others of up to 1024 tokens each; the driver's 300 s default
+# dropped 6 of 64 such streams on 2026-09-25 (client-side timeouts, "stream receiver dropped" in
+# the serve log), which the gate counts as unmeasured. 3600 s is the parameter's maximum.
+request_timeout_s = "3600"
+
+[benchmarks.metrics.cells]
+# 2026-09-25: Two lanes (spec-off, mtp-force) times the driver's default concurrencies 1, 4
+# and 16 make 6 cells; fewer is a different instrument.
+min = 6.0
+
+[benchmarks.metrics.diverged]
+
+# 2026-09-25: Any sample that changed with the router is the failure this gate exists for.
+max = 0.0
+
+[benchmarks.metrics.control_diverged]
+# 2026-09-25: A sync serve that disagrees with itself makes the async column unreadable; the
+# run verdict already fails it (scheduler_equivalence/compare.rs).
+max = 0.0
+
+[benchmarks.metrics.unmeasured]
+# 2026-09-25: A timeout or transport error is not evidence that the routers agreed.
+max = 0.0
+
+[benchmarks.metrics.empty_replies]
+# 2026-09-25: compare already fails a wholly empty cell; this bound also fails a partly empty one.
+max = 0.0

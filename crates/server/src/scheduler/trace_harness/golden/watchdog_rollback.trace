@@ -1,0 +1,2082 @@
+# scenario watchdog_rollback
+bind_gpu_to_thread()
+create_stream() -> 1
+create_event() -> 2
+adapter_id_for(-1)
+adapter_id_for(-1)
+num_free_blocks() -> 1000
+-- tick 1
+alloc_sequence() -> slot 0
+adapter_id_for(-1)
+acquire_adapter_slot(-1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_cmd(0x0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_tokens(n=5)
+ep_sync_vision_embeds(n=5)
+prefill(n=5, s1@0:len=5, stream=0)
+copy_logits_to_host(row=0, off=0, bytes=512)
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[100], seqs=["s1@0:len=5"], stream=0)
+commit_ctx(s1@0:len=6, n=1, base=5, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [101]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=6)
+num_free_blocks() -> 999
+-- tick 2
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[101], seqs=["s1@0:len=6"], stream=0)
+commit_ctx(s1@0:len=7, n=1, base=6, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [102]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=7)
+num_free_blocks() -> 999
+-- tick 3
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[102], seqs=["s1@0:len=7"], stream=0)
+commit_ctx(s1@0:len=8, n=1, base=7, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [103]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=8)
+num_free_blocks() -> 999
+-- tick 4
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[103], seqs=["s1@0:len=8"], stream=0)
+commit_ctx(s1@0:len=9, n=1, base=8, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [104]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=9)
+num_free_blocks() -> 999
+-- tick 5
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[104], seqs=["s1@0:len=9"], stream=0)
+commit_ctx(s1@0:len=10, n=1, base=9, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [105]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=10)
+num_free_blocks() -> 999
+-- tick 6
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[105], seqs=["s1@0:len=10"], stream=0)
+commit_ctx(s1@0:len=11, n=1, base=10, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [106]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=11)
+num_free_blocks() -> 999
+-- tick 7
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[106], seqs=["s1@0:len=11"], stream=0)
+commit_ctx(s1@0:len=12, n=1, base=11, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [107]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=12)
+num_free_blocks() -> 999
+-- tick 8
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[107], seqs=["s1@0:len=12"], stream=0)
+commit_ctx(s1@0:len=13, n=1, base=12, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [108]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=13)
+num_free_blocks() -> 999
+-- tick 9
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[108], seqs=["s1@0:len=13"], stream=0)
+commit_ctx(s1@0:len=14, n=1, base=13, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [109]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=14)
+num_free_blocks() -> 999
+-- tick 10
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[109], seqs=["s1@0:len=14"], stream=0)
+commit_ctx(s1@0:len=15, n=1, base=14, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [110]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=15)
+num_free_blocks() -> 999
+-- tick 11
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[110], seqs=["s1@0:len=15"], stream=0)
+commit_ctx(s1@0:len=16, n=1, base=15, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [111]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=16)
+num_free_blocks() -> 998
+-- tick 12
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[111], seqs=["s1@0:len=16"], stream=0)
+commit_ctx(s1@0:len=17, n=1, base=16, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [112]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=17)
+num_free_blocks() -> 998
+-- tick 13
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[112], seqs=["s1@0:len=17"], stream=0)
+commit_ctx(s1@0:len=18, n=1, base=17, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [113]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=18)
+num_free_blocks() -> 998
+-- tick 14
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[113], seqs=["s1@0:len=18"], stream=0)
+commit_ctx(s1@0:len=19, n=1, base=18, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [114]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=19)
+num_free_blocks() -> 998
+-- tick 15
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[114], seqs=["s1@0:len=19"], stream=0)
+commit_ctx(s1@0:len=20, n=1, base=19, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [115]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=20)
+num_free_blocks() -> 998
+-- tick 16
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[115], seqs=["s1@0:len=20"], stream=0)
+commit_ctx(s1@0:len=21, n=1, base=20, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [116]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=21)
+num_free_blocks() -> 998
+-- tick 17
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[116], seqs=["s1@0:len=21"], stream=0)
+commit_ctx(s1@0:len=22, n=1, base=21, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [117]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=22)
+num_free_blocks() -> 998
+-- tick 18
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[117], seqs=["s1@0:len=22"], stream=0)
+commit_ctx(s1@0:len=23, n=1, base=22, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [118]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=23)
+num_free_blocks() -> 998
+-- tick 19
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[118], seqs=["s1@0:len=23"], stream=0)
+commit_ctx(s1@0:len=24, n=1, base=23, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [119]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=24)
+num_free_blocks() -> 998
+-- tick 20
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[119], seqs=["s1@0:len=24"], stream=0)
+commit_ctx(s1@0:len=25, n=1, base=24, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [120]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=25)
+num_free_blocks() -> 998
+-- tick 21
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[120], seqs=["s1@0:len=25"], stream=0)
+commit_ctx(s1@0:len=26, n=1, base=25, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [121]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=26)
+num_free_blocks() -> 998
+-- tick 22
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[121], seqs=["s1@0:len=26"], stream=0)
+commit_ctx(s1@0:len=27, n=1, base=26, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [122]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=27)
+num_free_blocks() -> 998
+-- tick 23
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[122], seqs=["s1@0:len=27"], stream=0)
+commit_ctx(s1@0:len=28, n=1, base=27, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [123]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=28)
+num_free_blocks() -> 998
+-- tick 24
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[123], seqs=["s1@0:len=28"], stream=0)
+commit_ctx(s1@0:len=29, n=1, base=28, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [124]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=29)
+num_free_blocks() -> 998
+-- tick 25
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[124], seqs=["s1@0:len=29"], stream=0)
+commit_ctx(s1@0:len=30, n=1, base=29, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [125]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=30)
+num_free_blocks() -> 998
+-- tick 26
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[125], seqs=["s1@0:len=30"], stream=0)
+commit_ctx(s1@0:len=31, n=1, base=30, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [126]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=31)
+num_free_blocks() -> 998
+-- tick 27
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[126], seqs=["s1@0:len=31"], stream=0)
+commit_ctx(s1@0:len=32, n=1, base=31, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [127]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=32)
+num_free_blocks() -> 997
+-- tick 28
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[127], seqs=["s1@0:len=32"], stream=0)
+commit_ctx(s1@0:len=33, n=1, base=32, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [128]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=33)
+num_free_blocks() -> 997
+-- tick 29
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[128], seqs=["s1@0:len=33"], stream=0)
+commit_ctx(s1@0:len=34, n=1, base=33, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [129]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=34)
+num_free_blocks() -> 997
+-- tick 30
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[129], seqs=["s1@0:len=34"], stream=0)
+commit_ctx(s1@0:len=35, n=1, base=34, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [130]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=35)
+num_free_blocks() -> 997
+-- tick 31
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[130], seqs=["s1@0:len=35"], stream=0)
+commit_ctx(s1@0:len=36, n=1, base=35, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [131]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=36)
+num_free_blocks() -> 997
+-- tick 32
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[131], seqs=["s1@0:len=36"], stream=0)
+commit_ctx(s1@0:len=37, n=1, base=36, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [132]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=37)
+num_free_blocks() -> 997
+-- tick 33
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[132], seqs=["s1@0:len=37"], stream=0)
+commit_ctx(s1@0:len=38, n=1, base=37, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [133]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=38)
+num_free_blocks() -> 997
+-- tick 34
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[133], seqs=["s1@0:len=38"], stream=0)
+commit_ctx(s1@0:len=39, n=1, base=38, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [134]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=39)
+num_free_blocks() -> 997
+-- tick 35
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[134], seqs=["s1@0:len=39"], stream=0)
+commit_ctx(s1@0:len=40, n=1, base=39, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [135]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=40)
+num_free_blocks() -> 997
+-- tick 36
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[135], seqs=["s1@0:len=40"], stream=0)
+commit_ctx(s1@0:len=41, n=1, base=40, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [136]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=41)
+num_free_blocks() -> 997
+-- tick 37
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[136], seqs=["s1@0:len=41"], stream=0)
+commit_ctx(s1@0:len=42, n=1, base=41, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [137]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=42)
+num_free_blocks() -> 997
+-- tick 38
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[137], seqs=["s1@0:len=42"], stream=0)
+commit_ctx(s1@0:len=43, n=1, base=42, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [138]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=43)
+num_free_blocks() -> 997
+-- tick 39
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[138], seqs=["s1@0:len=43"], stream=0)
+commit_ctx(s1@0:len=44, n=1, base=43, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [139]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=44)
+num_free_blocks() -> 997
+-- tick 40
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[139], seqs=["s1@0:len=44"], stream=0)
+commit_ctx(s1@0:len=45, n=1, base=44, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [140]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=45)
+num_free_blocks() -> 997
+-- tick 41
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[140], seqs=["s1@0:len=45"], stream=0)
+commit_ctx(s1@0:len=46, n=1, base=45, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [141]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=46)
+num_free_blocks() -> 997
+-- tick 42
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[141], seqs=["s1@0:len=46"], stream=0)
+commit_ctx(s1@0:len=47, n=1, base=46, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [142]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=47)
+num_free_blocks() -> 997
+-- tick 43
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[142], seqs=["s1@0:len=47"], stream=0)
+commit_ctx(s1@0:len=48, n=1, base=47, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [143]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=48)
+num_free_blocks() -> 996
+-- tick 44
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[143], seqs=["s1@0:len=48"], stream=0)
+commit_ctx(s1@0:len=49, n=1, base=48, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [144]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=49)
+num_free_blocks() -> 996
+-- tick 45
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[144], seqs=["s1@0:len=49"], stream=0)
+commit_ctx(s1@0:len=50, n=1, base=49, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [145]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=50)
+num_free_blocks() -> 996
+-- tick 46
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[145], seqs=["s1@0:len=50"], stream=0)
+commit_ctx(s1@0:len=51, n=1, base=50, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [146]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=51)
+num_free_blocks() -> 996
+-- tick 47
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[146], seqs=["s1@0:len=51"], stream=0)
+commit_ctx(s1@0:len=52, n=1, base=51, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [147]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=52)
+num_free_blocks() -> 996
+-- tick 48
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[147], seqs=["s1@0:len=52"], stream=0)
+commit_ctx(s1@0:len=53, n=1, base=52, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [148]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=53)
+num_free_blocks() -> 996
+-- tick 49
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[148], seqs=["s1@0:len=53"], stream=0)
+commit_ctx(s1@0:len=54, n=1, base=53, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [149]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=54)
+num_free_blocks() -> 996
+-- tick 50
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[149], seqs=["s1@0:len=54"], stream=0)
+commit_ctx(s1@0:len=55, n=1, base=54, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply SsmSnapshotSave{slot=0}
+save_decode_ssm_snapshot(s1@0:len=55, ring=0)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=55)
+num_free_blocks() -> 996
+-- tick 51
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=55"], stream=0)
+commit_ctx(s1@0:len=56, n=1, base=55, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [151]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=56)
+num_free_blocks() -> 996
+-- tick 52
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[151], seqs=["s1@0:len=56"], stream=0)
+commit_ctx(s1@0:len=57, n=1, base=56, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [152]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=57)
+num_free_blocks() -> 996
+-- tick 53
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[152], seqs=["s1@0:len=57"], stream=0)
+commit_ctx(s1@0:len=58, n=1, base=57, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [153]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=58)
+num_free_blocks() -> 996
+-- tick 54
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[153], seqs=["s1@0:len=58"], stream=0)
+commit_ctx(s1@0:len=59, n=1, base=58, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [154]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=59)
+num_free_blocks() -> 996
+-- tick 55
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[154], seqs=["s1@0:len=59"], stream=0)
+commit_ctx(s1@0:len=60, n=1, base=59, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [155]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=60)
+num_free_blocks() -> 996
+-- tick 56
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[155], seqs=["s1@0:len=60"], stream=0)
+commit_ctx(s1@0:len=61, n=1, base=60, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [156]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=61)
+num_free_blocks() -> 996
+-- tick 57
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[156], seqs=["s1@0:len=61"], stream=0)
+commit_ctx(s1@0:len=62, n=1, base=61, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [157]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=62)
+num_free_blocks() -> 996
+-- tick 58
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[157], seqs=["s1@0:len=62"], stream=0)
+commit_ctx(s1@0:len=63, n=1, base=62, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [158]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=63)
+num_free_blocks() -> 996
+-- tick 59
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[158], seqs=["s1@0:len=63"], stream=0)
+commit_ctx(s1@0:len=64, n=1, base=63, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [159]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=64)
+num_free_blocks() -> 995
+-- tick 60
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[159], seqs=["s1@0:len=64"], stream=0)
+commit_ctx(s1@0:len=65, n=1, base=64, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=65)
+num_free_blocks() -> 995
+-- tick 61
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=65"], stream=0)
+commit_ctx(s1@0:len=66, n=1, base=65, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=66)
+num_free_blocks() -> 995
+-- tick 62
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=66"], stream=0)
+commit_ctx(s1@0:len=67, n=1, base=66, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=67)
+num_free_blocks() -> 995
+-- tick 63
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=67"], stream=0)
+commit_ctx(s1@0:len=68, n=1, base=67, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=68)
+num_free_blocks() -> 995
+-- tick 64
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=68"], stream=0)
+commit_ctx(s1@0:len=69, n=1, base=68, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=69)
+num_free_blocks() -> 995
+-- tick 65
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=69"], stream=0)
+commit_ctx(s1@0:len=70, n=1, base=69, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=70)
+num_free_blocks() -> 995
+-- tick 66
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=70"], stream=0)
+commit_ctx(s1@0:len=71, n=1, base=70, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=71)
+num_free_blocks() -> 995
+-- tick 67
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=71"], stream=0)
+commit_ctx(s1@0:len=72, n=1, base=71, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=72)
+num_free_blocks() -> 995
+-- tick 68
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=72"], stream=0)
+commit_ctx(s1@0:len=73, n=1, base=72, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=73)
+num_free_blocks() -> 995
+-- tick 69
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=73"], stream=0)
+commit_ctx(s1@0:len=74, n=1, base=73, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=74)
+num_free_blocks() -> 995
+-- tick 70
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=74"], stream=0)
+commit_ctx(s1@0:len=75, n=1, base=74, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=75)
+num_free_blocks() -> 995
+-- tick 71
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=75"], stream=0)
+commit_ctx(s1@0:len=76, n=1, base=75, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=76)
+num_free_blocks() -> 995
+-- tick 72
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=76"], stream=0)
+commit_ctx(s1@0:len=77, n=1, base=76, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=77)
+num_free_blocks() -> 995
+-- tick 73
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=77"], stream=0)
+commit_ctx(s1@0:len=78, n=1, base=77, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=78)
+num_free_blocks() -> 995
+-- tick 74
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=78"], stream=0)
+commit_ctx(s1@0:len=79, n=1, base=78, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=79)
+num_free_blocks() -> 995
+-- tick 75
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=79"], stream=0)
+commit_ctx(s1@0:len=80, n=1, base=79, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=80)
+num_free_blocks() -> 994
+-- tick 76
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=80"], stream=0)
+commit_ctx(s1@0:len=81, n=1, base=80, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=81)
+num_free_blocks() -> 994
+-- tick 77
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=81"], stream=0)
+commit_ctx(s1@0:len=82, n=1, base=81, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=82)
+num_free_blocks() -> 994
+-- tick 78
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=82"], stream=0)
+commit_ctx(s1@0:len=83, n=1, base=82, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=83)
+num_free_blocks() -> 994
+-- tick 79
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[38], seqs=["s1@0:len=83"], stream=0)
+commit_ctx(s1@0:len=84, n=1, base=83, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply SsmSnapshotSave{slot=1}
+save_decode_ssm_snapshot(s1@0:len=84, ring=1)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=84)
+num_free_blocks() -> 994
+-- tick 80
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=84"], stream=0)
+commit_ctx(s1@0:len=85, n=1, base=84, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=85)
+num_free_blocks() -> 994
+-- tick 81
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=85"], stream=0)
+commit_ctx(s1@0:len=86, n=1, base=85, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=86)
+num_free_blocks() -> 994
+-- tick 82
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=86"], stream=0)
+commit_ctx(s1@0:len=87, n=1, base=86, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=87)
+num_free_blocks() -> 994
+-- tick 83
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=87"], stream=0)
+commit_ctx(s1@0:len=88, n=1, base=87, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=88)
+num_free_blocks() -> 994
+-- tick 84
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=88"], stream=0)
+commit_ctx(s1@0:len=89, n=1, base=88, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=89)
+num_free_blocks() -> 994
+-- tick 85
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=89"], stream=0)
+commit_ctx(s1@0:len=90, n=1, base=89, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=90)
+num_free_blocks() -> 994
+-- tick 86
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=90"], stream=0)
+commit_ctx(s1@0:len=91, n=1, base=90, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=91)
+num_free_blocks() -> 994
+-- tick 87
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=91"], stream=0)
+commit_ctx(s1@0:len=92, n=1, base=91, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=92)
+num_free_blocks() -> 994
+-- tick 88
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=92"], stream=0)
+commit_ctx(s1@0:len=93, n=1, base=92, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=93)
+num_free_blocks() -> 994
+-- tick 89
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=93"], stream=0)
+commit_ctx(s1@0:len=94, n=1, base=93, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=94)
+num_free_blocks() -> 994
+-- tick 90
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=94"], stream=0)
+commit_ctx(s1@0:len=95, n=1, base=94, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=95)
+num_free_blocks() -> 994
+-- tick 91
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=95"], stream=0)
+commit_ctx(s1@0:len=96, n=1, base=95, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=96)
+num_free_blocks() -> 993
+-- tick 92
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=96"], stream=0)
+commit_ctx(s1@0:len=97, n=1, base=96, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=97)
+num_free_blocks() -> 993
+-- tick 93
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=97"], stream=0)
+commit_ctx(s1@0:len=98, n=1, base=97, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=98)
+num_free_blocks() -> 993
+-- tick 94
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=98"], stream=0)
+commit_ctx(s1@0:len=99, n=1, base=98, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=99)
+num_free_blocks() -> 993
+-- tick 95
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=99"], stream=0)
+commit_ctx(s1@0:len=100, n=1, base=99, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=100)
+num_free_blocks() -> 993
+-- tick 96
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=100"], stream=0)
+commit_ctx(s1@0:len=101, n=1, base=100, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=101)
+num_free_blocks() -> 993
+-- tick 97
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=101"], stream=0)
+commit_ctx(s1@0:len=102, n=1, base=101, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=102)
+num_free_blocks() -> 993
+-- tick 98
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=102"], stream=0)
+commit_ctx(s1@0:len=103, n=1, base=102, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=103)
+num_free_blocks() -> 993
+-- tick 99
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[38], seqs=["s1@0:len=103"], stream=0)
+commit_ctx(s1@0:len=104, n=1, base=103, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply SsmSnapshotSave{slot=2}
+save_decode_ssm_snapshot(s1@0:len=104, ring=2)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=104)
+num_free_blocks() -> 993
+-- tick 100
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=104"], stream=0)
+commit_ctx(s1@0:len=105, n=1, base=104, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=105)
+num_free_blocks() -> 993
+-- tick 101
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=105"], stream=0)
+commit_ctx(s1@0:len=106, n=1, base=105, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=106)
+num_free_blocks() -> 993
+-- tick 102
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=106"], stream=0)
+commit_ctx(s1@0:len=107, n=1, base=106, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=107)
+num_free_blocks() -> 993
+-- tick 103
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=107"], stream=0)
+commit_ctx(s1@0:len=108, n=1, base=107, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=108)
+num_free_blocks() -> 993
+-- tick 104
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=108"], stream=0)
+commit_ctx(s1@0:len=109, n=1, base=108, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=109)
+num_free_blocks() -> 993
+-- tick 105
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=109"], stream=0)
+commit_ctx(s1@0:len=110, n=1, base=109, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=110)
+num_free_blocks() -> 993
+-- tick 106
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=110"], stream=0)
+commit_ctx(s1@0:len=111, n=1, base=110, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=111)
+num_free_blocks() -> 993
+-- tick 107
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=111"], stream=0)
+commit_ctx(s1@0:len=112, n=1, base=111, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=112)
+num_free_blocks() -> 992
+-- tick 108
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=112"], stream=0)
+commit_ctx(s1@0:len=113, n=1, base=112, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=113)
+num_free_blocks() -> 992
+-- tick 109
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=113"], stream=0)
+commit_ctx(s1@0:len=114, n=1, base=113, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=114)
+num_free_blocks() -> 992
+-- tick 110
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=114"], stream=0)
+commit_ctx(s1@0:len=115, n=1, base=114, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=115)
+num_free_blocks() -> 992
+-- tick 111
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=115"], stream=0)
+commit_ctx(s1@0:len=116, n=1, base=115, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=116)
+num_free_blocks() -> 992
+-- tick 112
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=116"], stream=0)
+commit_ctx(s1@0:len=117, n=1, base=116, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=117)
+num_free_blocks() -> 992
+-- tick 113
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=117"], stream=0)
+commit_ctx(s1@0:len=118, n=1, base=117, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=118)
+num_free_blocks() -> 992
+-- tick 114
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=118"], stream=0)
+commit_ctx(s1@0:len=119, n=1, base=118, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=119)
+num_free_blocks() -> 992
+-- tick 115
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=119"], stream=0)
+commit_ctx(s1@0:len=120, n=1, base=119, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=120)
+num_free_blocks() -> 992
+-- tick 116
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=120"], stream=0)
+commit_ctx(s1@0:len=121, n=1, base=120, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=121)
+num_free_blocks() -> 992
+-- tick 117
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=121"], stream=0)
+commit_ctx(s1@0:len=122, n=1, base=121, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=122)
+num_free_blocks() -> 992
+-- tick 118
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=122"], stream=0)
+commit_ctx(s1@0:len=123, n=1, base=122, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=123)
+fx apply SsmSnapshotRestore{slot=0}
+restore_decode_ssm_snapshot(s1@0:len=123, ring=0)
+num_free_blocks() -> 992
+-- tick 119
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=55"], stream=0)
+commit_ctx(s1@0:len=56, n=1, base=55, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [151]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=56)
+num_free_blocks() -> 992
+-- tick 120
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[151], seqs=["s1@0:len=56"], stream=0)
+commit_ctx(s1@0:len=57, n=1, base=56, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [152]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=57)
+num_free_blocks() -> 992
+-- tick 121
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[152], seqs=["s1@0:len=57"], stream=0)
+commit_ctx(s1@0:len=58, n=1, base=57, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [153]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=58)
+num_free_blocks() -> 992
+-- tick 122
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[153], seqs=["s1@0:len=58"], stream=0)
+commit_ctx(s1@0:len=59, n=1, base=58, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [154]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=59)
+num_free_blocks() -> 992
+-- tick 123
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[154], seqs=["s1@0:len=59"], stream=0)
+commit_ctx(s1@0:len=60, n=1, base=59, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [155]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=60)
+num_free_blocks() -> 992
+-- tick 124
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[155], seqs=["s1@0:len=60"], stream=0)
+commit_ctx(s1@0:len=61, n=1, base=60, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [156]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=61)
+num_free_blocks() -> 992
+-- tick 125
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[156], seqs=["s1@0:len=61"], stream=0)
+commit_ctx(s1@0:len=62, n=1, base=61, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [157]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=62)
+num_free_blocks() -> 992
+-- tick 126
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[157], seqs=["s1@0:len=62"], stream=0)
+commit_ctx(s1@0:len=63, n=1, base=62, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [158]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=63)
+num_free_blocks() -> 992
+-- tick 127
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[158], seqs=["s1@0:len=63"], stream=0)
+commit_ctx(s1@0:len=64, n=1, base=63, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [159]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=64)
+num_free_blocks() -> 992
+-- tick 128
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[159], seqs=["s1@0:len=64"], stream=0)
+commit_ctx(s1@0:len=65, n=1, base=64, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=65)
+num_free_blocks() -> 992
+-- tick 129
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=65"], stream=0)
+commit_ctx(s1@0:len=66, n=1, base=65, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=66)
+num_free_blocks() -> 992
+-- tick 130
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=66"], stream=0)
+commit_ctx(s1@0:len=67, n=1, base=66, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=67)
+num_free_blocks() -> 992
+-- tick 131
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=67"], stream=0)
+commit_ctx(s1@0:len=68, n=1, base=67, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=68)
+num_free_blocks() -> 992
+-- tick 132
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=68"], stream=0)
+commit_ctx(s1@0:len=69, n=1, base=68, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=69)
+num_free_blocks() -> 992
+-- tick 133
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=69"], stream=0)
+commit_ctx(s1@0:len=70, n=1, base=69, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=70)
+num_free_blocks() -> 992
+-- tick 134
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=70"], stream=0)
+commit_ctx(s1@0:len=71, n=1, base=70, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=71)
+num_free_blocks() -> 992
+-- tick 135
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=71"], stream=0)
+commit_ctx(s1@0:len=72, n=1, base=71, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=72)
+num_free_blocks() -> 992
+-- tick 136
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=72"], stream=0)
+commit_ctx(s1@0:len=73, n=1, base=72, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=73)
+num_free_blocks() -> 992
+-- tick 137
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=73"], stream=0)
+commit_ctx(s1@0:len=74, n=1, base=73, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=74)
+num_free_blocks() -> 992
+-- tick 138
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=74"], stream=0)
+commit_ctx(s1@0:len=75, n=1, base=74, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=75)
+num_free_blocks() -> 992
+-- tick 139
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=75"], stream=0)
+commit_ctx(s1@0:len=76, n=1, base=75, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=76)
+num_free_blocks() -> 992
+-- tick 140
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=76"], stream=0)
+commit_ctx(s1@0:len=77, n=1, base=76, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=77)
+num_free_blocks() -> 992
+-- tick 141
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=77"], stream=0)
+commit_ctx(s1@0:len=78, n=1, base=77, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=78)
+num_free_blocks() -> 992
+-- tick 142
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=78"], stream=0)
+commit_ctx(s1@0:len=79, n=1, base=78, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=79)
+num_free_blocks() -> 992
+-- tick 143
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=79"], stream=0)
+commit_ctx(s1@0:len=80, n=1, base=79, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=80)
+num_free_blocks() -> 992
+-- tick 144
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=80"], stream=0)
+commit_ctx(s1@0:len=81, n=1, base=80, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=81)
+num_free_blocks() -> 992
+-- tick 145
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=81"], stream=0)
+commit_ctx(s1@0:len=82, n=1, base=81, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=82)
+num_free_blocks() -> 992
+-- tick 146
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=82"], stream=0)
+commit_ctx(s1@0:len=83, n=1, base=82, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=83)
+num_free_blocks() -> 992
+-- tick 147
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[38], seqs=["s1@0:len=83"], stream=0)
+commit_ctx(s1@0:len=84, n=1, base=83, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply SsmSnapshotSave{slot=1}
+save_decode_ssm_snapshot(s1@0:len=84, ring=1)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=84)
+num_free_blocks() -> 992
+-- tick 148
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=84"], stream=0)
+commit_ctx(s1@0:len=85, n=1, base=84, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=85)
+num_free_blocks() -> 992
+-- tick 149
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=85"], stream=0)
+commit_ctx(s1@0:len=86, n=1, base=85, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=86)
+num_free_blocks() -> 992
+-- tick 150
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=86"], stream=0)
+commit_ctx(s1@0:len=87, n=1, base=86, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=87)
+num_free_blocks() -> 992
+-- tick 151
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=87"], stream=0)
+commit_ctx(s1@0:len=88, n=1, base=87, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=88)
+num_free_blocks() -> 992
+-- tick 152
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=88"], stream=0)
+commit_ctx(s1@0:len=89, n=1, base=88, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=89)
+num_free_blocks() -> 992
+-- tick 153
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=89"], stream=0)
+commit_ctx(s1@0:len=90, n=1, base=89, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=90)
+num_free_blocks() -> 992
+-- tick 154
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=90"], stream=0)
+commit_ctx(s1@0:len=91, n=1, base=90, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=91)
+num_free_blocks() -> 992
+-- tick 155
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=91"], stream=0)
+commit_ctx(s1@0:len=92, n=1, base=91, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=92)
+num_free_blocks() -> 992
+-- tick 156
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=92"], stream=0)
+commit_ctx(s1@0:len=93, n=1, base=92, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=93)
+num_free_blocks() -> 992
+-- tick 157
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=93"], stream=0)
+commit_ctx(s1@0:len=94, n=1, base=93, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=94)
+num_free_blocks() -> 992
+-- tick 158
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=94"], stream=0)
+commit_ctx(s1@0:len=95, n=1, base=94, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=95)
+num_free_blocks() -> 992
+-- tick 159
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=95"], stream=0)
+commit_ctx(s1@0:len=96, n=1, base=95, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=96)
+num_free_blocks() -> 992
+-- tick 160
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=96"], stream=0)
+commit_ctx(s1@0:len=97, n=1, base=96, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=97)
+num_free_blocks() -> 992
+-- tick 161
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=97"], stream=0)
+commit_ctx(s1@0:len=98, n=1, base=97, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=98)
+num_free_blocks() -> 992
+-- tick 162
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=98"], stream=0)
+commit_ctx(s1@0:len=99, n=1, base=98, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=99)
+num_free_blocks() -> 992
+-- tick 163
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=99"], stream=0)
+commit_ctx(s1@0:len=100, n=1, base=99, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=100)
+num_free_blocks() -> 992
+-- tick 164
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=100"], stream=0)
+commit_ctx(s1@0:len=101, n=1, base=100, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=101)
+num_free_blocks() -> 992
+-- tick 165
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=101"], stream=0)
+commit_ctx(s1@0:len=102, n=1, base=101, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=102)
+num_free_blocks() -> 992
+-- tick 166
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=102"], stream=0)
+commit_ctx(s1@0:len=103, n=1, base=102, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=103)
+num_free_blocks() -> 992
+-- tick 167
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[38], seqs=["s1@0:len=103"], stream=0)
+commit_ctx(s1@0:len=104, n=1, base=103, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply SsmSnapshotSave{slot=2}
+save_decode_ssm_snapshot(s1@0:len=104, ring=2)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=104)
+num_free_blocks() -> 992
+-- tick 168
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=104"], stream=0)
+commit_ctx(s1@0:len=105, n=1, base=104, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=105)
+num_free_blocks() -> 992
+-- tick 169
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=105"], stream=0)
+commit_ctx(s1@0:len=106, n=1, base=105, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=106)
+num_free_blocks() -> 992
+-- tick 170
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=106"], stream=0)
+commit_ctx(s1@0:len=107, n=1, base=106, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=107)
+num_free_blocks() -> 992
+-- tick 171
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=107"], stream=0)
+commit_ctx(s1@0:len=108, n=1, base=107, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=108)
+num_free_blocks() -> 992
+-- tick 172
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=108"], stream=0)
+commit_ctx(s1@0:len=109, n=1, base=108, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=109)
+num_free_blocks() -> 992
+-- tick 173
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=109"], stream=0)
+commit_ctx(s1@0:len=110, n=1, base=109, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=110)
+num_free_blocks() -> 992
+-- tick 174
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=110"], stream=0)
+commit_ctx(s1@0:len=111, n=1, base=110, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=111)
+num_free_blocks() -> 992
+-- tick 175
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=111"], stream=0)
+commit_ctx(s1@0:len=112, n=1, base=111, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=112)
+num_free_blocks() -> 992
+-- tick 176
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=112"], stream=0)
+commit_ctx(s1@0:len=113, n=1, base=112, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=113)
+num_free_blocks() -> 992
+-- tick 177
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=113"], stream=0)
+commit_ctx(s1@0:len=114, n=1, base=113, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=114)
+num_free_blocks() -> 992
+-- tick 178
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=114"], stream=0)
+commit_ctx(s1@0:len=115, n=1, base=114, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=115)
+num_free_blocks() -> 992
+-- tick 179
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=115"], stream=0)
+commit_ctx(s1@0:len=116, n=1, base=115, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=116)
+num_free_blocks() -> 992
+-- tick 180
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=116"], stream=0)
+commit_ctx(s1@0:len=117, n=1, base=116, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=117)
+num_free_blocks() -> 992
+-- tick 181
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=117"], stream=0)
+commit_ctx(s1@0:len=118, n=1, base=117, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=118)
+num_free_blocks() -> 992
+-- tick 182
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=118"], stream=0)
+commit_ctx(s1@0:len=119, n=1, base=118, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=119)
+num_free_blocks() -> 992
+-- tick 183
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=119"], stream=0)
+commit_ctx(s1@0:len=120, n=1, base=119, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=120)
+num_free_blocks() -> 992
+-- tick 184
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=120"], stream=0)
+commit_ctx(s1@0:len=121, n=1, base=120, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=121)
+num_free_blocks() -> 992
+-- tick 185
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=121"], stream=0)
+commit_ctx(s1@0:len=122, n=1, base=121, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=122)
+num_free_blocks() -> 992
+-- tick 186
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=122"], stream=0)
+commit_ctx(s1@0:len=123, n=1, base=122, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=123)
+fx apply SsmSnapshotRestore{slot=0}
+restore_decode_ssm_snapshot(s1@0:len=123, ring=0)
+num_free_blocks() -> 992
+-- tick 187
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=55"], stream=0)
+commit_ctx(s1@0:len=56, n=1, base=55, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [151]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=56)
+num_free_blocks() -> 992
+-- tick 188
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[151], seqs=["s1@0:len=56"], stream=0)
+commit_ctx(s1@0:len=57, n=1, base=56, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [152]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=57)
+num_free_blocks() -> 992
+-- tick 189
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[152], seqs=["s1@0:len=57"], stream=0)
+commit_ctx(s1@0:len=58, n=1, base=57, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [153]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=58)
+num_free_blocks() -> 992
+-- tick 190
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[153], seqs=["s1@0:len=58"], stream=0)
+commit_ctx(s1@0:len=59, n=1, base=58, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [154]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=59)
+num_free_blocks() -> 992
+-- tick 191
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[154], seqs=["s1@0:len=59"], stream=0)
+commit_ctx(s1@0:len=60, n=1, base=59, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [155]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=60)
+num_free_blocks() -> 992
+-- tick 192
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[155], seqs=["s1@0:len=60"], stream=0)
+commit_ctx(s1@0:len=61, n=1, base=60, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [156]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=61)
+num_free_blocks() -> 992
+-- tick 193
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[156], seqs=["s1@0:len=61"], stream=0)
+commit_ctx(s1@0:len=62, n=1, base=61, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [157]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=62)
+num_free_blocks() -> 992
+-- tick 194
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[157], seqs=["s1@0:len=62"], stream=0)
+commit_ctx(s1@0:len=63, n=1, base=62, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [158]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=63)
+num_free_blocks() -> 992
+-- tick 195
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[158], seqs=["s1@0:len=63"], stream=0)
+commit_ctx(s1@0:len=64, n=1, base=63, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [159]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=64)
+num_free_blocks() -> 992
+-- tick 196
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[159], seqs=["s1@0:len=64"], stream=0)
+commit_ctx(s1@0:len=65, n=1, base=64, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=65)
+num_free_blocks() -> 992
+-- tick 197
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=65"], stream=0)
+commit_ctx(s1@0:len=66, n=1, base=65, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=66)
+num_free_blocks() -> 992
+-- tick 198
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=66"], stream=0)
+commit_ctx(s1@0:len=67, n=1, base=66, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=67)
+num_free_blocks() -> 992
+-- tick 199
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=67"], stream=0)
+commit_ctx(s1@0:len=68, n=1, base=67, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=68)
+num_free_blocks() -> 992
+-- tick 200
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=68"], stream=0)
+commit_ctx(s1@0:len=69, n=1, base=68, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=69)
+num_free_blocks() -> 992
+-- tick 201
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=69"], stream=0)
+commit_ctx(s1@0:len=70, n=1, base=69, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=70)
+num_free_blocks() -> 992
+-- tick 202
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=70"], stream=0)
+commit_ctx(s1@0:len=71, n=1, base=70, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=71)
+num_free_blocks() -> 992
+-- tick 203
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=71"], stream=0)
+commit_ctx(s1@0:len=72, n=1, base=71, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=72)
+num_free_blocks() -> 992
+-- tick 204
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=72"], stream=0)
+commit_ctx(s1@0:len=73, n=1, base=72, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=73)
+num_free_blocks() -> 992
+-- tick 205
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=73"], stream=0)
+commit_ctx(s1@0:len=74, n=1, base=73, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=74)
+num_free_blocks() -> 992
+-- tick 206
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=74"], stream=0)
+commit_ctx(s1@0:len=75, n=1, base=74, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=75)
+num_free_blocks() -> 992
+-- tick 207
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=75"], stream=0)
+commit_ctx(s1@0:len=76, n=1, base=75, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=76)
+num_free_blocks() -> 992
+-- tick 208
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=76"], stream=0)
+commit_ctx(s1@0:len=77, n=1, base=76, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=77)
+num_free_blocks() -> 992
+-- tick 209
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=77"], stream=0)
+commit_ctx(s1@0:len=78, n=1, base=77, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=78)
+num_free_blocks() -> 992
+-- tick 210
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=78"], stream=0)
+commit_ctx(s1@0:len=79, n=1, base=78, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=79)
+num_free_blocks() -> 992
+-- tick 211
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=79"], stream=0)
+commit_ctx(s1@0:len=80, n=1, base=79, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=80)
+num_free_blocks() -> 992
+-- tick 212
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=80"], stream=0)
+commit_ctx(s1@0:len=81, n=1, base=80, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=81)
+num_free_blocks() -> 992
+-- tick 213
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=81"], stream=0)
+commit_ctx(s1@0:len=82, n=1, base=81, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=82)
+num_free_blocks() -> 992
+-- tick 214
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=82"], stream=0)
+commit_ctx(s1@0:len=83, n=1, base=82, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=83)
+num_free_blocks() -> 992
+-- tick 215
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[38], seqs=["s1@0:len=83"], stream=0)
+commit_ctx(s1@0:len=84, n=1, base=83, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply SsmSnapshotSave{slot=1}
+save_decode_ssm_snapshot(s1@0:len=84, ring=1)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=84)
+num_free_blocks() -> 992
+-- tick 216
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=84"], stream=0)
+commit_ctx(s1@0:len=85, n=1, base=84, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=85)
+num_free_blocks() -> 992
+-- tick 217
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=85"], stream=0)
+commit_ctx(s1@0:len=86, n=1, base=85, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=86)
+num_free_blocks() -> 992
+-- tick 218
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=86"], stream=0)
+commit_ctx(s1@0:len=87, n=1, base=86, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=87)
+num_free_blocks() -> 992
+-- tick 219
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=87"], stream=0)
+commit_ctx(s1@0:len=88, n=1, base=87, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=88)
+num_free_blocks() -> 992
+-- tick 220
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=88"], stream=0)
+commit_ctx(s1@0:len=89, n=1, base=88, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=89)
+num_free_blocks() -> 992
+-- tick 221
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=89"], stream=0)
+commit_ctx(s1@0:len=90, n=1, base=89, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=90)
+num_free_blocks() -> 992
+-- tick 222
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=90"], stream=0)
+commit_ctx(s1@0:len=91, n=1, base=90, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=91)
+num_free_blocks() -> 992
+-- tick 223
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=91"], stream=0)
+commit_ctx(s1@0:len=92, n=1, base=91, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=92)
+num_free_blocks() -> 992
+-- tick 224
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=92"], stream=0)
+commit_ctx(s1@0:len=93, n=1, base=92, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=93)
+num_free_blocks() -> 992
+-- tick 225
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=93"], stream=0)
+commit_ctx(s1@0:len=94, n=1, base=93, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=94)
+num_free_blocks() -> 992
+-- tick 226
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=94"], stream=0)
+commit_ctx(s1@0:len=95, n=1, base=94, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=95)
+num_free_blocks() -> 992
+-- tick 227
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=95"], stream=0)
+commit_ctx(s1@0:len=96, n=1, base=95, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=96)
+num_free_blocks() -> 992
+-- tick 228
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=96"], stream=0)
+commit_ctx(s1@0:len=97, n=1, base=96, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=97)
+num_free_blocks() -> 992
+-- tick 229
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=97"], stream=0)
+commit_ctx(s1@0:len=98, n=1, base=97, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=98)
+num_free_blocks() -> 992
+-- tick 230
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=98"], stream=0)
+commit_ctx(s1@0:len=99, n=1, base=98, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=99)
+num_free_blocks() -> 992
+-- tick 231
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=99"], stream=0)
+commit_ctx(s1@0:len=100, n=1, base=99, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=100)
+num_free_blocks() -> 992
+-- tick 232
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=100"], stream=0)
+commit_ctx(s1@0:len=101, n=1, base=100, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=101)
+num_free_blocks() -> 992
+-- tick 233
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=101"], stream=0)
+commit_ctx(s1@0:len=102, n=1, base=101, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=102)
+num_free_blocks() -> 992
+-- tick 234
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=102"], stream=0)
+commit_ctx(s1@0:len=103, n=1, base=102, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=103)
+num_free_blocks() -> 992
+-- tick 235
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[38], seqs=["s1@0:len=103"], stream=0)
+commit_ctx(s1@0:len=104, n=1, base=103, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [12]
+fx apply SsmSnapshotSave{slot=2}
+save_decode_ssm_snapshot(s1@0:len=104, ring=2)
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=104)
+num_free_blocks() -> 992
+-- tick 236
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[12], seqs=["s1@0:len=104"], stream=0)
+commit_ctx(s1@0:len=105, n=1, base=104, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [20]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=105)
+num_free_blocks() -> 992
+-- tick 237
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[20], seqs=["s1@0:len=105"], stream=0)
+commit_ctx(s1@0:len=106, n=1, base=105, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [21]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=106)
+num_free_blocks() -> 992
+-- tick 238
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[21], seqs=["s1@0:len=106"], stream=0)
+commit_ctx(s1@0:len=107, n=1, base=106, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [22]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=107)
+num_free_blocks() -> 992
+-- tick 239
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[22], seqs=["s1@0:len=107"], stream=0)
+commit_ctx(s1@0:len=108, n=1, base=107, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [23]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=108)
+num_free_blocks() -> 992
+-- tick 240
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[23], seqs=["s1@0:len=108"], stream=0)
+commit_ctx(s1@0:len=109, n=1, base=108, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [24]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=109)
+num_free_blocks() -> 992
+-- tick 241
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[24], seqs=["s1@0:len=109"], stream=0)
+commit_ctx(s1@0:len=110, n=1, base=109, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [25]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=110)
+num_free_blocks() -> 992
+-- tick 242
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[25], seqs=["s1@0:len=110"], stream=0)
+commit_ctx(s1@0:len=111, n=1, base=110, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [26]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=111)
+num_free_blocks() -> 992
+-- tick 243
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[26], seqs=["s1@0:len=111"], stream=0)
+commit_ctx(s1@0:len=112, n=1, base=111, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [27]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=112)
+num_free_blocks() -> 992
+-- tick 244
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[27], seqs=["s1@0:len=112"], stream=0)
+commit_ctx(s1@0:len=113, n=1, base=112, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [28]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=113)
+num_free_blocks() -> 992
+-- tick 245
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[28], seqs=["s1@0:len=113"], stream=0)
+commit_ctx(s1@0:len=114, n=1, base=113, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [29]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=114)
+num_free_blocks() -> 992
+-- tick 246
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[29], seqs=["s1@0:len=114"], stream=0)
+commit_ctx(s1@0:len=115, n=1, base=114, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [30]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=115)
+num_free_blocks() -> 992
+-- tick 247
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[30], seqs=["s1@0:len=115"], stream=0)
+commit_ctx(s1@0:len=116, n=1, base=115, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [31]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=116)
+num_free_blocks() -> 992
+-- tick 248
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[31], seqs=["s1@0:len=116"], stream=0)
+commit_ctx(s1@0:len=117, n=1, base=116, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [32]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=117)
+num_free_blocks() -> 992
+-- tick 249
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[32], seqs=["s1@0:len=117"], stream=0)
+commit_ctx(s1@0:len=118, n=1, base=117, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [33]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=118)
+num_free_blocks() -> 992
+-- tick 250
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[33], seqs=["s1@0:len=118"], stream=0)
+commit_ctx(s1@0:len=119, n=1, base=118, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [34]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=119)
+num_free_blocks() -> 992
+-- tick 251
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[34], seqs=["s1@0:len=119"], stream=0)
+commit_ctx(s1@0:len=120, n=1, base=119, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [35]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=120)
+num_free_blocks() -> 992
+-- tick 252
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[35], seqs=["s1@0:len=120"], stream=0)
+commit_ctx(s1@0:len=121, n=1, base=120, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [36]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=121)
+num_free_blocks() -> 992
+-- tick 253
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[36], seqs=["s1@0:len=121"], stream=0)
+commit_ctx(s1@0:len=122, n=1, base=121, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [37]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=122)
+num_free_blocks() -> 992
+-- tick 254
+fx launch Decode{n=1, ctx=Unified, readback=Argmax}
+decode_batch(tokens=[37], seqs=["s1@0:len=122"], stream=0)
+commit_ctx(s1@0:len=123, n=1, base=122, row=0)
+argmax_batch(row=0, n=1, stream=0) -> [38]
+fx apply MarconiCheckpoint
+decode_marconi_checkpoint(s1@0:len=123)
+fx apply ReleaseSeq{cache=true, finish_sequence}
+cache_sequence(s1@0:len=123)
+free_sequence(s1@0:len=123, blocks=8)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff1)
+num_free_blocks() -> 1000
+-- tick 255
+fx apply EpShutdown
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xffffffff)
+fx apply Quiesce{stream=0}
+synchronize(stream=0)
+fx apply Quiesce{stream=1}
+synchronize(stream=1)
+fx teardown
+teardown()
+out s1: Response(tokens=[100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 12, 151, 152, 153, 154, 155, 156, 157, 158, 159, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 12, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38], length, think=0, cached=0, acc=0, logprobs=0)

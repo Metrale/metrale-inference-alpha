@@ -1,0 +1,286 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-26: Tests of the download state machine. `DownloadState::start` is
+//! the only way to get a `Job`, and it spawns the real worker, so most jobs
+//! here use `UNREACHABLE`: a repo id with a space, which is not a valid URI, so
+//! the worker's first request fails before any connection and the job settles
+//! as `Failed(Offline)`. The two receipt tests at the end use real-looking ids.
+//!
+//! Owner: server tui.
+//! Invariants: none beyond the types.
+
+use super::*;
+
+/// 2026-09-26: A repo id that cannot be turned into a URI (see the module doc).
+const UNREACHABLE: &str = "org/not a real model";
+
+fn root() -> std::path::PathBuf {
+    let p = std::env::temp_dir().join("metrale-dlstate-more");
+    std::fs::create_dir_all(&p).expect("temp root");
+    p
+}
+
+/// 2026-09-26: Pump every 10 ms until the job settles; panics after 600 tries.
+fn settle(s: &mut DownloadState) -> Settled {
+    for _ in 0..600 {
+        if let Some(x) = s.pump() {
+            return x;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the job never reached a terminal state");
+}
+
+#[test]
+fn starting_a_download_names_the_repo_and_is_not_an_error() {
+    let mut s = DownloadState::default();
+    let (text, error) = s.start(UNREACHABLE, root());
+    assert!(!error);
+    assert!(text.contains(UNREACHABLE), "{text}");
+    assert!(s.is_downloading(UNREACHABLE));
+    let job = s.job.as_ref().expect("a job");
+    assert_eq!(job.done, 0);
+    assert_eq!(job.total, 0);
+    assert!(!job.cancelling);
+    assert_eq!(job.rate_bps, 0.0, "no bytes, no rate");
+}
+
+#[test]
+fn a_download_that_cannot_start_settles_as_stopped_and_says_why() {
+    let mut s = DownloadState::default();
+    s.start(UNREACHABLE, root());
+    match settle(&mut s) {
+        Settled::Stopped(repo) => assert_eq!(repo, UNREACHABLE),
+        Settled::Finished(_) => panic!("a failure must not report success"),
+    }
+    assert!(s.job.is_none(), "the job is cleared so the bar stops");
+    let (text, error) = s.last_message.take().expect("it says what went wrong");
+    assert!(error, "and marks it as an error: {text}");
+    assert!(text.contains(UNREACHABLE), "naming the model: {text}");
+    assert!(s.pump().is_none(), "and it settles once, not every tick");
+}
+
+#[test]
+fn a_settled_download_frees_the_slot_for_the_next_one() {
+    let mut s = DownloadState::default();
+    s.start(UNREACHABLE, root());
+    settle(&mut s);
+    let (_, error) = s.start(UNREACHABLE, root());
+    assert!(!error, "the slot is free again");
+    assert!(s.is_downloading(UNREACHABLE));
+}
+
+#[test]
+fn abandoning_a_download_frees_the_slot_immediately() {
+    let mut s = DownloadState::default();
+    s.start(UNREACHABLE, root());
+    s.cancel().expect("asks it to stop");
+    s.cancel().expect("abandons it");
+    let (_, error) = s.start(UNREACHABLE, root());
+    assert!(!error, "a second press means the UI has let go");
+}
+
+#[test]
+fn the_fraction_is_monotone_in_the_bytes_moved() {
+    let mut s = DownloadState::default();
+    s.start(UNREACHABLE, root());
+    let job = s.job.as_mut().expect("a job");
+    job.total = 1_000;
+    let mut last = 0.0;
+    for done in [0u64, 1, 250, 499, 500, 999, 1_000] {
+        job.done = done;
+        let f = job.fraction().expect("a known total");
+        assert!(f >= last, "{done} bytes went backwards: {f} < {last}");
+        last = f;
+    }
+    assert_eq!(last, 1.0, "and it reaches one exactly");
+}
+
+#[test]
+fn an_unknown_total_reports_no_fraction_rather_than_dividing_by_zero() {
+    // 2026-09-26: File sizes come from a second Hub request whose failure is
+    // not fatal, so `total` can stay 0.
+    let mut s = DownloadState::default();
+    s.start(UNREACHABLE, root());
+    let job = s.job.as_mut().expect("a job");
+    for done in [0u64, 1, 4_000_000_000] {
+        job.done = done;
+        job.total = 0;
+        assert_eq!(job.fraction(), None, "{done} bytes of an unknown total");
+    }
+}
+
+#[test]
+fn a_job_that_is_already_complete_reports_exactly_one() {
+    let mut s = DownloadState::default();
+    s.start(UNREACHABLE, root());
+    let job = s.job.as_mut().expect("a job");
+    job.total = 7;
+    job.done = 7;
+    assert_eq!(job.fraction(), Some(1.0));
+}
+
+#[test]
+fn cancelling_marks_the_job_before_the_worker_has_answered() {
+    let mut s = DownloadState::default();
+    s.start(UNREACHABLE, root());
+    let (text, error) = s.cancel().expect("something is running");
+    assert!(!error, "stopping on purpose is not a failure");
+    assert!(text.contains("stopping"), "{text}");
+    let job = s.job.as_ref().expect("still tracked");
+    assert!(job.cancelling);
+    assert_eq!(job.repo, UNREACHABLE, "and it is the same job");
+}
+
+#[test]
+fn a_second_freshness_check_is_refused_rather_than_queued() {
+    let mut s = DownloadState::default();
+    let (_tx, rx) = std::sync::mpsc::channel();
+    s.pending_check = Some(rx);
+    s.checking = Some("org/first".into());
+
+    let (text, error) = s.check("org/second", root());
+    assert!(error, "{text}");
+    assert_eq!(
+        s.checking.as_deref(),
+        Some("org/first"),
+        "and the running one is untouched"
+    );
+}
+
+#[test]
+fn a_freshness_answer_is_stored_under_the_id_the_worker_echoed_back() {
+    let mut s = DownloadState::default();
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(("org/asked".to_string(), Freshness::Current))
+        .expect("send");
+    s.pending_check = Some(rx);
+    s.checking = Some("org/asked".into());
+
+    assert!(s.pump().is_none(), "a freshness answer is not a settlement");
+    assert!(s.checking.is_none(), "the skeleton clears");
+    assert!(matches!(
+        s.freshness.get("org/asked"),
+        Some(Freshness::Current)
+    ));
+    assert!(!s.freshness.contains_key("org/other"));
+}
+
+#[test]
+fn a_dead_freshness_worker_clears_the_skeleton_and_claims_nothing() {
+    let mut s = DownloadState::default();
+    let (tx, rx) = std::sync::mpsc::channel::<(String, Freshness)>();
+    drop(tx);
+    s.pending_check = Some(rx);
+    s.checking = Some("org/asked".into());
+
+    assert!(s.pump().is_none());
+    assert!(s.checking.is_none(), "the skeleton must not spin forever");
+    assert!(s.pending_check.is_none());
+    assert!(s.freshness.is_empty(), "an unanswered check states nothing");
+}
+
+#[test]
+fn a_freshness_check_in_flight_does_not_block_a_download() {
+    // 2026-09-26: `start` checks only `job`, and `check` only `pending_check`.
+    let mut s = DownloadState::default();
+    let (_tx, rx) = std::sync::mpsc::channel();
+    s.pending_check = Some(rx);
+    let (_, error) = s.start(UNREACHABLE, root());
+    assert!(!error);
+}
+
+#[test]
+fn every_failure_is_described_with_something_to_do_about_it() {
+    let cases = [
+        DownloadError::Offline("dns".into()),
+        DownloadError::Gated {
+            repo: "org/m".into(),
+            had_token: false,
+        },
+        DownloadError::Gated {
+            repo: "org/m".into(),
+            had_token: true,
+        },
+        DownloadError::NotFound {
+            repo: "org/m".into(),
+        },
+        DownloadError::RateLimited,
+        DownloadError::DiskFull,
+        DownloadError::NotEnoughSpace {
+            need: 40_000_000_000,
+            free: 1_000_000_000,
+        },
+        DownloadError::NoSafetensors {
+            repo: "org/m".into(),
+        },
+        DownloadError::Http {
+            repo: "org/m".into(),
+            status: 500,
+        },
+        DownloadError::Io("permission denied".into()),
+    ];
+    for e in cases {
+        let text = describe("org/m", &e);
+        assert!(text.starts_with("org/m: "), "names the model: {text}");
+        assert!(text.len() > "org/m: ".len(), "and says something: {e:?}");
+    }
+    assert!(
+        describe(
+            "org/m",
+            &DownloadError::Gated {
+                repo: "org/m".into(),
+                had_token: false
+            }
+        )
+        .contains("HF_TOKEN"),
+        "a gated repo names the credential, not the network"
+    );
+}
+
+/// 2026-09-26: A job whose bytes were all on disk reports "already complete",
+/// not a transfer receipt.
+#[test]
+fn an_already_complete_model_says_so_instead_of_claiming_a_download() {
+    let mut s = DownloadState::default();
+    let root = std::env::temp_dir().join("metrale-already-complete");
+    std::fs::create_dir_all(&root).ok();
+    s.start("centml/Qwen3.6-27B-NVFP4-W4A4-mlpinf", root);
+    {
+        let job = s.job.as_mut().expect("a job");
+        // 2026-09-26: The fields `Planned` sets when every file is present.
+        job.total = 18_000_000_000;
+        job.done = 18_000_000_000;
+        job.already_have = 18_000_000_000;
+    }
+    s.settle_done_for_test();
+    let (text, error) = s.last_message.take().expect("it must say something");
+    assert!(!error, "nothing went wrong: {text}");
+    assert!(
+        text.contains("already complete"),
+        "must name the real outcome: {text}"
+    );
+    assert!(
+        !text.contains("downloaded —"),
+        "must not print a transfer receipt for a transfer that did not happen: {text}"
+    );
+}
+
+#[test]
+fn a_real_transfer_reports_what_moved() {
+    let mut s = DownloadState::default();
+    let root = std::env::temp_dir().join("metrale-real-transfer");
+    std::fs::create_dir_all(&root).ok();
+    s.start("org/fresh", root);
+    {
+        let job = s.job.as_mut().expect("a job");
+        job.total = 8_000_000_000;
+        job.done = 8_000_000_000;
+        job.already_have = 0;
+    }
+    s.settle_done_for_test();
+    let (text, error) = s.last_message.take().expect("it must say something");
+    assert!(!error, "{text}");
+    assert!(text.contains("downloaded"), "{text}");
+    assert!(text.contains("GB"), "the bytes that moved: {text}");
+}

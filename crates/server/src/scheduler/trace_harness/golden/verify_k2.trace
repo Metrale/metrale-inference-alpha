@@ -1,0 +1,140 @@
+# scenario verify_k2
+bind_gpu_to_thread()
+create_stream() -> 1
+create_event() -> 2
+adapter_id_for(-1)
+adapter_id_for(-1)
+num_free_blocks() -> 1000
+-- tick 1
+alloc_sequence() -> slot 0
+adapter_id_for(-1)
+acquire_adapter_slot(-1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_cmd(0x0)
+ep_broadcast_cmd(0x5)
+ep_broadcast_tokens(n=5)
+ep_sync_vision_embeds(n=5)
+prefill(n=5, s1@0:len=5, stream=0)
+copy_logits_to_host(row=0, off=0, bytes=128)
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xa)
+decode(token=10, s1@0:len=6, stream=0)
+argmax_on_device(row=0, stream=0) -> 11
+save_hidden_for_mtp(0, stream=0)
+run_mtp_propose_multi(token=11, pos=6, n=1, s1@0:len=6, stream=0, mask=false) -> [12]
+start_checkpoint_async(s1@0:len=6)
+num_free_blocks() -> 999
+-- tick 2
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0xb)
+ep_broadcast_cmd(0xc)
+decode_verify_graphed(tokens=[11, 12], s1@0:len=8) -> [12, 13]
+ep_broadcast_cmd(0x1)
+commit_accepted_prefix(s1@0:len=8, na=2, k=2)
+dflash_eagle_accept_append(s1@0:len=8)
+save_hidden_for_mtp(1, stream=0)
+trim_proposer_state(s1@0:len=8, na=1, stream=0)
+run_mtp_propose_multi(token=13, pos=8, n=1, s1@0:len=8, stream=0, mask=false) -> [15]
+decode_marconi_checkpoint(s1@0:len=8)
+num_free_blocks() -> 999
+-- tick 3
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0xd)
+ep_broadcast_cmd(0xf)
+decode_verify_graphed(tokens=[13, 15], s1@0:len=10) -> [14, 1]
+ep_broadcast_cmd(0x0)
+trim_proposer_state(s1@0:len=9, na=0, stream=0)
+commit_accepted_prefix(s1@0:len=9, na=1, k=2)
+save_hidden_for_mtp(0, stream=0)
+run_mtp_propose_multi(token=14, pos=9, n=1, s1@0:len=9, stream=0, mask=false) -> [15]
+decode_marconi_checkpoint(s1@0:len=9)
+num_free_blocks() -> 999
+-- tick 4
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0xe)
+ep_broadcast_cmd(0xf)
+decode_verify_graphed(tokens=[14, 15], s1@0:len=11) -> [15, 16]
+ep_broadcast_cmd(0x1)
+commit_accepted_prefix(s1@0:len=11, na=2, k=2)
+dflash_eagle_accept_append(s1@0:len=11)
+save_hidden_for_mtp(1, stream=0)
+trim_proposer_state(s1@0:len=11, na=1, stream=0)
+run_mtp_propose_multi(token=16, pos=11, n=1, s1@0:len=11, stream=0, mask=false) -> [17]
+decode_marconi_checkpoint(s1@0:len=11)
+num_free_blocks() -> 999
+-- tick 5
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x10)
+ep_broadcast_cmd(0x11)
+decode_verify_graphed(tokens=[16, 17], s1@0:len=13) -> [17, 18]
+ep_broadcast_cmd(0x1)
+commit_accepted_prefix(s1@0:len=13, na=2, k=2)
+dflash_eagle_accept_append(s1@0:len=13)
+save_hidden_for_mtp(1, stream=0)
+trim_proposer_state(s1@0:len=13, na=1, stream=0)
+run_mtp_propose_multi(token=18, pos=13, n=1, s1@0:len=13, stream=0, mask=false) -> [19]
+decode_marconi_checkpoint(s1@0:len=13)
+num_free_blocks() -> 999
+-- tick 6
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x12)
+ep_broadcast_cmd(0x13)
+decode_verify_graphed(tokens=[18, 19], s1@0:len=15) -> [19, 20]
+ep_broadcast_cmd(0x1)
+commit_accepted_prefix(s1@0:len=15, na=2, k=2)
+dflash_eagle_accept_append(s1@0:len=15)
+save_hidden_for_mtp(1, stream=0)
+trim_proposer_state(s1@0:len=15, na=1, stream=0)
+run_mtp_propose_multi(token=20, pos=15, n=1, s1@0:len=15, stream=0, mask=false) -> [21]
+decode_marconi_checkpoint(s1@0:len=15)
+num_free_blocks() -> 999
+-- tick 7
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x14)
+ep_broadcast_cmd(0x15)
+decode_verify_graphed(tokens=[20, 21], s1@0:len=17) -> [21, 22]
+ep_broadcast_cmd(0x1)
+commit_accepted_prefix(s1@0:len=17, na=2, k=2)
+dflash_eagle_accept_append(s1@0:len=17)
+save_hidden_for_mtp(1, stream=0)
+trim_proposer_state(s1@0:len=17, na=1, stream=0)
+run_mtp_propose_multi(token=22, pos=17, n=1, s1@0:len=17, stream=0, mask=false) -> [23]
+decode_marconi_checkpoint(s1@0:len=17)
+num_free_blocks() -> 998
+-- tick 8
+mtp_slot_draft_capacity(0)
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x16)
+ep_broadcast_cmd(0x17)
+decode_verify_graphed(tokens=[22, 23], s1@0:len=19) -> [23, 63]
+ep_broadcast_cmd(0x1)
+fx apply ReleaseSeq{cache=true, finish_sequence}
+cache_sequence(s1@0:len=19)
+free_sequence(s1@0:len=19, blocks=2)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff1)
+num_free_blocks() -> 1000
+-- tick 9
+fx apply EpShutdown
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xffffffff)
+fx apply Quiesce{stream=0}
+synchronize(stream=0)
+fx apply Quiesce{stream=1}
+synchronize(stream=1)
+fx teardown
+teardown()
+out s1: T10 T11 T12 T13 T14 T15 T16 T17 T18 T19 T20 T21 T22 T23 Done(stop, n=15, think=0, cached=0, acc=6, guard=None)

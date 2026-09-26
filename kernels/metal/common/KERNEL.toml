@@ -1,0 +1,8 @@
+[build]
+# 2026-09-25: Passed to `xcrun -sdk macosx metal` (crates/kernels/build_target.rs).
+# -DTQ_PLUS_SIGNS selects the two-sided sign rotation in wht_bf16.metal.
+extra_metal_flags = ["-ffast-math", "-DTQ_PLUS_SIGNS"]
+
+# 2026-09-25: File stem → module name overrides. Any .metal file not listed
+# here uses its file stem as the module name.
+[modules]

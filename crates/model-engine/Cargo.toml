@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-model-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the Model trait, the transformer model (prefill, decode, verify, SSM state), the generate engine and the model factory."
+
+[features]
+default = ["cuda"]
+cuda = ["metrale-model-arch/cuda"]
+metal = ["metrale-model-arch/metal"]
+
+[dependencies]
+metrale-cache = { path = "../cache", default-features = false }
+metrale-comm = { path = "../comm", default-features = false }
+metrale-config = { path = "../config", default-features = false }
+metrale-core = { path = "../core", default-features = false }
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+metrale-kernels = { path = "../kernels" }
+metrale-model-arch = { path = "../model-arch", default-features = false }
+metrale-model-layers = { path = "../model-layers", default-features = false }
+metrale-model-weights = { path = "../model-weights", default-features = false }
+metrale-sampling = { path = "../sampling", default-features = false }
+# 2026-09-25: For `FeedSource` and `RowMask`, which the `Model` trait's
+# fed-decode methods take (`src/traits/model.rs`).
+metrale-scheduler = { path = "../scheduler" }
+metrale-storage = { path = "../storage", default-features = false }
+metrale-telemetry = { path = "../telemetry" }
+anyhow = { workspace = true }
+half = "2"
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
+base64 = "0.22"
+
+[lints]
+workspace = true

@@ -1,0 +1,99 @@
+# scenario ngram
+bind_gpu_to_thread()
+create_stream() -> 1
+create_event() -> 2
+adapter_id_for(-1)
+adapter_id_for(-1)
+num_free_blocks() -> 1000
+-- tick 1
+alloc_sequence() -> slot 0
+adapter_id_for(-1)
+acquire_adapter_slot(-1)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff0)
+ep_broadcast_cmd(0xf)
+ep_broadcast_cmd(0x0)
+ep_broadcast_cmd(0xf)
+ep_broadcast_tokens(n=15)
+ep_sync_vision_embeds(n=15)
+prefill(n=15, s1@0:len=15, stream=0)
+copy_logits_to_host(row=0, off=0, bytes=128)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0x8)
+decode(token=8, s1@0:len=16, stream=0)
+argmax_on_device(row=0, stream=0) -> 2
+num_free_blocks() -> 998
+-- tick 2
+ep_broadcast_cmd_for_seq(seq=0, cmd=0x2)
+decode(token=2, s1@0:len=17, stream=0)
+argmax_on_device(row=0, stream=0) -> 3
+start_checkpoint_async(s1@0:len=17)
+num_free_blocks() -> 998
+-- tick 3
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x3)
+ep_broadcast_cmd(0x3)
+decode_verify_graphed(tokens=[3, 3], s1@0:len=19) -> [4, 1]
+ep_broadcast_cmd(0x0)
+start_rollback_and_checkpoint_async(s1@0:len=18, na=1)
+num_free_blocks() -> 998
+-- tick 4
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x4)
+ep_broadcast_cmd(0x4)
+decode_verify_graphed(tokens=[4, 4], s1@0:len=20) -> [9, 1]
+ep_broadcast_cmd(0x0)
+start_rollback_and_checkpoint_async(s1@0:len=19, na=1)
+num_free_blocks() -> 998
+-- tick 5
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x9)
+ep_broadcast_cmd(0x5)
+decode_verify_graphed(tokens=[9, 5], s1@0:len=21) -> [6, 1]
+ep_broadcast_cmd(0x0)
+start_rollback_and_checkpoint_async(s1@0:len=20, na=1)
+num_free_blocks() -> 998
+-- tick 6
+ep_broadcast_cmd_for_seq(seq=0, cmd=0x6)
+decode(token=6, s1@0:len=21, stream=0)
+argmax_on_device(row=0, stream=0) -> 7
+num_free_blocks() -> 998
+-- tick 7
+ep_broadcast_cmd_for_seq(seq=0, cmd=0x7)
+decode(token=7, s1@0:len=22, stream=0)
+argmax_on_device(row=0, stream=0) -> 8
+start_checkpoint_async(s1@0:len=22)
+num_free_blocks() -> 998
+-- tick 8
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x8)
+ep_broadcast_cmd(0x8)
+decode_verify_graphed(tokens=[8, 8], s1@0:len=24) -> [2, 1]
+ep_broadcast_cmd(0x0)
+start_rollback_and_checkpoint_async(s1@0:len=23, na=1)
+num_free_blocks() -> 998
+-- tick 9
+sync_secondary()
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff2)
+ep_broadcast_cmd(0x2)
+ep_broadcast_cmd(0x2)
+decode_verify_graphed(tokens=[2, 2], s1@0:len=25) -> [63, 1]
+ep_broadcast_cmd(0x0)
+start_rollback_and_checkpoint_async(s1@0:len=24, na=1)
+fx apply ReleaseSeq{cache=true, finish_sequence}
+cache_sequence(s1@0:len=24)
+free_sequence(s1@0:len=24, blocks=2)
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xfffffff1)
+num_free_blocks() -> 1000
+-- tick 10
+fx apply EpShutdown
+ep_broadcast_cmd_for_seq(seq=0, cmd=0xffffffff)
+fx apply Quiesce{stream=0}
+synchronize(stream=0)
+fx apply Quiesce{stream=1}
+synchronize(stream=1)
+fx teardown
+teardown()
+out s1: T8 T2 T3 T4 T9 T6 T7 T8 T2 Done(stop, n=10, think=0, cached=0, acc=0, guard=None)

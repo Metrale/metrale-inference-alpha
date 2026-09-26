@@ -1,0 +1,65 @@
+name: File size cap (≤500 LoC per .rs)
+
+# Read-only: this job only greps the checkout.
+permissions:
+  contents: read
+
+on:
+  # Manually runnable. During the 2026-08-06 Actions incident, webhook triggers
+  # were throttled to aid recovery, so pushes stopped creating runs at all --
+  # and with no dispatch trigger there was no way to ask for one. A check that
+  # can only be started by an event you do not control is a check you cannot
+  # get a verdict from when you most need it.
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main, master]
+  # Merge queue: entries are validated on a temporary gh-readonly-queue/**
+  # merge-commit that fires none of the events above, and this job is in the
+  # required set the queue waits on — without this trigger it is never
+  # reported and every entry times out.
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-file-sizes:
+    name: Enforce ≤500 LoC per source file
+    runs-on: >-
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The Mac pool's system python3 is not the hosted one; pin it so a check's
+      # verdict does not depend on which runner picked it up.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .github/python-version
+
+      # Deliberately hosted HERE and not in the certification suite it guards.
+      # The suite is 81 checks behind one line in security.yml; delete that line
+      # and every check stops running while the job it lived in stays green. A
+      # guard inside the suite cannot notice its own absence, so it lives in a
+      # different REQUIRED job -- removing the suite now breaks this one instead.
+      - name: The certification self-test still runs, in a job that must pass
+        run: |
+          python3 -m pip install --quiet PyYAML
+          python3 .github/scripts/assert-selftest-wired.py
+
+      - name: Check no .rs file exceeds 500 lines
+        shell: bash
+        run: bash .github/scripts/check-file-size-cap.sh
+      # Hosted here rather than in the workflows they protect: a workflow that
+      # can re-trigger itself, or cancel its own required check, is exactly the
+      # thing that will not notice. This job is a required context and is not
+      # what either guard examines — which is also why they stayed here through
+      # the consolidation instead of moving into ci.yml, where a guard about
+      # ci.yml would be living inside ci.yml.
+      - name: no workflow_run workflow can re-trigger itself via a branch it pushes
+        run: python3 .github/scripts/assert-no-workflow-feedback-loop.py
+
+      - name: no required check is cancellable by an event that cannot rewrite it
+        run: python3 .github/scripts/assert-required-checks-not-cancellable.py

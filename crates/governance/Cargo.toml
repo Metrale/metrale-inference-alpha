@@ -1,0 +1,19 @@
+[package]
+name = "metrale-governance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The PR journey ledger: an append-only record of how a change reached main."
+
+# 2026-09-26: Host-only: no dependency below reaches CUDA or a GPU.
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# 2026-09-26: The graph engine `ledger::materialize` builds in. The package at
+# this rev is named `latticedb-core` and its lib target `lattice_core`, so the
+# dependency key differs from the package name and `package` is required.
+lattice-core = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", rev = "e722d71", package = "latticedb-core" }
+

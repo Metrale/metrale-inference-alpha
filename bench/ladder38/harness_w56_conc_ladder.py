@@ -1,0 +1,528 @@
+#!/usr/bin/env python3
+
+# 2026-09-26: The w55 concurrency ladder driver plus GPU-rail energy per rep and in-band SSE errors.
+#
+# Owner: bench, concurrency ladder.
+# Invariants: none beyond the types.
+"""
+WAVE 56 of the concurrency ladder = wave 55 + a real in-window energy integral.
+
+★ WHY A NEW FILE INSTEAD OF EDITING w55.
+
+w55 is a PINNED INSTRUMENT. 87 committed ladder records carry a
+`driver_sha256` naming it, and `site/src/lib/ladders.test.js` asserts the
+records' sha equals the sha256 of the harness in the tree (and pins its md5
+outright). Editing w55 in place would silently orphan every one of those
+records -- they would claim provenance from a file that no longer exists at
+that hash. Re-pinning instead would assert the old records came from the new
+harness, which is false. So w55 stays frozen and this is the next wave.
+
+★ WHAT WAS WRONG IN w55, and is fixed here.
+
+w55 recorded `clock_sample_at_rep_start` under this comment:
+
+    # SM clock sampled INSIDE the rep window, not before it.
+    clk = os.popen("nvidia-smi ...").read().strip()
+    rep = await run_rep(...)
+
+`os.popen().read()` is synchronous: it completes BEFORE the rep issues a
+single request. Every value was the driver's 1 s trailing average over the
+PREVIOUS batch's tail. The comment asserted the opposite of what the code
+did; the field name told the truth.
+
+Two engines were compared on that field, yielding "Metrale Engine draws ~2x vLLM" --
+an artifact. Three properties made it unusable: the sample never covered its
+own rep; one sample per rep at +-5 W with same-rung scatter reaching 20 W
+(repeatability ~30% of the reading); and what it captured differed BY ENGINE,
+catching each one's end-of-batch behaviour. That is an asymmetry of the
+instrument, not of the workload.
+
+Here the energy is integrated over exactly the rep's own window -- the same
+interval `wall_s` and `tok_s` are computed from. GPU RAIL ONLY: on GB10
+`power.limit`, Module Power and GPU Memory Power all read N/A, so Grace and
+LPDDR5X are outside the number and every figure is a LOWER BOUND on system
+energy. Say "GPU rail" wherever it is shown.
+
+PR #388 definitive concurrency ladder — C=1..128, one client, both engines.
+
+Pinned by recipes/qwen3.6/qwen3.6-27b-w55-sweep-dev.yaml. Every measurement
+knob is a constant or a required argument; nothing is defaulted silently.
+
+Methodology (identical for Metrale Engine and vLLM — the SAME client drives both, which
+is the point: two harnesses measuring two engines is not an A/B):
+  * regime decode_short: ISL 128 / OSL 1024
+  * one rep = one batch of C concurrent streaming requests; wall = batch wall
+  * reps per rung recorded individually (raw series), never only the mean
+  * temperature 0, seed 42, token-matched via a forcing suffix + max_tokens cap
+  * chat_template_kwargs.enable_thinking=false on BOTH engines
+  * per-request nonce, based at a RANDOM per-process value, so
+    enable_prefix_caching cannot serve a repeat from cache — not within a run
+    and not across two runs against the same server (see make_prompt)
+  * completion_tokens/prompt_tokens read from the usage frame, not counted deltas
+    (Metrale Engine batches a short reply into ONE SSE delta)
+"""
+
+import argparse
+import asyncio
+import hashlib
+import json
+import os
+
+from power_window import PowerWindow, measure_idle_baseline
+import random
+import statistics
+import sys
+import time
+
+# 2026-09-26: Optional: `--check-shapes` grades prompt construction and needs no
+# server or HTTP client. Every measurement path refuses to start without aiohttp
+# (see the guard in main()).
+try:
+    import aiohttp
+except ImportError:  # pragma: no cover
+    aiohttp = None
+
+# 2026-09-26: The filler sentences, byte-identical to FILLER in
+# crates/bench/src/benchmarks/stats.rs.
+FILLER = (
+    "The quick brown fox jumped over the lazy dog near a river bank. "
+    "Mountains rise above the clouds while birds sing their morning songs. "
+    "Science explores the universe through careful observation and experiment. "
+    "Ancient civilizations built remarkable structures that still stand today. "
+    "Music fills the air with rhythm and harmony across every culture. "
+    "Technology advances rapidly changing how people communicate and work. "
+    "Forests provide shelter for countless species of plants and animals. "
+    "Ocean waves crash upon the shore under the light of the moon. "
+)
+# 2026-09-26: Output-forcing suffix, chosen by W55_PROMPT_MODE: `count` matches the
+# bench crate's PromptMode::Count, `essay` (the default) asks for long varied prose.
+SUFFIX_COUNT = " Count from 1 upward, one number per line, until told to stop."
+SUFFIX_ESSAY = (" Using the text above only as a starting point, write a long, richly detailed "
+                "essay that keeps introducing new specifics, examples and vocabulary. "
+                "Never repeat a sentence or paraphrase one you have already written. "
+                "Do not summarise and do not stop early.")
+TEMPERATURE = 0.0
+SEED = 42
+ENABLE_THINKING = False  # 2026-09-26: set from --enable-thinking in main()
+REQUEST_TIMEOUT_S = 900
+
+PROMPT_MODE = os.environ.get("W55_PROMPT_MODE", "essay")
+
+# 2026-09-26: The per-request nonce. It is a fixed-width field, exactly NONCE_WIDTH
+# digits, and every nonce is taken modulo NONCE_MODULUS, so it never changes the
+# prompt's length; `--check-shapes` asserts that. The counter starts at a random
+# per-process base (unless --nonce-base pins it), so within a run it advances and
+# two runs against one server do not start at the same prompt.
+NONCE_WIDTH = 6
+NONCE_MODULUS = 10**NONCE_WIDTH
+
+_seq = 0
+_nonce_base = 0
+
+
+def default_nonce_base() -> int:
+    """A per-process base no other process is likely to have used.
+
+    `SystemRandom` rather than pid+clock arithmetic: a pid is 5 digits on Linux
+    and recycles, and two ladder invocations started in the same second from a
+    script would sit close together. The chosen base is printed and written to
+    the run JSON (`nonce_base`), so a receipt records exactly which prompts a
+    run sent even though the value is random.
+    """
+    return random.SystemRandom().randrange(NONCE_MODULUS)
+
+
+def set_nonce_base(base: int) -> int:
+    """Pin the base and restart the counter. Returns the base actually used."""
+    global _nonce_base, _seq
+    _nonce_base = base % NONCE_MODULUS
+    _seq = 0
+    return _nonce_base
+
+
+def make_prompt(isl_tokens: int) -> str:
+    """Word-for-word the shape of metrale-plugin's `stats::make_prompt`: the chat
+    template contributes ~12 tokens, the rest is `needed` filler words, and the
+    nonce prefix forces a prefix-cache MISS so every request does real prefill.
+
+    The nonce is `(base + n) % NONCE_MODULUS` rendered at NONCE_WIDTH digits, so
+    the prompt's CHARACTER length — and, for a digit-splitting tokenizer such as
+    Qwen's, its TOKEN length — does not depend on the base. `--check-shapes`
+    is the assertion."""
+    global _seq
+    _seq += 1
+    nonce = (_nonce_base + _seq) % NONCE_MODULUS
+    needed = max(1, isl_tokens - 12)
+    words = FILLER.split()
+    out = f"[req {nonce:0{NONCE_WIDTH}d}] " + " ".join(
+        words[i % len(words)] for i in range(needed)
+    )
+    return out + (SUFFIX_COUNT if PROMPT_MODE == "count" else SUFFIX_ESSAY)
+
+
+def percentile(data, p):
+    if not data:
+        return None
+    s = sorted(data)
+    k = (len(s) - 1) * (p / 100.0)
+    f = int(k)
+    c = min(f + 1, len(s) - 1)
+    return s[f] + (k - f) * (s[c] - s[f])
+
+
+def sse_error(ev):
+    """The message of an in-band SSE error frame, or None.
+
+    Accepts both shapes Metrale Engine publishes -- chat's OpenAI envelope
+    {"error": {"message": ...}} and legacy /v1/completions' {"error": "..."}.
+    A server that fails a request AFTER sending HTTP 200 can only say so here;
+    skipping the frame turned a poisoned serve's every request into a counted
+    0-token success (G25).
+    """
+    err = ev.get("error") if isinstance(ev, dict) else None
+    if err is None:
+        return None
+    if isinstance(err, dict):
+        return str(err.get("message") or err)
+    return str(err)
+
+
+async def one_request(session, url, model, prompt, osl):
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": osl,
+        "temperature": TEMPERATURE,
+        # 2026-09-26: Both penalties are sent as 0, so the request value is used
+        # rather than the model's preset (the chat path falls back to the preset only
+        # when a request omits one; qwen3.8-27b's non_thinking preset sets
+        # presence_penalty = 1.5).
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "seed": SEED,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        # 2026-09-26: The same body goes to both engines. Thinking is off unless
+        # --enable-thinking is given; the run header records which was sent.
+        "chat_template_kwargs": {"enable_thinking": ENABLE_THINKING},
+    }
+    t0 = time.perf_counter()
+    t_first = None
+    t_last = None
+    completion_tokens = 0
+    prompt_tokens = 0
+    deltas = 0
+    finish_reason = None
+    saw_done = False
+    try:
+        async with session.post(url, json=payload,
+                                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S)) as resp:
+            if resp.status != 200:
+                return {"error": f"HTTP {resp.status}: {(await resp.text())[:300]}"}
+            buf = ""
+            async for chunk in resp.content.iter_any():
+                buf += chunk.decode("utf-8", errors="replace")
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    line = line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data == "[DONE]":
+                        saw_done = True
+                        break
+                    try:
+                        ev = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    msg = sse_error(ev)
+                    if msg is not None:
+                        return {"error": f"server error mid-stream: {msg[:300]}"}
+                    for ch in ev.get("choices") or []:
+                        content = (ch.get("delta") or {}).get("content")
+                        if content:
+                            now = time.perf_counter()
+                            if t_first is None:
+                                t_first = now
+                            t_last = now
+                            deltas += 1
+                        if ch.get("finish_reason"):
+                            finish_reason = ch["finish_reason"]
+                    usage = ev.get("usage")
+                    if usage:
+                        completion_tokens = usage.get("completion_tokens", completion_tokens)
+                        prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+    # 2026-09-26: Neither [DONE] nor a finish_reason: the stream was cut off.
+    if not saw_done and finish_reason is None:
+        return {"error": f"stream ended without a terminal frame after {deltas} delta(s): truncated"}
+
+    t_end = time.perf_counter()
+    e2e = t_end - t0
+    ttft = (t_first - t0) if t_first else e2e
+    decode = (t_last - t_first) if (t_first and t_last) else 0.0
+    tpot = (decode / (completion_tokens - 1)) if completion_tokens > 1 and decode > 0 else 0.0
+    return {
+        "ttft_ms": ttft * 1000.0,
+        "tpot_ms": tpot * 1000.0,
+        "e2e_s": e2e,
+        "completion_tokens": completion_tokens,
+        "prompt_tokens": prompt_tokens,
+        "sse_deltas": deltas,
+        "finish_reason": finish_reason,
+    }
+
+
+async def run_rep(session, url, model, conc, isl, osl, power=None):
+    prompts = [make_prompt(isl) for _ in range(conc)]
+    t0 = time.perf_counter()
+    outs = await asyncio.gather(*[one_request(session, url, model, p, osl) for p in prompts])
+    t1 = time.perf_counter()
+    wall = t1 - t0
+    good = [o for o in outs if "error" not in o]
+    errs = [o for o in outs if "error" in o]
+    ctok = sum(o["completion_tokens"] for o in good)
+    ptok = sum(o["prompt_tokens"] for o in good)
+    out = {
+        "wall_s": wall,
+        "completion_tokens": ctok,
+        "prompt_tokens": ptok,
+        "prompt_tokens_per_req": sorted({o["prompt_tokens"] for o in good}),
+        "tok_s": (ctok / wall) if wall > 0 else 0.0,
+        "n_ok": len(good),
+        "n_err": len(errs),
+        "errors": [e["error"] for e in errs][:3],
+        "ttft_p50_ms": percentile([o["ttft_ms"] for o in good], 50),
+        "ttft_p99_ms": percentile([o["ttft_ms"] for o in good], 99),
+        "tpot_p50_ms": percentile([o["tpot_ms"] for o in good if o["tpot_ms"] > 0], 50),
+        "e2e_p50_s": percentile([o["e2e_s"] for o in good], 50),
+        "finish_reasons": sorted({str(o["finish_reason"]) for o in good}),
+        "completion_tokens_per_req": sorted(o["completion_tokens"] for o in good),
+    }
+    # 2026-09-26: The integral covers exactly [t0, t1], the interval `wall_s` and
+    # `tok_s` come from; when there is no energy figure, gpu_rail_status says why.
+    if power is not None:
+        out.update(power.integrate(t0, t1))
+    return out
+
+
+def load_tokenizer(path):
+    """A Qwen tokenizer from a LOCAL path, or None.
+
+    Never downloads: this runs on benchmark boxes that are offline by policy and
+    inside CI. `None` is a legitimate answer — `check_shapes` then grades the
+    character-length and digit-width invariant, which is the property the token
+    count actually rests on for a digit-splitting tokenizer.
+    """
+    if not path:
+        return None
+    try:
+        from transformers import AutoTokenizer
+    except ImportError:
+        return None
+    try:
+        return AutoTokenizer.from_pretrained(path, local_files_only=True)
+    except Exception:
+        return None
+
+
+def check_shapes(isl, tokenizer_path):
+    """`--check-shapes`: the nonce base must not change the prompt's SHAPE.
+
+    The ladder is frozen for cross-round comparability, so a per-process nonce
+    base is only admissible if a prompt built at base A tokenises to the same
+    length as the same prompt built at base B. Three assertions, in the order
+    they bite:
+
+      1. the nonce field is exactly NONCE_WIDTH digits at every base, including
+         the ones that would otherwise widen it (0 and NONCE_MODULUS - 1);
+      2. two bases give byte-equal prompts outside that field, and equal
+         character length;
+      3. with a Qwen tokenizer present, equal TOKEN counts — the property (1)
+         and (2) are a proxy for.
+
+    Also asserts the bug is gone: two DIFFERENT bases must not produce the same
+    first prompt, which is what the pre-window warmup and phase A used to do.
+    """
+    failures = []
+    # 2026-09-26: Distinct modulo NONCE_MODULUS: bases a whole modulus apart give
+    # the same nonce by construction, which check (4) covers separately.
+    bases = [0, 1, 42, 770_001, NONCE_MODULUS - 1]
+    prompts = {}
+    for base in bases:
+        used = set_nonce_base(base)
+        prompts[base] = make_prompt(isl)
+        field = prompts[base][len("[req "):len("[req ") + NONCE_WIDTH]
+        if not (len(field) == NONCE_WIDTH and field.isdigit()):
+            failures.append(f"base {base} (used {used}): nonce field {field!r} is not "
+                            f"{NONCE_WIDTH} digits")
+        if prompts[base][len("[req ") + NONCE_WIDTH:len("[req ") + NONCE_WIDTH + 2] != "] ":
+            failures.append(f"base {base}: nonce field is not closed by '] '")
+
+    ref = prompts[bases[0]]
+    head = len("[req ") + NONCE_WIDTH
+    for base, prompt in prompts.items():
+        if len(prompt) != len(ref):
+            failures.append(f"base {base}: prompt is {len(prompt)} chars, base "
+                            f"{bases[0]} is {len(ref)} — the ladder is not frozen")
+        if prompt[:len("[req ")] != ref[:len("[req ")] or prompt[head:] != ref[head:]:
+            failures.append(f"base {base}: prompt differs outside the nonce field")
+
+    distinct = {p[:head] for p in prompts.values()}
+    if len(distinct) != len(prompts):
+        failures.append(f"two bases produced the same nonce: {sorted(distinct)} — the "
+                        "prefix-cache collision this flag exists to prevent")
+
+    # 2026-09-26: (4) The base is reduced modulo NONCE_MODULUS and the counter
+    # restarts with it, so an out-of-range --nonce-base cannot widen the field.
+    if set_nonce_base(NONCE_MODULUS + 7) != 7:
+        failures.append("set_nonce_base does not reduce modulo NONCE_MODULUS")
+    if make_prompt(isl)[:head] != f"[req {8:0{NONCE_WIDTH}d}]"[:head]:
+        failures.append("set_nonce_base did not restart the per-process counter")
+
+    tok = load_tokenizer(tokenizer_path)
+    if tok is None:
+        token_note = ("SKIPPED (no local tokenizer; pass --tokenizer <dir> or set "
+                      "W55_TOKENIZER). The character-length and digit-width "
+                      "assertions above are the standing invariant.")
+    else:
+        counts = {b: len(tok.encode(p)) for b, p in prompts.items()}
+        if len(set(counts.values())) != 1:
+            failures.append(f"token counts differ across nonce bases: {counts}")
+        token_note = f"PASS ({sorted(set(counts.values()))[0]} tokens at every base)"
+
+    print(f"# check-shapes isl={isl} width={NONCE_WIDTH} bases={bases}")
+    print(f"#   prompt chars     : {len(ref)}")
+    print(f"#   nonce fields     : {sorted(distinct)}")
+    print(f"#   token-count check: {token_note}")
+    for f in failures:
+        print(f"FAIL: {f}")
+    print("# check-shapes OK" if not failures else f"# check-shapes FAILED ({len(failures)})")
+    return 0 if not failures else 1
+
+
+async def main():
+    ap = argparse.ArgumentParser()
+    # 2026-09-26: Not `required=True`, because --check-shapes needs none of them;
+    # the check below still refuses a measurement run with any of them missing.
+    ap.add_argument("--url")
+    ap.add_argument("--model")
+    ap.add_argument("--label")
+    ap.add_argument("--out")
+    ap.add_argument("--concs")
+    ap.add_argument("--reps", type=int)
+    ap.add_argument("--isl", type=int)
+    ap.add_argument("--osl", type=int)
+    ap.add_argument("--warmup", type=int)
+    ap.add_argument("--enable-thinking", action="store_true",
+                    help="send chat_template_kwargs.enable_thinking=true (default false)")
+    ap.add_argument("--nonce-base", type=int, default=None,
+                    help="per-process prompt-nonce base (default: random). Pin it only "
+                         "to reproduce a specific run's prompts; two runs against one "
+                         "server must NOT share a base or the second hits the prefix "
+                         "cache. Recorded as `nonce_base` in the output JSON.")
+    ap.add_argument("--check-shapes", action="store_true",
+                    help="self-test: assert the nonce base changes no prompt's token "
+                         "count, then exit. Needs no server.")
+    ap.add_argument("--tokenizer", default=os.environ.get("W55_TOKENIZER"),
+                    help="local tokenizer dir for --check-shapes (offline only)")
+    a = ap.parse_args()
+
+    if a.check_shapes:
+        return check_shapes(a.isl if a.isl else 1024, a.tokenizer)
+
+    if aiohttp is None:
+        ap.error("aiohttp is required to drive a ladder (only --check-shapes runs without it)")
+
+    missing = [f"--{n.replace('_', '-')}" for n in
+               ("url", "model", "label", "out", "concs", "reps", "isl", "osl", "warmup")
+               if getattr(a, n) is None]
+    if missing:
+        ap.error("missing required argument(s): " + ", ".join(missing))
+
+    global ENABLE_THINKING
+    ENABLE_THINKING = bool(a.enable_thinking)
+    nonce_base = set_nonce_base(
+        a.nonce_base if a.nonce_base is not None else default_nonce_base()
+    )
+
+    concs = [int(x) for x in a.concs.split(",") if x.strip()]
+    chat = a.url.rstrip("/") + "/v1/chat/completions"
+    with open(__file__, "rb") as _self_src:
+        me = hashlib.sha256(_self_src.read()).hexdigest()
+
+    record = {
+        "label": a.label, "url": a.url, "model": a.model,
+        "isl": a.isl, "osl": a.osl, "reps": a.reps, "warmup": a.warmup,
+        "temperature": TEMPERATURE, "seed": SEED,
+        "chat_template_kwargs": {"enable_thinking": ENABLE_THINKING},
+        # 2026-09-26: The nonce base this run used, and whether --nonce-base pinned
+        # it, so the prompts it sent can be reconstructed.
+        "nonce_base": nonce_base,
+        "nonce_base_pinned": a.nonce_base is not None,
+        "nonce_width": NONCE_WIDTH,
+        "driver_sha256": me,
+        "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "rungs": [],
+    }
+    print(f"# driver sha256 {me}", flush=True)
+    print(f"# nonce base {nonce_base:0{NONCE_WIDTH}d} "
+          f"({'pinned' if a.nonce_base is not None else 'random'})", flush=True)
+
+    conn = aiohttp.TCPConnector(limit=0, force_close=True)
+    # 2026-09-26: One PowerWindow for the whole ladder, read on its own thread. The
+    # idle baseline is measured once, before the first rung, and is reported as
+    # not idle unless utilization stays 0 and the SM clock at or below 400 MHz.
+    with PowerWindow() as power_window:
+        idle = measure_idle_baseline(power_window)
+        print(f"# gpu-rail idle baseline: {idle}", flush=True)
+        if power_window.unavailable:
+            print(f"# WARNING: no GPU-rail energy this run ({power_window.unavailable})", flush=True)
+        async with aiohttp.ClientSession(connector=conn) as session:
+            for conc in concs:
+                for w in range(a.warmup):
+                    await run_rep(session, chat, a.model, conc, a.isl, a.osl)
+                reps = []
+                for r in range(a.reps):
+                    rep = await run_rep(session, chat, a.model, conc, a.isl, a.osl,
+                                        power=power_window)
+                    rep["rep"] = r
+                    clk = ""
+                    reps.append(rep)
+                    print(f"[{a.label}] C={conc:>3} rep{r}  "
+                          f"tok/s={rep['tok_s']:8.2f}  wall={rep['wall_s']:7.2f}s  "
+                          f"ctok={rep['completion_tokens']:>7}  ptok/req={rep['prompt_tokens_per_req']}  "
+                          f"ttft_p50={rep['ttft_p50_ms']:.0f}ms  err={rep['n_err']}  clk={clk}",
+                          flush=True)
+                series = [r["tok_s"] for r in reps]
+                rung = {
+                    "concurrency": conc,
+                    "reps": reps,
+                    "tok_s_series": series,
+                    "tok_s_mean": statistics.fmean(series),
+                    "tok_s_median": statistics.median(series),
+                    "tok_s_spread_pct": (max(series) - min(series)) / statistics.fmean(series) * 100.0
+                                        if statistics.fmean(series) > 0 else 0.0,
+                    "wall_s_series": [r["wall_s"] for r in reps],
+                    "wall_s_mean": statistics.fmean([r["wall_s"] for r in reps]),
+                    "completion_tokens_series": [r["completion_tokens"] for r in reps],
+                    "completion_tokens_mean": statistics.fmean([r["completion_tokens"] for r in reps]),
+                    "errors_total": sum(r["n_err"] for r in reps),
+                }
+                record["rungs"].append(rung)
+                print(f"[{a.label}] C={conc:>3} SERIES {['%.2f' % s for s in series]} "
+                      f"mean={rung['tok_s_mean']:.2f} spread={rung['tok_s_spread_pct']:.2f}%",
+                      flush=True)
+                # 2026-09-26: Written after every rung, so a crash loses at most
+                # the rung in progress.
+                with open(a.out, "w") as f:
+                    json.dump(record, f, indent=2)
+        record["finished_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open(a.out, "w") as f:
+            json.dump(record, f, indent=2)
+        print(f"# wrote {a.out}", flush=True)
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-26: The proposers `build_model` installs after
+//! `TransformerModel::new` (DeepSeek-V4 MTP, GLM-5.3 MTP, DFlash), and the
+//! allocation report it logs last.
+//!
+//! Owner: metrale-model-engine.
+//! Invariants:
+//! - A DeepSeek-V4 or GLM-5.3 proposer build error is logged and not returned;
+//!   a DFlash drafter error is returned.
+
+use anyhow::Result;
+use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_model_arch::weight_loader::deepseek_v4::mtp::DeepseekV4MtpModule;
+use metrale_model_arch::weight_loader::glm5_next_mtp::Glm5NextMtpModule;
+use metrale_model_arch::weight_loader::load_dflash_weights;
+use metrale_model_layers::weight_map::{DenseWeight, Fp8DenseWeight, QuantizedWeight};
+
+use crate::factory::DflashBuildArgs;
+use crate::model::TransformerModel;
+
+/// 2026-09-26: Installs the DeepSeek-V4 MTP proposer when the module loaded.
+pub(super) fn install_v4_mtp_proposer(
+    model: &mut TransformerModel,
+    v4_mtp_module: Option<DeepseekV4MtpModule>,
+    v4_mtp_embed: DenseWeight,
+    v4_mtp_lm_head: DenseWeight,
+    mtp_vocab_size: u32,
+    max_seq_len: usize,
+) {
+    if let Some(v4_module) = v4_mtp_module {
+        match metrale_model_arch::deepseek_v4_mtp::DeepseekV4MtpHead::new(
+            v4_module,
+            v4_mtp_embed,
+            v4_mtp_lm_head,
+            model.config_ref(),
+            model.gpu_backend(),
+            mtp_vocab_size,
+            max_seq_len,
+        ) {
+            Ok(head) => {
+                model.set_dflash_proposer(std::sync::Arc::new(head));
+                tracing::info!(target: "metrale_model_engine::factory::build", "DeepSeek-V4 MTP speculative decoding: ENABLED (single-module)");
+            }
+            Err(e) => {
+                tracing::warn!(target: "metrale_model_engine::factory::build", "Failed to build DeepSeek-V4 MTP proposer: {e:#}. Speculative decoding disabled."
+                )
+            }
+        }
+    }
+}
+
+/// 2026-09-26: Installs the GLM-5.3 MTP proposer when the module loaded.
+pub(super) fn install_glm_mtp_proposer(
+    model: &mut TransformerModel,
+    glm_mtp_module: Option<Glm5NextMtpModule>,
+    glm_mtp_embed: DenseWeight,
+    glm_mtp_lm_head: DenseWeight,
+    max_seq_len: usize,
+) {
+    if let Some(m) = glm_mtp_module {
+        match metrale_model_arch::glm5next_mtp_head::Glm5NextMtpHead::new(
+            m,
+            glm_mtp_embed,
+            glm_mtp_lm_head,
+            model.config_ref(),
+            model.gpu_backend(),
+            max_seq_len,
+        ) {
+            Ok(head) => {
+                model.set_dflash_proposer(std::sync::Arc::new(head));
+                tracing::info!(target: "metrale_model_engine::factory::build", "GLM-5.3 MTP speculative decoding: ENABLED");
+            }
+            Err(e) => {
+                tracing::warn!(target: "metrale_model_engine::factory::build", "Failed to build GLM-5.3 MTP proposer: {e:#}. Speculative decoding disabled."
+                )
+            }
+        }
+    }
+}
+
+/// 2026-09-26: Installs the DFlash drafter when `dflash_args` is given and its
+/// store has DFlash weights.
+pub(super) fn install_dflash_drafter(
+    model: &mut TransformerModel,
+    dflash_args: Option<DflashBuildArgs<'_>>,
+    target_embed_for_dflash: DevicePtr,
+    target_lm_head_for_dflash: DevicePtr,
+    target_lm_head_nvfp4_for_dflash: Option<QuantizedWeight>,
+    target_lm_head_native_fp8_for_dflash: Option<(Fp8DenseWeight, usize)>,
+    target_hidden_for_dflash: usize,
+    max_seq_len: usize,
+    max_batch_size: usize,
+) -> Result<()> {
+    if let Some(args) = dflash_args {
+        let weights = load_dflash_weights(
+            args.drafter_store,
+            &args.drafter_config,
+            model.gpu_backend(),
+            1,
+        )?;
+        if let Some(weights) = weights {
+            let head = metrale_model_arch::dflash_head::BlockDiffusionDraftHead::from_weights(
+                weights,
+                target_embed_for_dflash,
+                target_lm_head_for_dflash,
+                target_lm_head_nvfp4_for_dflash,
+                target_lm_head_native_fp8_for_dflash,
+                target_hidden_for_dflash,
+                args.gamma,
+                args.window_size,
+                model.gpu_backend(),
+                max_seq_len,
+                max_batch_size,
+            )?;
+            model.set_dflash_proposer(std::sync::Arc::new(head));
+            tracing::info!(target: "metrale_model_engine::factory::build", "DFlash drafter installed as the active proposer");
+        } else {
+            tracing::warn!(target: "metrale_model_engine::factory::build", "DFlash drafter store had no fc.weight — proposer not installed; \
+                 falling back to whatever proposer (if any) the target's MTP path built"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// 2026-09-26: Logs the backend's allocation report and whether tracked-live
+/// bytes stayed within `total_budget`.
+pub(super) fn log_alloc_report(
+    model: &TransformerModel,
+    total_budget: usize,
+    gpu_memory_utilization: f64,
+    total_mem: usize,
+    gib: impl Fn(usize) -> f64,
+) {
+    // 2026-09-25: The backend's allocation report, logged at INFO once, after
+    // every build allocation.
+    if let Some(report) = model.gpu_backend().alloc_report(12, 64) {
+        for line in report.lines() {
+            tracing::info!(target: "metrale_model_engine::factory::build", "{line}");
+        }
+    }
+    // 2026-09-25: Tracked-live bytes above the util budget mean an allocation
+    // the sizing above did not reserve for. Logged as a warning; the build
+    // still succeeds.
+    if let Some(live) = model.gpu_backend().live_bytes() {
+        if live > total_budget {
+            tracing::warn!(target: "metrale_model_engine::factory::build", "util pledge exceeded: {:.1} GB tracked live vs {:.1} GB pledged \
+                 (--gpu-memory-utilization {:.0}% of {:.1} GB) — an allocation \
+                 family above is missing from the preflight reserve",
+                gib(live),
+                gib(total_budget),
+                gpu_memory_utilization * 100.0,
+                gib(total_mem),
+            );
+        } else {
+            tracing::info!(target: "metrale_model_engine::factory::build", "util pledge honored: {:.1} GB tracked live within the {:.1} GB \
+                 budget ({:.1} GB pledge headroom)",
+                gib(live),
+                gib(total_budget),
+                gib(total_budget - live),
+            );
+        }
+    }
+}

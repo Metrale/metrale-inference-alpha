@@ -1,0 +1,12 @@
+# Thinkbrake code-fence fix — layer the rebuilt met binary onto the
+# exact image under test (metrale-gb10:answer-regen-bon) so ONLY the
+# binary changes and the runtime/model layers stay byte-identical.
+#
+# Build:
+#   cargo build --release -p metrale-server   # in metrale-builder
+#   cp target/release/met met-fastbin
+#   docker build -f docker/gb10/Dockerfile.fence -t metrale-gb10:thinkbrake-fence .
+FROM metrale-gb10:answer-regen-bon
+
+COPY met-fastbin /usr/local/bin/met
+COPY jinja-templates/ /jinja-templates/

@@ -1,0 +1,47 @@
+# 2026-09-25: comment-ttl settings shared by the `comments` job in ci.yml, the
+# daily expiring-comments workflow and any local `comment-ttl check` run from
+# the repository root. Only keys whose Action input defaults to empty belong
+# here: an Action input with a default (fail_on_flag, reference_date,
+# scan_dirs, output_type, scope, undated, annotations) always overrides this
+# file, so those are set per invocation in the workflows.
+# `.github/scripts/comment-ttl-config.py check` enforces that, and that every
+# third-party path `.licenserc.yaml` ignores is exempt here too.
+
+comment_ttl = "3 months"
+warn_within = "7d"
+
+# 2026-09-26: The four clap definition files are listed because their `///` comments are the
+# `--help` text, which must not carry a date (owner decision 2026-09-25); their few plain
+# comments are still swept, just not enforced.
+# 2026-09-26: `gen_parity_fixtures.py` is listed because `scoring_tests.rs`
+# pins its SHA-256 (include_str!), so its comments are data for that test.
+# 2026-09-25: Paths whose comments are never judged: third-party sources kept
+# verbatim (THIRD_PARTY_NOTICES.md, `.licenserc.yaml` paths-ignore), the
+# website trees (owner decision 2026-09-24), and build output. `build/` is not
+# listed as a bare name because two engine source directories are called that.
+exempt_paths = '''(?x)
+    ^vendor/
+  | (^|/)q4k_vendor/
+  | (^|/)vllm_src/
+  | ^bench/qwen4_exp/ref/
+  | ^bench/ngram_ref/modeling_longcat_ngram\.py$
+  | ^crates/bench/assets/mlperf-agentic/gen_parity_fixtures\.py$
+  | ^(site|blog|book|web-shared|assets/brand)/
+  | ^crates/server/src/cli\.rs$
+  | ^crates/server/src/cli/(serve_args|bench_args|bench_certify/args)(\.rs$|/)
+  | ^target/
+  | (^|/)node_modules/
+  | (^|/)\.svelte-kit/
+'''
+
+# 2026-09-26: `pragma: no cover` (coverage.py) and `shellcheck` directives are
+# tool instructions, not prose; comment-ttl's defaults do not cover them.
+# 2026-09-25: Build markers that tests read as exact text, so they carry no
+# date: `crates/kernels/tests/nvfp4_mmq_capability.rs` and the hopper 27B
+# test match these trailing `#if`/`#endif` comments byte for byte.
+exemptions = [
+  '^//\s*Metrale Engine optional module$',
+  '^//\s*METRALE_NO_WARP_BLOCKSCALE_MMA$',
+  '^#\s*pragma: no cover',
+  '^#\s*shellcheck ',
+]

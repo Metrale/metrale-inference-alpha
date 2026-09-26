@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: CUDA SiTU-GLU MLP for Kimi K3 (a dense layer's MLP or a LatentMoE layer's shared expert) on the resident BF16/FP32 weights, with FP32 activations.
+//!
+//! Decode uses it only with `K3_CUDA_DENSE=1`. Only the input row and the output
+//! row cross the host boundary; the weights are read where the loader put them.
+//!
+//! Owner: model-arch, Kimi K3.
+//! Invariants:
+//! - Every scratch buffer a launch allocates gets a `free` call when it
+//!   returns, on success and on error (`Scratch` on drop); a failed `free` is
+//!   ignored.
+
+use anyhow::{Context, Result, ensure};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
+use metrale_model_weights::weights::WeightDtype;
+
+use super::bound::K3BoundLayer;
+
+fn dtype_tag(dtype: WeightDtype) -> Result<u32> {
+    match dtype {
+        WeightDtype::FP32 => Ok(0),
+        WeightDtype::BF16 => Ok(1),
+        other => anyhow::bail!("K3 dense GPU: unsupported resident weight dtype {other:?}"),
+    }
+}
+
+struct Scratch<'a> {
+    gpu: &'a dyn GpuBackend,
+    pointers: Vec<DevicePtr>,
+}
+impl Scratch<'_> {
+    fn alloc(&mut self, floats: usize) -> Result<DevicePtr> {
+        let bytes = floats
+            .checked_mul(4)
+            .context("K3 dense scratch size overflow")?;
+        let p = self.gpu.alloc(bytes)?;
+        self.pointers.push(p);
+        Ok(p)
+    }
+}
+impl Drop for Scratch<'_> {
+    fn drop(&mut self) {
+        for p in self.pointers.drain(..).rev() {
+            let _ = self.gpu.free(p);
+        }
+    }
+}
+
+/// 2026-09-25: Finds the layer's resident `gate`/`up`/`down` weights (under
+/// `.mlp.` for a dense layer, `.block_sparse_moe.shared_experts.` for a
+/// LatentMoE layer), checks each holds `hidden * inter` values, and runs
+/// [`launch_dense_matrices`].
+#[allow(clippy::too_many_arguments)]
+pub fn launch_dense_mlp(
+    layer: &K3BoundLayer,
+    gpu: &dyn GpuBackend,
+    x: &[f32],
+    hidden: usize,
+    inter: usize,
+    beta: f32,
+    linear_beta: f32,
+    stream: u64,
+) -> Result<Vec<f32>> {
+    ensure!(
+        hidden > 0 && inter > 0 && x.len() == hidden,
+        "K3 dense GPU: invalid activation geometry"
+    );
+    ensure!(
+        beta.is_finite() && beta > 0.0 && linear_beta.is_finite() && linear_beta > 0.0,
+        "K3 dense GPU: invalid SiTU coefficients"
+    );
+    let elements = hidden
+        .checked_mul(inter)
+        .context("K3 dense weight size overflow")?;
+    ensure!(
+        elements <= u32::MAX as usize,
+        "K3 dense GPU: matrix exceeds 32-bit kernel indexing"
+    );
+    let prefix = match layer.spec.mlp {
+        metrale_model_weights::kimi_k3_host::MlpKind::Dense => ".mlp.",
+        metrale_model_weights::kimi_k3_host::MlpKind::LatentMoe => {
+            ".block_sparse_moe.shared_experts."
+        }
+    };
+    let find = |role: &str| -> Result<_> {
+        let suffix = format!("{prefix}{role}_proj.weight");
+        let (weight, meta) = layer
+            .weights
+            .iter()
+            .zip(&layer.weight_meta)
+            .find(|(_, meta)| meta.name.ends_with(&suffix))
+            .with_context(|| format!("K3 dense GPU: resident {suffix} missing"))?;
+        ensure!(
+            meta.numel == elements,
+            "K3 dense GPU: {} has {} values, expected {elements}",
+            meta.name,
+            meta.numel
+        );
+        Ok((weight.weight, dtype_tag(meta.dtype)?))
+    };
+    let (gate, gate_dtype) = find("gate")?;
+    let (up, up_dtype) = find("up")?;
+    let (down, down_dtype) = find("down")?;
+    ensure!(
+        gate_dtype == up_dtype,
+        "K3 dense GPU: gate/up dtypes differ"
+    );
+    launch_dense_matrices(
+        gpu,
+        x,
+        gate,
+        up,
+        down,
+        gate_dtype,
+        down_dtype,
+        hidden,
+        inter,
+        beta,
+        linear_beta,
+        stream,
+    )
+}
+
+/// 2026-09-25: Runs the gate/up SiTU kernel and the down kernel on explicit
+/// device weights. Dtype tags: 0 = FP32, 1 = BF16.
+#[allow(clippy::too_many_arguments)]
+pub fn launch_dense_matrices(
+    gpu: &dyn GpuBackend,
+    x: &[f32],
+    gate: DevicePtr,
+    up: DevicePtr,
+    down: DevicePtr,
+    gate_dtype: u32,
+    down_dtype: u32,
+    hidden: usize,
+    inter: usize,
+    beta: f32,
+    linear_beta: f32,
+    stream: u64,
+) -> Result<Vec<f32>> {
+    ensure!(
+        hidden > 0 && inter > 0 && x.len() == hidden,
+        "K3 dense GPU: invalid dimensions"
+    );
+    ensure!(
+        hidden
+            .checked_mul(inter)
+            .is_some_and(|n| n <= u32::MAX as usize),
+        "K3 dense GPU: index overflow"
+    );
+    ensure!(
+        gate_dtype <= 1 && down_dtype <= 1,
+        "K3 dense GPU: invalid dtype tag"
+    );
+    ensure!(
+        beta.is_finite() && beta > 0.0 && linear_beta.is_finite() && linear_beta > 0.0,
+        "K3 dense GPU: invalid activation coefficients"
+    );
+    let gate_kernel = gpu.kernel("dense_f32io", "k3_dense_gate_up_situ_f32io")?;
+    let down_kernel = gpu.kernel("dense_f32io", "k3_dense_down_f32io")?;
+    let mut scratch = Scratch {
+        gpu,
+        pointers: Vec::new(),
+    };
+    let input = scratch.alloc(hidden)?;
+    let mid = scratch.alloc(inter)?;
+    let output = scratch.alloc(hidden)?;
+    gpu.copy_h2d(
+        &x.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>(),
+        input,
+    )?;
+    KernelLaunch::new(gpu, gate_kernel)
+        .grid([div_ceil(inter as u32, 4), 1, 1])
+        .block([128, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(gate)
+        .arg_ptr(up)
+        .arg_ptr(mid)
+        .arg_u32(inter as u32)
+        .arg_u32(hidden as u32)
+        .arg_u32(gate_dtype)
+        .arg_f32(beta)
+        .arg_f32(linear_beta)
+        .launch(stream)?;
+    KernelLaunch::new(gpu, down_kernel)
+        .grid([div_ceil(hidden as u32, 4), 1, 1])
+        .block([128, 1, 1])
+        .arg_ptr(mid)
+        .arg_ptr(down)
+        .arg_ptr(output)
+        .arg_u32(hidden as u32)
+        .arg_u32(inter as u32)
+        .arg_u32(down_dtype)
+        .launch(stream)?;
+    gpu.synchronize(stream)?;
+    let mut raw = vec![0; hidden * 4];
+    gpu.copy_d2h(output, &mut raw)?;
+    let result: Vec<f32> = raw
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    ensure!(
+        result.iter().all(|v| v.is_finite()),
+        "K3 dense GPU: nonfinite output"
+    );
+    Ok(result)
+}

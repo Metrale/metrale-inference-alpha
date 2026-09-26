@@ -1,0 +1,21 @@
+# 2026-09-25: Kimi K3 bf16: gb10's kda_decode and mla_decode, and the
+# deepseek-v4-flash grouped GEMM whose moe_w4a16_grouped_gemm_ptrtable_e8m0
+# Kimi dispatches. kernels/b300 has no `inherits`, so this leaf lists its sources.
+
+[build]
+
+[modules]
+moe_w4a16_grouped_gemm = "moe_w4a16"
+
+# 2026-09-25: Files this directory compiles from elsewhere in kernels/ (paths
+# relative to kernels/b300), staged here by crates/kernels/build_stage.rs.
+[sources]
+use = [
+  "../gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu",
+  "../gb10/kimi-k3/bf16/kda_decode.cu",
+  "../gb10/kimi-k3/bf16/mla_decode.cu",
+]
+
+# 2026-09-25: Entries of this directory that replace a same-stem entry of common/.
+[shadow]
+moe_w4a16_grouped_gemm = "uses gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu (the E8M0 ptrtable GEMM Kimi dispatches) over b300/common/moe_w4a16_grouped_gemm.cu; see kernels/FORKS.md"

@@ -1,0 +1,140 @@
+[model]
+name = "nemotron-super-120b-a12b"
+hf_id = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+model_type = "nemotron_h"
+architecture = "hybrid_mamba2_latent_moe_attention"
+parameters = "120B"
+active_parameters = "12B"
+
+# 2026-09-25: Needles for crates/kernels/src/resolve.rs. This target shares (nemotron_h_puzzle, 4096)
+# with nemotron-labs-3-puzzle-75b-a9b, and build.rs (validate_collision_match_names) requires colliding
+# targets to declare match_names. The directory name is not a substring of the hf_id, which spells it
+# "Nemotron-3-Super", so the needle is the shorter "super-120b" (matched case-insensitively). A Puzzle
+# checkpoint matches the Puzzle target's own needle, "puzzle-75b".
+
+
+
+match_names = ["super-120b"]
+
+[[model_types]]
+model_type = "nemotron_h"
+hidden_size = 4096
+
+# 2026-09-25: Puzzle checkpoints (hidden_size 4096) also match this target. Their per-block MoE sizes
+# come from the checkpoint's block_configs when the config is parsed (crates/config/src/dispatch.rs).
+
+[[model_types]]
+model_type = "nemotron_h_puzzle"
+hidden_size = 4096
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[behavior]
+# 2026-09-25: Arms the content-loop watchdog (a CLI flag or METRALE_CONTENT_LOOP_WATCHDOG overrides it),
+# which detects a repeated token pattern in the content and rolls back or ends the response
+# (crates/server/src/scheduler/helpers.rs). The sampling tables keep repetition_penalty 1.0, dry 0.0.
+
+enable_loop_watchdog = true
+thinking_in_tools = true
+# 2026-09-25: Passed to the chat template as disable_tool_steering; jinja-templates/nemotron_h.jinja
+# then omits its `<tool_call>` generation-prompt prefix when tools are present.
+
+
+
+
+disable_tool_steering = true
+# 2026-09-25: Bare JSON tool calls, a top-level {"name": ..., "arguments": {...}} object under a
+# grammar, instead of the nemotron_h default in crates/server/tool_defaults.toml (qwen3_coder).
+
+
+
+
+
+
+tool_call_parser = "bare_json"
+
+
+
+
+
+max_thinking_budget = 2048
+
+
+
+
+
+
+
+thinking_default = true
+
+# 2026-09-25: Lookups this target's dispatch may issue and fail to resolve without failing the boot
+# audit (crates/kernels/build_parse.rs parse_expected_absent); each value is the stated reason.
+
+
+[expected_absent.w4a16]
+w4a16_gemm_t_p3 = """
+3-deep weight-pipeline twin shipped ONLY in qwen3.6-27b's shadow.
+layers::tgemm_kernel probes it, falls back to w4a16_gemm_t (resolves
+on this target's shadow). UNMEASURED for this target — candidate, not
+loss."""
+w4a16_gemm_t_k64_p3 = "Same family; layers::k64_kernel falls back to the required w4a16_gemm_t_k64 (resolves here)."
+w4a16_gemm_t_k64_n64_p3 = "Narrow-N twin; layers::k64_n64_kernel returns 0-handle, dispatch gates on handle != 0."
+w4a16_gemm_t_m128_bf16 = "BF16-projection prefill twin; prefill_weights gates on handle != 0, falls back through the resolved w4a16 path."
+fp8_gemm_t_m128_mfast = """
+M128-mfast FP8 GEMM; nemotron_mamba2/prefill gates the probe
+(handle != 0 && n >= 512) and falls back to the bf16-A FP8 path that
+resolves from common w4a16."""
+fp8_fp8_gemm_t_m128_mfast = "Same family — the pre-cast-A fp8 path falls back to the bf16-A arm that resolves."
+
+[expected_absent.w4a4]
+w4a4_gemm_mfast = """
+Shipped only in nemotron-labs-3-puzzle-75b-a9b. nemotron_mamba2 probes
+it and falls back to w4a4_gemm (resolves from common). UNMEASURED."""
+
+[expected_absent.moe_w4a16]
+moe_w4a16_grouped_gemm_ptrtable_relu2 = """
+ReLU^2-gated grouped GEMM; shipped only in nemotron-labs-3-puzzle-75b's
+shadow. prefill_sorted gates on handle != 0 ('let fused = ...') and
+falls back to the base ptrtable grouped GEMM (resolves)."""
+
+[expected_absent.moe_w4a4]
+moe_w4a4_grouped_gemm_relu2 = """
+ReLU^2-gated W4A4 grouped GEMM; shipped only in nemotron-labs-3-puzzle's
+moe_w4a4_grouped.cu shadow. prefill_sorted gates on handle != 0 before
+firing; the base MoE path served by moe_w4a16 remains available."""

@@ -1,0 +1,336 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: Cross-sequence batched DFlash K=γ verify.
+//!
+//! Owner: scheduler.
+//! Invariants:
+//! - Every read of the shared verify outputs (the accept walk, `commit_ctx`, the hidden stash) happens for all sequences before the first propose; the early returns before that point propose nothing.
+//!
+//! The single-sequence [`super::verify_dflash_step::step_verify_dflash`] runs
+//! one target forward per sequence. This step packs the `n` sequences'
+//! `[last_token, d0..d_{γ-1}]` rows into one `decode_verify_batched` call of
+//! `n*(γ+1)` rows, which reads the weights once for the whole batch.
+
+use super::*;
+
+/// 2026-09-25: Batched DFlash verify for `batch.len()` sequences at uniform K = γ+1.
+///
+/// `drafts_per_seq` is γ: every sequence must carry exactly that many pending
+/// drafts (`mtp_step.rs` groups only sequences with the same draft count).
+pub fn step_verify_dflash_batched(
+    model: &dyn Model,
+    batch: &mut [&mut ActiveSeq],
+    sched: &crate::scheduler::sched_ctx::SchedCtx,
+    drafts_per_seq: usize,
+    num_drafts: usize,
+    _verify_ctx: &crate::scheduler::logit_processors::LogitsContext,
+) {
+    let n = batch.len();
+    let k = drafts_per_seq + 1;
+    debug_assert!(n >= 2 && drafts_per_seq >= 1);
+
+    // 2026-09-25: one secondary-stream sync for the whole batch, so the
+    // async checkpoint copies are complete before this verify.
+    if let Err(e) = model.sync_secondary() {
+        tracing::error!("sync_secondary (dflash batched): {e:#}");
+        for a in batch.iter_mut() {
+            a.finished = true;
+        }
+        return;
+    }
+
+    // 2026-09-25: flat seq-major token rows, plus the per-sequence drafts they encode.
+    let mut tokens: Vec<u32> = Vec::with_capacity(n * k);
+    let mut drafts_all: Vec<Vec<u32>> = Vec::with_capacity(n);
+    for a in batch.iter_mut() {
+        let drafts: Vec<u32> = std::mem::take(&mut a.pending_drafts);
+        a.pending_draft_conf.clear();
+        debug_assert_eq!(drafts.len(), drafts_per_seq);
+        tokens.push(a.last_token);
+        tokens.extend_from_slice(&drafts);
+        drafts_all.push(drafts);
+    }
+    let ks = vec![k; n];
+
+    let t_verify = sched.io.clock.now();
+    let results = {
+        let mut seq_refs: Vec<&mut SequenceState> = batch.iter_mut().map(|a| &mut a.seq).collect();
+        // 2026-09-25: write-on-accept obliges this step to run
+        // `gdn_fold_accepted` with every verdict before any
+        // `commit_accepted_prefix`, which it does below.
+        let opts = metrale_model_engine::traits::VerifyBatchedOpts {
+            write_on_accept: true,
+        };
+        match model.decode_verify_batched(&tokens, &ks, &mut seq_refs, 0, opts) {
+            Ok(v) => v,
+            Err(e) => {
+                // 2026-09-25: per the `decode_verify_batched` contract no
+                // sequence state advanced on Err; put the drafts back so
+                // the next tick verifies them again.
+                tracing::error!("decode_verify_batched (dflash): {e:#}");
+                for (a, d) in batch.iter_mut().zip(drafts_all.into_iter()) {
+                    a.pending_drafts = d;
+                }
+                return;
+            }
+        }
+    };
+    let verify_ms = sched
+        .io
+        .clock
+        .now()
+        .saturating_duration_since(t_verify)
+        .as_secs_f64()
+        * 1000.0;
+    if results.len() < n * k {
+        tracing::error!(
+            "decode_verify_batched (dflash): short result {} < {}",
+            results.len(),
+            n * k
+        );
+        for a in batch.iter_mut() {
+            a.finished = true;
+        }
+        return;
+    }
+
+    // 2026-09-25: First pass, per sequence: verdict, rewind, ctx commit and
+    // emit. The shared-buffer reads happen here, before any propose.
+    let mut accepted_per_seq: Vec<usize> = Vec::with_capacity(n);
+    let mut stash_rows: Vec<usize> = Vec::with_capacity(n);
+    let now = sched.io.clock.now();
+    for (i, a) in batch.iter_mut().enumerate() {
+        let off = i * k;
+        let verified = &results[off..off + k];
+        let drafts = &drafts_all[i];
+        a.last_token_time = now;
+
+        // 2026-09-25: judged on the raw argmax, the basis the drafter
+        // proposes on. Unlike `verify_dflash_step`, this path does not
+        // read `dflash_masked_verify`.
+        let mut num_accepted = 0usize;
+        for j in 0..drafts.len() {
+            if j + 1 >= verified.len() || drafts[j] != verified[j] {
+                break;
+            }
+            num_accepted += 1;
+        }
+        accepted_per_seq.push(num_accepted);
+        crate::scheduler::adaptive_spec::record_verify(a, num_accepted, sched);
+
+        // 2026-09-25: rewind the forward's +k to the accepted prefix plus
+        // the bonus slot (the same arithmetic as `verify_dflash_step`).
+        let pre_verify_len = a.seq.seq_len.saturating_sub(k);
+        let target_seq_len = pre_verify_len + num_accepted + 1;
+        let to_drop = a.seq.seq_len.saturating_sub(target_seq_len);
+        if to_drop > 0 {
+            a.seq.seq_len = target_seq_len;
+            let pop_n = to_drop.min(a.seq.tokens.len());
+            for _ in 0..pop_n {
+                a.seq.tokens.pop();
+            }
+        }
+
+        // 2026-09-25: commit this sequence's ctx rows from its own
+        // capture band, `i * dflash_capture_band()`, the stride the
+        // model captured with.
+        tracing::debug!(
+            "CTX_VERIFY slot={} pre_verify_len={} na={} k={} band={}",
+            a.seq.slot_idx,
+            pre_verify_len,
+            num_accepted,
+            k,
+            i * model.dflash_capture_band(),
+        );
+        if sched.levers.dflash_unified_ctx
+            && let Err(e) = model.commit_ctx(
+                &mut a.seq,
+                num_accepted + 1,
+                pre_verify_len,
+                i * model.dflash_capture_band(),
+            )
+        {
+            tracing::error!("commit_ctx (dflash batched): {e:#}");
+        }
+
+        for j in 0..num_accepted {
+            emit_token(a, drafts[j], None, sched);
+            if a.finished {
+                break;
+            }
+        }
+        if !a.finished && num_accepted < verified.len() {
+            let bonus = verified[num_accepted];
+            emit_token(a, bonus, None, sched);
+            a.last_token = bonus;
+        }
+
+        sched.io.tel.count_spec_verify(
+            "dflash",
+            if num_accepted == drafts.len() {
+                "accept_all"
+            } else {
+                "accept_partial"
+            },
+        );
+        sched.io.tel.spec_verified(drafts.len(), num_accepted);
+
+        // 2026-09-25: the SSM commit waits until after this loop: the
+        // write-on-accept fold takes every sequence's verdict at once.
+        // This is the row of this sequence's bonus token in the shared
+        // hidden buffer.
+        stash_rows.push(off + num_accepted);
+    }
+
+    // 2026-09-25: the write-on-accept fold over the whole batch, then the
+    // per-sequence commit.
+    {
+        let slots: Vec<usize> = batch.iter().map(|a| a.seq.slot_idx).collect();
+        let rows: Vec<u32> = accepted_per_seq.iter().map(|&na| (na + 1) as u32).collect();
+        if let Err(e) = model.gdn_fold_accepted(&slots, &rows, k) {
+            // 2026-09-25: a failed fold leaves the whole batch's
+            // recurrent state untrusted, so every sequence finishes, as
+            // a commit error does for one sequence.
+            tracing::error!("gdn_fold_accepted (dflash batched): {e:#}");
+            for a in batch.iter_mut() {
+                a.finished = true;
+            }
+            return;
+        }
+        for (i, a) in batch.iter_mut().enumerate() {
+            let num_accepted = accepted_per_seq[i];
+            if let Err(e) = model.commit_accepted_prefix(&mut a.seq, num_accepted + 1, k) {
+                tracing::error!("commit_accepted_prefix (dflash batched): {e:#}");
+                a.finished = true;
+            }
+        }
+    }
+
+    // 2026-09-25: park every sequence's bonus hidden in the verify stash
+    // while the rows are still live; proposes overwrite the shared
+    // `hidden_states` buffer.
+    if let Err(e) = model.stash_verify_hidden_rows(&stash_rows, 0) {
+        tracing::warn!("stash_verify_hidden_rows (dflash batched): {e:#}");
+    }
+
+    // 2026-09-25: Second pass: per-sequence trim, then the batched re-propose
+    // (with a per-sequence fallback). The shared buffers may be
+    // overwritten from here on.
+    let t_propose = sched.io.clock.now();
+    // 2026-09-25: trim first for everyone: the batched propose reads
+    // each sequence's proposer state, so every state must already
+    // reflect what its verify accepted. `spec_allowed` takes &mut, so
+    // eligibility is decided in this pass while the mutable borrow is
+    // already held.
+    let mut eligible = vec![false; batch.len()];
+    for (i, a) in batch.iter_mut().enumerate() {
+        if a.finished {
+            continue;
+        }
+        let num_accepted = accepted_per_seq[i];
+        // 2026-09-25: no `save_hidden_for_mtp_from_stash` here. It
+        // copies into the one MTP input buffer, so calling it for every
+        // sequence before any propose would leave only the last
+        // sequence's hidden staged. The batched arm reads each
+        // sequence's own stash slot (`stash_idx`); the per-sequence arm
+        // below stages each sequence right before its own propose.
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, num_accepted, 0) {
+            tracing::error!("trim_proposer_state (dflash batched): {e:#}");
+        }
+        eligible[i] =
+            crate::scheduler::adaptive_spec::spec_allowed(a, sched) && a.grammar_state.is_none();
+    }
+    // 2026-09-25: eligible means not finished, speculation allowed and no
+    // grammar (`run_mtp_propose_batched` takes grammarless sequences
+    // only).
+    let prop_idx: Vec<usize> = (0..batch.len()).filter(|&i| eligible[i]).collect();
+    let group_cap = model.mtp_propose_batch_max().max(1);
+    // 2026-09-25: chunk by the width the proposer declared
+    // (`mtp_propose_batch_max`), not by how many sequences are eligible.
+    let mut batched_done = !prop_idx.is_empty();
+    for group in prop_idx.chunks(group_cap.max(1)) {
+        if group_cap < 2 || group.len() < 2 {
+            batched_done = false;
+            break;
+        }
+        let prop_idx: Vec<usize> = group.to_vec();
+        let tokens: Vec<u32> = prop_idx.iter().map(|&i| batch[i].last_token).collect();
+        let positions: Vec<usize> = prop_idx.iter().map(|&i| batch[i].seq.seq_len).collect();
+        let stash_idx: Vec<usize> = prop_idx.clone();
+        let result = {
+            let mut seq_refs: Vec<&mut SequenceState> = Vec::with_capacity(prop_idx.len());
+            for (i, a) in batch.iter_mut().enumerate() {
+                if prop_idx.contains(&i) {
+                    seq_refs.push(&mut a.seq);
+                }
+            }
+            model.run_mtp_propose_batched(
+                &tokens,
+                &positions,
+                &stash_idx,
+                num_drafts,
+                &mut seq_refs,
+                0,
+                None,
+            )
+        };
+        match result {
+            Ok(Some(all)) if all.len() == prop_idx.len() => {
+                for (g, &row) in prop_idx.iter().enumerate() {
+                    if !all[g].is_empty() {
+                        batch[row].pending_drafts = all[g].clone();
+                    }
+                }
+            }
+            Ok(_) => {
+                batched_done = false;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("DFlash batched propose: {e:#} — per-sequence path");
+                batched_done = false;
+                break;
+            }
+        }
+    }
+    if batched_done {
+        // 2026-09-25: batched path covered every eligible sequence; nothing left to do.
+    } else {
+        for (i, a) in batch.iter_mut().enumerate() {
+            if a.finished || !crate::scheduler::adaptive_spec::spec_allowed(a, sched) {
+                continue;
+            }
+            if let Err(e) = model.save_hidden_for_mtp_from_stash(i, 0) {
+                tracing::warn!("save_hidden_for_mtp_from_stash (dflash batched): {e:#}");
+            }
+            let gmask = mtp_grammar_mask_for(a);
+            match model.run_mtp_propose_multi(
+                a.last_token,
+                a.seq.seq_len,
+                num_drafts,
+                &mut a.seq,
+                0,
+                gmask.as_deref(),
+            ) {
+                Ok(d) if !d.is_empty() => a.pending_drafts = d,
+                Ok(_) => {}
+                Err(e) => tracing::error!("run_mtp_propose_multi (dflash batched): {e:#}"),
+            }
+        }
+    }
+
+    let total_accepted: usize = accepted_per_seq.iter().sum();
+    tracing::info!(
+        "DFLASH BATCHED verify: n={n} γ={drafts_per_seq} accepted={total_accepted}/{} ({:.0}%) \
+         verify={verify_ms:.1}ms propose={:.1}ms",
+        n * drafts_per_seq,
+        100.0 * (total_accepted as f64) / ((n * drafts_per_seq) as f64),
+        sched
+            .io
+            .clock
+            .now()
+            .saturating_duration_since(t_propose)
+            .as_secs_f64()
+            * 1000.0,
+    );
+}

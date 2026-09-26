@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: KV cache, KV dequant, KV spill, radix-tree prefix cache."
+
+[features]
+default = ["cuda"]
+cuda = ["metrale-gpu-runtime/cuda"]
+metal = ["metrale-gpu-runtime/metal"]
+
+[dependencies]
+metrale-core = { path = "../core", default-features = false }
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+metrale-telemetry = { path = "../telemetry" }
+anyhow = { workspace = true }
+half = "2"
+parking_lot = { workspace = true }
+tracing = "0.1"
+
+[dev-dependencies]
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
+
+[lints]
+workspace = true

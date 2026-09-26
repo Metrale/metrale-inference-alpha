@@ -1,0 +1,884 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Reusable build matrix: compile, package and verify `met` for every
+# (OS, arch, GPU-platform) in `.github/release-matrix.json`.
+#
+# Defined ONCE and called from two places, so a PR proves exactly what a
+# release will later do:
+#   - ci.yml       (pull_request) -> after the base CI gates pass
+#   - release.yml  (dispatch)     -> after CI, before publish
+#
+# It never tags, pushes or publishes. Only release.yml's `publish` job does
+# that, and only on workflow_dispatch with dry_run=false.
+name: Release build matrix
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version string stamped into artifact names"
+        required: true
+        type: string
+      ref:
+        description: "Ref to build; empty means the caller's checked-out ref"
+        required: false
+        type: string
+        default: ""
+      pr_mode:
+        description: "Skip targets whose toolchain cannot exist on a hosted runner"
+        required: false
+        type: boolean
+        default: false
+      retention_days:
+        description: "Artifact retention"
+        required: false
+        type: number
+        default: 1
+      publishing:
+        description: "Caller will publish these artifacts; suppress the dry-run report"
+        required: false
+        type: boolean
+        default: false
+      web_only:
+        description: >-
+          The caller classified the diff as touching only site/ blog/ book/
+          web-shared/. The nine build legs skip; `dry-run summary` still RUNS
+          and reports, because it is a required context and must never depend
+          on skip semantics crossing a workflow_call boundary.
+        required: false
+        type: boolean
+        default: false
+
+      stack_layer:
+        description: >-
+          The caller classified this PR as a LOWER LAYER of a stack: another
+          open PR is stacked on top. Only the aggregation PR's composed tree
+          lands on main, and that PR builds the full matrix; nine build legs
+          per layer would spend N matrices to land one tree. Same shape as
+          web_only, for the same reason: the skip lives INSIDE this workflow
+          so `dry-run summary` still runs and reports.
+        required: false
+        type: boolean
+        default: false
+
+      builds_binaries:
+        description: >-
+          Can this diff change a shipped binary? False only when every changed
+          path is provably inert -- web trees, docs, assets, root markdown, and
+          .github/ EXCEPT the workflows and composite actions that decide how
+          binaries are produced. Defaults to true, so a caller that does not set
+          it still builds.
+        required: false
+        type: boolean
+        default: true
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # This repo targets CUDA 13.0: every docker/gb10/**/Dockerfile is
+  # `nvidia/cuda:13.0.0-devel-ubuntu24.04`, and ci.yml/docs.yml pin
+  # CUDARC_CUDA_VERSION=13000. GB10 is sm_121, which needs >= 12.8, so the
+  # cuda-toolkit action's 12.6 default was both wrong for this repo and too
+  # old for the target architecture. Defined once here.
+  CUDA_APT_VERSION: "13-0"
+  CUDA_DOT_VERSION: "13.0"
+  CUDA_FULL_VERSION: "13.0.2"
+  # NOTE: CUDARC_CUDA_VERSION is deliberately NOT set here. Workflow-level
+  # `env` overrides values written to $GITHUB_ENV by an earlier step, so
+  # declaring it here would defeat the SCALE step's 12080 override and build
+  # the AMD target against a CUDA 13 ABI. Each toolchain sets it itself.
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Cheap, always-runs gate. Everything that can be wrong statically is
+  # caught here BEFORE any runner spends time installing a CUDA toolkit.
+  # ---------------------------------------------------------------------
+  validate:
+    name: validate inputs + matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Cache-poisoning guard. CodeQL `actions/cache-poisoning` flags the
+      # `cargo test` step and the release-notes step below, and it is right:
+      # `inputs.ref` flows into the checkouts that precede them, after which
+      # this workflow COMPILES AND RUNS that ref's code (build scripts under
+      # `cargo test`, and `scripts/release-notes.sh` directly).
+      #
+      # A workflow_dispatch run carries default-branch cache WRITE scope no
+      # matter which ref it builds, so an arbitrary ref lets whoever can
+      # dispatch poison the cache that every later main build restores from.
+      # The existing `save-if: github.event_name != 'workflow_dispatch'` on
+      # Swatinem/rust-cache does NOT close this: it stops that one action from
+      # saving, while any `run` step still holds the scope's write token.
+      #
+      # dev-release.yml solved this by taking no `ref` input at all. release.yml
+      # needs one, so constrain it instead: the ref must already be contained in
+      # the default branch. A release is cut from main or from a tag on main, so
+      # this rejects only refs that were never on main -- which is exactly the
+      # untrusted case. No `v*` tag has ever been cut outside it.
+      #
+      # Asks the API rather than the local clone: this job checks out at the
+      # default shallow depth, where `git merge-base --is-ancestor` answers
+      # wrongly with NO warning. `compare/<base>...<ref>` reports `behind` when
+      # ref is an ancestor of base, `identical` when equal.
+      #
+      # `REF` goes through env, never interpolated into the script body: a ref
+      # is caller-controlled text and `${{ }}` inside `run:` is a shell
+      # injection site.
+      - name: Ref must be contained in the default branch
+        if: ${{ inputs.ref != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          base=$(gh api "repos/$REPO" --jq .default_branch)
+          status=$(gh api "repos/$REPO/compare/$base...$REF" --jq .status)
+          case "$status" in
+            identical|behind)
+              echo "ref '$REF' is contained in '$base' (compare: $status)"
+              ;;
+            *)
+              # One line: a `::error::` annotation does not survive a newline.
+              echo "::error::ref '$REF' is not contained in '$base' (compare: $status); this workflow builds only refs already on the default branch"
+              echo "This job compiles and runs the checked-out ref while the run"
+              echo "holds default-branch cache write scope. Merge '$REF' first,"
+              echo "or build from a tag that is already on '$base'."
+              exit 1
+              ;;
+          esac
+
+      - name: Validate matrix shape
+        run: |
+          set -euo pipefail
+          jq -e 'type == "array" and length > 0' .github/release-matrix.json >/dev/null
+          # Every entry must carry every key: a missing `toolchain` would
+          # silently build a CUDA target with no CUDA installed.
+          missing=$(jq -r '
+            [ .[] | select(
+                has("id") and has("os") and has("runner") and has("target")
+                and has("platform") and has("cargo_features")
+                and has("toolchain") and has("experimental")
+                and has("pr_validate") and has("test_mode") | not
+              ) | .id // "<no id>" ] | join(", ")' .github/release-matrix.json)
+          [ -z "$missing" ] || { echo "::error::entries missing keys: $missing"; exit 1; }
+          dupes=$(jq -r '[.[].id] | group_by(.) | map(select(length>1) | .[0]) | join(", ")' \
+            .github/release-matrix.json)
+          [ -z "$dupes" ] || { echo "::error::duplicate matrix ids: $dupes"; exit 1; }
+
+      - name: Validate every cargo feature exists in metrale-server
+        run: |
+          set -euo pipefail
+          # The most likely matrix error is a typo'd or removed feature name.
+          # `cargo metadata` is the SSOT for what features actually exist.
+          known=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="metrale-server") | .features | keys[]' | sort -u)
+          echo "metrale-server features: $(echo "$known" | tr '\n' ' ')"
+          bad=0
+          while read -r feats; do
+            for f in $(printf '%s' "$feats" | grep -oP '(?<=--features )[^ ]+' | tr ',' ' '); do
+              grep -qx -- "$f" <<<"$known" || { echo "::error::unknown feature '$f'"; bad=1; }
+            done
+          done < <(jq -r '.[].cargo_features' .github/release-matrix.json)
+          [ "$bad" = 0 ]
+
+      - name: Emit build matrix
+        id: build-matrix
+        run: |
+          set -euo pipefail
+          # On a PR we build every entry that CAN be built on a hosted runner.
+          # Entries with pr_validate=false are physically impossible here (the
+          # SCALE toolchain is not redistributable) — they are reported as NOT
+          # VALIDATED rather than passed vacuously.
+          if [ "${{ inputs.pr_mode }}" = true ]; then
+            sel=$(jq -c '{include: [.[] | select(.pr_validate)]}' .github/release-matrix.json)
+            jq -r '.[] | select(.pr_validate | not)
+                   | "::warning::\(.id) NOT VALIDATED in PR mode — \(.note // "toolchain \(.toolchain) unavailable on hosted runners")"' \
+              .github/release-matrix.json
+          else
+            sel=$(jq -c '{include: .}' .github/release-matrix.json)
+          fi
+          echo "matrix=$sel" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Release matrix"
+            echo "| id | runner | target | features | toolchain | experimental |"
+            echo "|---|---|---|---|---|---|"
+            jq -r '.[] | "| \(.id) | \(.runner) | \(.target) | `\(.cargo_features)` | \(.toolchain) | \(.experimental) |"' \
+              .github/release-matrix.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------
+  # The ordinary CI gates (fmt, clippy, tests, licence headers, typos, the
+  # macOS/metal job) must pass BEFORE the release matrix spends runner time.
+  # Called as a reusable workflow so CI stays defined in exactly one place.
+  # ---------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------
+  # One job per (OS, arch, platform). Experimental entries may fail without
+  # failing the release — that is what lets an unproven target sit in the
+  # matrix while it is being brought up.
+  # ---------------------------------------------------------------------
+  build:
+    name: build ${{ matrix.id }}
+    needs: validate
+    # Nothing under site/ blog/ book/ web-shared/ reaches any build leg, so a
+    # web-only diff would compile nine targets to prove it changed nothing.
+    # A lower stack layer skips for a different reason: only the aggregation
+    # PR's composed tree lands on main, and that PR builds the full matrix.
+    # And an inert diff — one that provably cannot change a binary — skips
+    # because nine cross-platform builds are the most expensive thing a PR
+    # can trigger. In every case `dry-run summary` is `if: always()`, so the
+    # REQUIRED context still reports and no merge waits on a check that was
+    # never created.
+    if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.validate.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # On a PR there is no `ref` input; checkout defaults to the PR merge
+          # commit, which is what we want to validate.
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Add the target to the PINNED toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          # rust-toolchain.toml pins 1.93.1, so that -- not `stable` -- is the
+          # toolchain cargo actually uses. The action above installs the target
+          # for `stable` (1.97.1), which leaves the pinned toolchain without
+          # it. Host-target rows never noticed; the one CROSS row
+          # (x86_64-apple-darwin on an arm64 runner) failed with
+          # `E0463: can't find crate for core`. Idempotent where already present.
+          rustup target add ${{ matrix.target }}
+          rustup show active-toolchain
+          rustup target list --installed
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.id }}
+          # Restore always; SAVE only when the ref being built was not chosen
+          # by whoever started the run. `release.yml` takes an arbitrary `ref`
+          # as a workflow_dispatch input and passes it straight to the checkout
+          # above — so on that path this job executes a caller-selected commit's
+          # build scripts and would then write the cache that every later main
+          # build restores from. One dispatch would contaminate ordinary runs
+          # afterwards, which is what CodeQL's actions/cache-poisoning query
+          # flags here. Dispatch runs now read the cache without writing it;
+          # pull_request and workflow_run runs are unaffected and still save.
+          save-if: ${{ github.event_name != 'workflow_dispatch' }}
+
+      - name: Free disk space (linux)
+        if: matrix.os == 'linux'
+        run: |
+          # A CUDA toolkit or the 1.43 GB SCALE tarball plus this workspace's
+          # kernel build does not fit alongside the preinstalled SDKs.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/lib/jvm || true
+          df -h / | tail -1
+
+      - name: Install build deps (linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          # libibverbs/librdmacm: metrale-rdma compiles src/rdma_shim.c against
+          # <infiniband/verbs.h> on every non-macOS target. Same dependency
+          # #339 added to the DeepSeek-V4 builder stage.
+          sudo apt-get install -y --no-install-recommends \
+            cmake clang libclang-dev libibverbs-dev librdmacm-dev
+
+      - name: Install build deps (macos)
+        if: matrix.os == 'macos'
+        run: brew install cmake llvm
+
+      - name: Configure cross-arch build (macos)
+        if: matrix.os == 'macos' && matrix.cross
+        run: |
+          set -euo pipefail
+          # The Intel slice is built on an Apple Silicon runner: macos-13
+          # (Intel) runners are being retired and never once scheduled for
+          # this matrix, so the job sat queued and was cancelled every run.
+          # Xcode ships both slices, so cross-compiling is the reliable path.
+          # cc-rs and cmake do NOT infer the arch from --target, so state it:
+          # otherwise native deps build for arm64 and the link fails on
+          # mismatched architectures.
+          {
+            echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)"
+            echo "MACOSX_DEPLOYMENT_TARGET=11.0"
+            echo "CFLAGS_x86_64_apple_darwin=-arch x86_64"
+            echo "CXXFLAGS_x86_64_apple_darwin=-arch x86_64"
+            echo "CMAKE_OSX_ARCHITECTURES=x86_64"
+          } >> "$GITHUB_ENV"
+
+      - name: Install CUDA toolkit (linux)
+        if: startsWith(matrix.toolchain, 'cuda') && matrix.os == 'linux'
+        timeout-minutes: 15  # normally ~1 min; a deadline so a stalled download cannot hold the merge queue
+        run: |
+          set -euo pipefail
+          # Installed straight from NVIDIA's apt repo rather than via the
+          # cuda-toolkit action: it pins the exact version this repo targets
+          # and picks the right repo arch, where the action silently defaulted
+          # to 12.6.1 on both arches.
+          case '${{ matrix.target }}' in
+            x86_64-*)  repo_arch=x86_64 ;;
+            aarch64-*) repo_arch=sbsa ;;
+            *) echo "::error::no CUDA repo arch for ${{ matrix.target }}"; exit 1 ;;
+          esac
+          kr=cuda-keyring_1.1-1_all.deb
+          curl -fsSL --retry 3 -O \
+            "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/$repo_arch/$kr"
+          sudo dpkg -i "$kr" && rm -f "$kr"
+          sudo apt-get update
+          v='${{ env.CUDA_APT_VERSION }}'
+          # driver-dev supplies the libcuda stub that metrale-storage's raw
+          # extern "C" FFI links against on a runner with no GPU.
+          # libcublas-dev supplies libcublasLt: the kernel build scripts emit
+          # `rustc-link-lib=dylib=cublasLt`, so omitting it fails at LINK time
+          # after a full compile — the most expensive place to discover it.
+          sudo apt-get install -y --no-install-recommends \
+            "cuda-nvcc-$v" "cuda-cudart-dev-$v" "cuda-nvrtc-dev-$v" \
+            "cuda-driver-dev-$v" "cuda-profiler-api-$v" "libcublas-dev-$v"
+          cuda_root="/usr/local/cuda-${{ env.CUDA_DOT_VERSION }}"
+          [ -x "$cuda_root/bin/nvcc" ] || { echo "::error::nvcc missing at $cuda_root"; exit 1; }
+          "$cuda_root/bin/nvcc" --version | tail -2
+          {
+            echo "CUDA_PATH=$cuda_root"
+            echo "CUDA_HOME=$cuda_root"
+            echo "LIBRARY_PATH=$cuda_root/lib64/stubs:${LIBRARY_PATH:-}"
+            echo "CUDARC_CUDA_VERSION=13000"
+          } >> "$GITHUB_ENV"
+          echo "$cuda_root/bin" >> "$GITHUB_PATH"
+
+      - name: Install CUDA toolkit (windows)
+        if: startsWith(matrix.toolchain, 'cuda') && matrix.os == 'windows'
+        timeout-minutes: 30  # normally ~7 min; a deadline so a stalled download cannot hold the merge queue
+        shell: pwsh
+        run: |
+          # NVIDIA's own silent network installer. The cuda-toolkit action has
+          # no 13.0.2 ("Version not available"), and pinning an older CUDA
+          # would contradict what this repo targets everywhere else.
+          $v = "${{ env.CUDA_FULL_VERSION }}"
+          $url = "https://developer.download.nvidia.com/compute/cuda/$v/network_installers/cuda_${v}_windows_network.exe"
+          Write-Host "downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile cuda.exe -UseBasicParsing
+          # Sub-packages are version-suffixed; installing the full toolkit
+          # would blow the runner's disk budget.
+          $short = $v.Substring(0, $v.LastIndexOf('.'))
+          # cublas/cublas_dev for the same cublasLt link the Linux side needs.
+          # Install the FULL toolkit rather than naming sub-packages. Two
+          # rounds of guessing component names cost two cycles: `nvrtc_dev` /
+          # `cuda_profiler_api` were wrong on Linux, then `cudart_dev` /
+          # `thrust` are not valid Windows component names either and the
+          # installer rejected the whole command with exit -522190823 -- an
+          # opaque code that names neither the bad component nor the reason.
+          # The component list is not documented per-version anywhere stable,
+          # so `-s` alone (install everything) trades a few GB of runner disk
+          # for determinism. Windows runners have ~80 GB free on D:.
+          $args = @("-s")
+          $p = Start-Process -FilePath .\cuda.exe -ArgumentList $args -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "CUDA installer exited $($p.ExitCode)" }
+          $root = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$short"
+          if (-not (Test-Path "$root\bin\nvcc.exe")) { throw "nvcc missing at $root" }
+          & "$root\bin\nvcc.exe" --version | Select-Object -Last 2
+          # Verify the headers the build will actually need HERE, where the
+          # error can name the missing component -- not three minutes later as
+          # a C1083 from deep inside kernel compilation.
+          foreach ($h in @("crt\host_config.h", "cuda_runtime.h")) {
+            if (-not (Test-Path "$root\include\$h")) {
+              Get-ChildItem "$root\include" -Name | Select-Object -First 20
+              throw "CUDA include\$h missing - a sub-package failed to install"
+            }
+          }
+          "CUDA_PATH=$root"          | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CUDA_HOME=$root"          | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CUDARC_CUDA_VERSION=13000"| Out-File -FilePath $env:GITHUB_ENV -Append
+          "$root\bin"               | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Set up MSVC developer environment (windows)
+        if: matrix.os == 'windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: Install build deps (windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          # bindgen (xgrammar) needs libclang; windows-2022 ships LLVM. Needed by
+          # EVERY windows toolchain (cuda and hip alike), so it is not gated.
+          $llvm = "C:\Program Files\LLVM\bin"
+          if (Test-Path $llvm) { "LIBCLANG_PATH=$llvm" | Out-File -FilePath $env:GITHUB_ENV -Append }
+          cmake --version
+
+      - name: Put CUDA import libs on the linker path (windows, cuda)
+        # cuda-only: the CUDA import libraries live in the NVIDIA toolkit. The
+        # AMD/hip toolchain has no $CUDA_PATH\lib\x64, so this check (and its
+        # `throw` on a missing cuda.lib) must NOT run for it — the hip row
+        # supplies its own linker inputs and walls at kernel compile long before
+        # linking anyway.
+        if: matrix.os == 'windows' && startsWith(matrix.toolchain, 'cuda')
+        shell: pwsh
+        run: |
+          # The CUDA import libraries (cuda.lib, cudart.lib, nvrtc.lib,
+          # cublasLt.lib -- everything the build scripts emit
+          # `rustc-link-lib=dylib=` for) live in $CUDA_PATH\lib\x64, which is
+          # not on the MSVC default search path. Without it the whole build
+          # compiles and then dies at link with LNK1181.
+          #
+          # This runs AFTER msvc-dev-cmd ON PURPOSE: that action rewrites LIB
+          # wholesale, so appending in the CUDA install step above would be
+          # silently discarded. Order is the fix, not just the value.
+          $cudaLib = "$env:CUDA_PATH\lib\x64"
+          foreach ($l in @("cuda.lib", "cudart.lib", "nvrtc.lib", "cublasLt.lib")) {
+            if (-not (Test-Path "$cudaLib\$l")) {
+              Get-ChildItem $cudaLib -Name -ErrorAction SilentlyContinue | Select-Object -First 20
+              throw "$l missing from $cudaLib"
+            }
+          }
+          "LIB=$env:LIB;$cudaLib" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install NCCL
+        if: contains(matrix.toolchain, 'nccl')
+        timeout-minutes: 10  # normally ~1 min
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libnccl2 libnccl-dev
+
+      - name: Install SCALE toolchain (AMD)
+        if: matrix.toolchain == 'scale'
+        # The 1.4 GB tarball download hung a merge-queue run for 50+ minutes
+        # on 2026-09-12 (#1024): curl had no deadline and the job's only limit
+        # was the 6-hour default, so the queue sat behind a dead TCP
+        # connection. A stalled required check is a blocked merge queue; fail
+        # fast so the entry can be retried.
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          # METRALE_TARGET_MODEL/QUANT are REQUIRED, not optional: metrale-kernels
+          # defaults to qwen3-next-80b-a3b, which has no kernels/strix/
+          # directory, and the build script panics resolving targets. They are
+          # matrix fields so a second strix model is another JSON row.
+          # SCALE recompiles the unmodified CUDA kernels for AMD. Tarball URL
+          # and prerequisites are the ones documented in
+          # docs/porting/amd-strix-halo-scale.md; 1.7.1 is the first release
+          # whose bundled ROCm fixes the gfx1151 queue-create crash.
+          # build-essential -> cuda.h needs <cstddef>; libnuma -> libhsakmt.
+          sudo apt-get install -y --no-install-recommends build-essential libnuma1 libnuma-dev
+          mkdir -p "$HOME/scale" && cd "$HOME/scale"
+          # pkgs.scale-lang.com sustains < 512 KiB/s from GitHub-hosted runners
+          # (2026-09-12: four consecutive stalls on #1064, ~1 h for 1.4 GB), so
+          # the primary source is a mirror of the same tarball on this repo's
+          # `toolchain-scale-1.7.1` release, served from the runners' own cloud.
+          # Upstream stays as the fallback. Whichever host answers, the bytes
+          # must match the pinned sha256 — the mirror is convenience, not trust.
+          # --speed-limit/--speed-time abort a stalled transfer instead of
+          # waiting for the job timeout; --retry-all-errors retries that abort.
+          expected_sha256=060a3627725f60005a69e209b332d7847fd7c03eb9518be7055ddc003c73a2be
+          fetched=0
+          for url in \
+            https://github.com/${{ github.repository }}/releases/download/toolchain-scale-1.7.1/scale-1.7.1-amd64.tar.xz \
+            https://pkgs.scale-lang.com/tar/scale-1.7.1-amd64.tar.xz; do
+            echo "fetching $url"
+            if curl -L --fail --retry 3 --retry-all-errors --connect-timeout 30 \
+                 --max-time 900 --speed-limit 524288 --speed-time 60 \
+                 -o scale.tar.xz "$url"; then fetched=1; break; fi
+            rm -f scale.tar.xz
+          done
+          [ "$fetched" = 1 ] || { echo "::error::SCALE tarball: every source failed"; exit 1; }
+          echo "$expected_sha256  scale.tar.xz" | sha256sum -c - || {
+            echo "::error::SCALE tarball sha256 mismatch — refusing to build with an unverified toolchain"
+            exit 1
+          }
+          tar -xf scale.tar.xz && rm -f scale.tar.xz
+          SCALE_HOME="$HOME/scale/scale-1.7.1-Linux"
+          arch='${{ matrix.scale_arch }}'
+          # Fail loudly if the layout is not what we expect: a missing nvcc
+          # here would otherwise fall through to the host nvcc and silently
+          # produce an NVIDIA binary labelled `amd`.
+          [ -x "$SCALE_HOME/targets/$arch/bin/nvcc" ] || {
+            echo "::error::SCALE nvcc missing at $SCALE_HOME/targets/$arch/bin/nvcc"
+            ls "$SCALE_HOME/targets" 2>/dev/null || true
+            exit 1
+          }
+          {
+            echo "SCALE_HOME=$SCALE_HOME"
+            echo "CUDA_PATH=$SCALE_HOME/targets/$arch"
+            echo "CUDA_HOME=$SCALE_HOME/targets/$arch"
+            echo "CUDARC_CUDA_VERSION=12080"
+            echo "METRALE_TARGET_HW=strix"
+            echo "METRALE_TARGET_MODEL=${{ matrix.target_model }}"
+            echo "METRALE_TARGET_QUANT=${{ matrix.target_quant }}"
+          } >> "$GITHUB_ENV"
+          echo "$SCALE_HOME/targets/$arch/bin" >> "$GITHUB_PATH"
+
+      - name: Install HIP SDK (AMD, windows)
+        if: matrix.toolchain == 'hip' && matrix.os == 'windows'
+        shell: pwsh
+        timeout-minutes: 30
+        env:
+          # AMD's PRO-Edition HIP SDK installer. There is no documented stable
+          # direct-download link (the download page is JS-gated), so the URL is
+          # pinned here as the single knob to bump. NOTE the filename carries the
+          # AMD *driver* version (25.Q3), NOT the ROCm version — a `6.x` string
+          # 404s. 25.Q3 is the newest published as of 2026-07 (ROCm 6.4-era,
+          # LLVM 19), which has gfx1151 (Strix Halo, RDNA3.5) in its target list.
+          HIP_SDK_URL: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-25.Q3-Win10-Win11-For-HIP.exe
+        run: |
+          $ErrorActionPreference = "Stop"
+          # METRALE_TARGET_MODEL/QUANT are REQUIRED (same trap as SCALE): the
+          # kernel build defaults to qwen3-next-80b-a3b, which has no
+          # kernels/strix-hip/<model> dir, so build.rs panics resolving it.
+          Write-Host "Downloading HIP SDK: $env:HIP_SDK_URL"
+          $exe = "$env:RUNNER_TEMP\hip-sdk-setup.exe"
+          # Legible failure if AMD rotates the URL (they carry the driver
+          # version, e.g. 25.Q3 — a ROCm-version string 404s) instead of an
+          # opaque WebRequest stack trace.
+          try { Invoke-WebRequest -Uri $env:HIP_SDK_URL -OutFile $exe -UseBasicParsing }
+          catch { throw "HIP SDK download failed for $env:HIP_SDK_URL — bump HIP_SDK_URL to a currently-published AMD-Software-PRO-Edition-<ver>-Win10-Win11-For-HIP.exe" }
+          # The installer is a GUI app even from the command line; `-install`
+          # runs it headless. -Wait blocks; the step timeout bounds a hung
+          # window (a known failure mode of this installer on headless runners).
+          Write-Host "Installing HIP SDK silently (-install)..."
+          $p = Start-Process -FilePath $exe -ArgumentList "-install" -Wait -PassThru -NoNewWindow
+          Write-Host "installer exit code: $($p.ExitCode)"
+          # Locate hipcc under the ROCm install root. The Windows HIP SDK ships
+          # hipcc as hipcc.bin.exe (native) beside a perl wrapper; prefer the
+          # native exe so build.rs's Command::new can invoke it directly (no perl).
+          $root = "C:\Program Files\AMD\ROCm"
+          if (-not (Test-Path $root)) {
+            throw "HIP SDK install root not found at $root (installer exit $($p.ExitCode))"
+          }
+          $hipcc = Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @("hipcc.bin.exe", "hipcc.exe") } |
+            Select-Object -First 1
+          if (-not $hipcc) {
+            Get-ChildItem -Path $root -Recurse -Filter "hipcc*" -ErrorAction SilentlyContinue |
+              Select-Object -First 20 FullName
+            throw "hipcc not found under $root after install"
+          }
+          $hipBin  = Split-Path $hipcc.FullName
+          $hipRoot = Split-Path $hipBin
+          Write-Host "hipcc: $($hipcc.FullName)"
+          & $hipcc.FullName --version 2>&1 | Select-Object -First 5
+          @(
+            "METRALE_HIPCC=$($hipcc.FullName)",
+            "HIP_PATH=$hipRoot",
+            "METRALE_TARGET_HW=strix-hip",
+            "METRALE_TARGET_MODEL=${{ matrix.target_model }}",
+            "METRALE_TARGET_QUANT=${{ matrix.target_quant }}",
+            "CUDARC_CUDA_VERSION=12080"
+          ) | Out-File -FilePath $env:GITHUB_ENV -Append
+          $hipBin | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Build met (unix)
+        if: matrix.os != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+
+      # ── The matrix now TESTS, it does not only build ─────────────────────
+      #
+      # `cargo build` proves the crate compiles and links for a target. It says
+      # nothing about whether the tests even compile, and this matrix was the
+      # repo's only cross-platform coverage — the release legs never ran
+      # `cargo test` at all.
+      #
+      # `--no-run` is the default for every leg, deliberately. All nine targets
+      # are GPU platforms (nvidia/amd/metal) and no hosted runner has the
+      # device, so EXECUTING the suite would gamble nine legs at once on
+      # hardware that is not there. `--no-run` still compiles and links every
+      # test binary for the target — strictly more than `cargo build` checked
+      # before — at the cost of the harnesses only, since the object cache from
+      # the step above is reused.
+      #
+      # `test_mode: run` promotes a leg to full execution. Promote ONE AT A
+      # TIME, each with its own evidence that the suite passes on that runner;
+      # a leg flipped speculatively turns a required context red for everyone.
+      - name: Test met (unix)
+        if: matrix.os != 'windows'
+        run: |
+          set -euo pipefail
+          case "${{ matrix.test_mode }}" in
+            run)
+              cargo test --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+              ;;
+            no-run)
+              cargo test --release --no-run -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+              ;;
+            skip)
+              # ★ WHY A LEG IS SKIPPED, AND WHAT IT COSTS.
+              # `skip` preserves the pre-existing behaviour for a leg whose
+              # TESTS do not compile yet — the build above still runs, so the
+              # leg is no weaker than it was, but it gains nothing either.
+              # Both macOS legs are here because `cargo test --no-run
+              # --no-default-features --features metal` fails with
+              #   error[E0433]: could not find `cuda_backend` in `metrale_gpu_runtime`
+              # metrale-server's test code references cuda-only items with no cfg
+              # gate, so the metal configuration's tests have NEVER compiled.
+              # `cargo build` never touched them, which is precisely the gap
+              # this change exists to close — it found one immediately.
+              echo "::warning title=${{ matrix.id }}: tests not compiled::test_mode=skip. This leg builds but does not compile its tests. See the note in release-matrix.json."
+              ;;
+            *)
+              echo "::error::unknown test_mode '${{ matrix.test_mode }}' for ${{ matrix.id }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Build met (windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          # pwsh, NOT bash. Under `shell: bash` on Windows, Git Bash puts its
+          # own /usr/bin ahead of MSVC on PATH, and rustc then invokes
+          # `C:\Program Files\Git\usr\bin\link.exe` -- the coreutils `link`
+          # -- instead of the MSVC linker. It fails with "extra operand" on the
+          # first object file.
+          cargo build --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Same reasoning as the unix leg. pwsh for the same PATH reason: under
+      # `shell: bash` Git Bash's /usr/bin shadows the MSVC linker.
+      - name: Test met (windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          if ("${{ matrix.test_mode }}" -eq "run") {
+            cargo test --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+          } elseif ("${{ matrix.test_mode }}" -eq "no-run") {
+            cargo test --release --no-run -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+          } elseif ("${{ matrix.test_mode }}" -eq "skip") {
+            Write-Output "::warning title=${{ matrix.id }}: tests not compiled::test_mode=skip. This leg builds but does not compile its tests."
+          } else {
+            Write-Output "::error::unknown test_mode '${{ matrix.test_mode }}' for ${{ matrix.id }}"
+            exit 1
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No version input exists on a PR. Stamp the artifact explicitly
+          # rather than packaging an empty version string.
+          ver='${{ inputs.version }}'
+          [ -n "$ver" ] || ver="0.0.0-pr${{ github.event.number }}"
+          name="met-${ver}-${{ matrix.id }}"
+          staging="dist/$name"
+          mkdir -p "$staging"
+          bin=target/${{ matrix.target }}/release/met
+          [ "${{ matrix.os }}" = windows ] && bin="$bin.exe"
+          cp "$bin" "$staging/"
+          # The licence texts and the third-party notices travel with every
+          # binary: CUTLASS is BSD-3-Clause, which requires its notice in
+          # binary distributions. assert-notices-shipped.py pins this line.
+          cp -R LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md LICENSES "$staging/"
+          # Native-HIP Windows target: bundle the runtime shim + HIP runtime DLL
+          # so met.exe can drive the AMD GPU (cudarc dlopens nvcuda.dll, which
+          # imports amdhip64.dll). Built/staged into metrale-kernels' OUT_DIR by
+          # build_hip_shim_windows.
+          if [ "${{ matrix.toolchain }}" = hip ]; then
+            bdir="target/${{ matrix.target }}/release/build"
+            # Shim DLLs we build — required.
+            for dll in nvcuda.dll cuda.dll; do
+              found=$(find "$bdir" -name "$dll" -print -quit 2>/dev/null || true)
+              if [ -n "$found" ]; then cp "$found" "$staging/"; else echo "::warning::$dll not found to bundle"; fi
+            done
+            # HIP runtime DLL (versioned, e.g. amdhip64_6.dll) if the SDK shipped
+            # one; otherwise it is an AMD-driver component present on the target.
+            find "$bdir" -name 'amdhip64*.dll' -exec cp {} "$staging/" \; 2>/dev/null || true
+          fi
+          if [ "${{ matrix.os }}" = windows ]; then
+            (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
+            asset="dist/$name.zip"
+          else
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+            asset="dist/$name.tar.gz"
+          fi
+          # Record the BARE filename, not "dist/<name>": a checksum file is
+          # consumed with `sha256sum -c` from the directory holding the
+          # artifact (both by the verify step and by anyone downloading a
+          # release asset), and a stored relative path breaks there.
+          ( cd "$(dirname "$asset")" \
+            && { sha256sum "$(basename "$asset")" > "$(basename "$asset").sha256" 2>/dev/null \
+                 || shasum -a 256 "$(basename "$asset")" > "$(basename "$asset").sha256"; } )
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: met-${{ matrix.id }}
+          retention-days: ${{ inputs.retention_days }}
+          path: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.asset }}.sha256
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Publish. Skipped entirely on dry_run, so a dry run can never tag, never
+  # push and never create a Release.
+  # ---------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------
+  # Dry-run reporting. Makes `dry_run=true` show exactly what a real run
+  # would have published, so the decision to publish is made on evidence.
+  # ---------------------------------------------------------------------
+  dry-run-summary:
+    name: dry-run summary
+    needs: [validate, build]
+    # This job is the stable aggregation point for the release matrix and a
+    # required check (the per-leg `build <id>` check names are dynamic and
+    # cannot be required individually). A required check that is SKIPPED when
+    # a build fails is never reported at all — in the merge queue the entry
+    # would then hang for the full check_response_timeout instead of being
+    # ejected. So run always, and let the first step convert any upstream
+    # failure into an explicit red. (`needs` still blocks downstream release
+    # jobs exactly as before — a failed dependency blocks as a skip would.)
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail explicitly if anything upstream failed
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          WEB_ONLY: ${{ inputs.web_only }}
+          STACK_LAYER: ${{ inputs.stack_layer }}
+          BUILDS_BINARIES: ${{ inputs.builds_binaries }}
+        run: |
+          set -euo pipefail
+          bad=""
+          [ "$VALIDATE_RESULT" = success ] || bad="validate ($VALIDATE_RESULT)"
+          # A skipped build is acceptable for exactly one reason, and the
+          # condition names it. Any other skip is still a failure.
+          if [ "$WEB_ONLY" = "true" ] && [ "$BUILD_RESULT" = skipped ]; then
+            echo "build legs deliberately skipped: web-only diff"
+          elif [ "$STACK_LAYER" = "true" ] && [ "$BUILD_RESULT" = skipped ]; then
+            echo "build legs deliberately skipped: lower layer of a stack"
+          elif [ "$BUILDS_BINARIES" = "false" ] && [ "$BUILD_RESULT" = skipped ]; then
+            echo "build legs deliberately skipped: nothing in the diff can change a binary"
+          elif [ "$BUILD_RESULT" != success ]; then
+            bad="${bad:+$bad, }build ($BUILD_RESULT)"
+          fi
+          if [ -n "$bad" ]; then
+            echo "::error::release matrix upstream failed: $bad"
+            exit 1
+          fi
+
+      - name: Report the inert-diff skip
+        if: ${{ !inputs.web_only && !inputs.stack_layer && !inputs.builds_binaries }}
+        run: |
+          {
+            echo "### Release matrix: not built — nothing here can change a binary"
+            echo
+            echo "Every changed path is provably inert: web trees, \`docs/\`, \`assets/\`,"
+            echo "root markdown, or \`.github/\` outside the workflows and composite"
+            echo "actions that decide how binaries are produced. This summary job still"
+            echo "runs and is still the required context, so the merge is never left"
+            echo "waiting on a check that was never created."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report the web-only skip
+        if: ${{ inputs.web_only }}
+        run: |
+          {
+            echo "### Release matrix: not built — web-only diff"
+            echo
+            echo "Every changed file is under \`site/\`, \`blog/\`, \`book/\` or"
+            echo "\`web-shared/\`, none of which reaches a build leg. This summary job"
+            echo "still runs, and is still the required context, precisely so the merge"
+            echo "is never left waiting on a check that was never created."
+          } >> "$GITHUB_STEP_SUMMARY"
+      # From here down the job inspects artifacts. On a web-only diff there are
+      # none by design, so these steps stand down while the job itself still
+      # reports — which is the whole point of keeping it running.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify every artifact is real (checksums + non-empty)
+        if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        run: |
+          set -euo pipefail
+          # The point of the PR dry run is that a later release CANNOT fail in
+          # a way this run would have passed. So verify the packages the same
+          # way a consumer would: checksum them and confirm they are non-empty.
+          shopt -s nullglob
+          n=0
+          for f in dist/*.tar.gz dist/*.zip; do
+            [ -s "$f" ] || { echo "::error::$f is empty"; exit 1; }
+            (cd dist && sha256sum -c "$(basename "$f").sha256") \
+              || { echo "::error::checksum mismatch for $f"; exit 1; }
+            case "$f" in
+              *.zip) members=$(python3 -m zipfile -l "$f") ;;
+              *)     members=$(python3 -m tarfile -l "$f") ;;
+            esac
+            for need in LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md LICENSES/BSD-3-Clause.txt; do
+              grep -qF "/$need" <<<"$members" \
+                || { echo "::error::$f does not carry $need"; exit 1; }
+            done
+            n=$((n+1))
+          done
+          [ "$n" -gt 0 ] || { echo "::error::no artifacts were produced"; exit 1; }
+          echo "verified $n artifact(s)"
+
+      # Skipped when the caller is actually going to publish (dev-release.yml).
+      # The checksum verification above still runs — that is the part worth
+      # having either way. Only the "nothing was tagged" narration is wrong in
+      # a publishing run, and a summary that contradicts what the run just did
+      # is worse than no summary.
+      - name: Report what WOULD be published
+        if: ${{ !inputs.publishing && !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### DRY RUN — nothing was tagged, pushed or published"
+            echo
+            echo "Would create tag \`v${NEW_VERSION}\` on \`${{ inputs.ref }}\`."
+            echo
+            echo "#### Artifacts"
+            if find dist -type f ! -name '*.sha256' | grep -q .; then
+              find dist -type f ! -name '*.sha256' | sort | sed 's/^/- /'
+            else
+              echo "- (none — every build job failed or was skipped)"
+            fi
+            echo
+            echo "#### Release notes that would be generated"
+            echo '```markdown'
+            # Non-fatal, but never silently blank: a PR token may lack the
+            # write scope the generate-notes endpoint wants, and that should
+            # read as a degraded preview, not as "there are no notes".
+            bash scripts/release-notes.sh preview "$NEW_VERSION" \
+              || echo "(preview unavailable — generate-notes needs contents:write; not granted on pull_request)"
+            echo '```'
+            echo
+            echo "_Nothing was tagged, pushed or published: \`publish\` runs only on"
+            echo "workflow_dispatch with dry_run=false._"
+          } >> "$GITHUB_STEP_SUMMARY"

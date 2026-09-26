@@ -1,0 +1,387 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// provenance-id: 526f6e616c6420522e205374657369616b
+
+//! 2026-09-25: `DeepSeekV41Layer::step`, one block for `m` tokens on the mHC
+//! highway, and its eager path's attention half (`step_eager`), with the
+//! engram, routing-prediction trace and diagnostics helpers.
+//!
+//! Owner: model-arch, DeepSeek-V4.1.
+//! Invariants: none beyond the types.
+
+use anyhow::{Context, Result, ensure};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+
+use super::step_graph_on;
+use super::{DeepSeekV41Layer, GraphMode, V41LayerState, graph_mode};
+use crate::attn_v41::SharedV41;
+use crate::engram_v41::ENGRAM_ROW_BYTES;
+use metrale_model_layers::layer::{ForwardContext, LayerState};
+use metrale_model_layers::layers::ops;
+
+pub(super) fn diag_on() -> bool {
+    std::env::var("METRALE_DS41_DIAG").is_ok_and(|v| v == "1")
+}
+
+/// 2026-09-25: `METRALE_DS41_TRACE=1`, read once: the eager step synchronises
+/// and logs FNV-1a checksums of each layer's attention output and normed
+/// input, the MoE input with the highway before the MoE, and the MoE output
+/// with the highway after it, so two runs of one request can be diffed to the
+/// first place they part. Diagnostics only.
+pub(super) fn trace_on() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("METRALE_DS41_TRACE").is_ok_and(|v| v == "1"))
+}
+
+/// 2026-09-25: FNV-1a over `bytes` device bytes at `p` (a blocking copy); 0
+/// when the copy fails.
+pub(super) fn trace_hash(gpu: &dyn GpuBackend, p: DevicePtr, bytes: usize) -> u64 {
+    let mut b = vec![0u8; bytes];
+    if gpu.copy_d2h(p, &mut b).is_err() {
+        return 0;
+    }
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for x in b {
+        h ^= x as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// 2026-09-25: RMS of the first `n` f32 values at `p` (a blocking copy); NaN
+/// when the copy fails. Diagnostics only.
+fn diag_rms_f32(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> f32 {
+    let mut b = vec![0u8; n * 4];
+    if gpu.copy_d2h(p, &mut b).is_err() {
+        return f32::NAN;
+    }
+    let v: Vec<f32> = b
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    (v.iter().map(|x| x * x).sum::<f32>() / n.max(1) as f32).sqrt()
+}
+
+pub(super) fn diag_rms_bf16(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> f32 {
+    let mut b = vec![0u8; n * 2];
+    if gpu.copy_d2h(p, &mut b).is_err() {
+        return f32::NAN;
+    }
+    let v: Vec<f32> = b
+        .chunks_exact(2)
+        .map(|c| f32::from_bits((u16::from_le_bytes([c[0], c[1]]) as u32) << 16))
+        .collect();
+    (v.iter().map(|x| x * x).sum::<f32>() / n.max(1) as f32).sqrt()
+}
+
+impl DeepSeekV41Layer {
+    pub(super) fn step_token_ids(&self, ctx: &ForwardContext, m: usize) -> Result<Vec<u32>> {
+        if let Some(ids) = ctx.host_token_ids {
+            ensure!(
+                ids.len() >= m,
+                "host token ids: {} for {m} tokens",
+                ids.len()
+            );
+            return Ok(ids[..m].to_vec());
+        }
+        let dev = ctx
+            .token_ids
+            .context("engram needs the step's token ids (none in the context)")?;
+        let mut bytes = vec![0u8; m * 4];
+        ctx.gpu.copy_d2h(dev, &mut bytes)?;
+        Ok(bytes
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect())
+    }
+
+    pub(super) fn engram(
+        &self,
+        hi: usize,
+        streams: DevicePtr,
+        m: usize,
+        start_pos: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let rt = &self.rt;
+        let gpu = ctx.gpu;
+        let hashes = {
+            let mut cache = rt.step_hashes.lock().unwrap();
+            if hi == 0 || cache.is_none() {
+                let ids = self.step_token_ids(ctx, m)?;
+                let mut hasher = rt.hasher.lock().unwrap();
+                let h = hasher.hash(&ids, start_pos)?;
+                *cache = Some(h.clone());
+                h
+            } else {
+                cache.clone().unwrap()
+            }
+        };
+        let hasher = rt.hasher.lock().unwrap();
+        let row_ids = hasher.layer_row_ids(&hashes, m, hi);
+        drop(hasher);
+        let mut raw = vec![0u8; row_ids.len() * ENGRAM_ROW_BYTES];
+        rt.rows.read_rows(self.idx, &row_ids, &mut raw)?;
+        let engram = rt.engram.lock().unwrap();
+        engram.rows_from_q2k(gpu, Some(self.idx), &raw, row_ids.len(), stream)?;
+        engram.apply(gpu, self.idx, streams, m, stream)
+    }
+
+    /// 2026-09-25: One block for `m` tokens at `start_pos`, on the highway.
+    /// Fails for `m` outside `1..=max_tokens` and for a multi-token step at
+    /// `start_pos > 0` (chunked prefill).
+    pub(super) fn step(
+        &self,
+        hidden: DevicePtr,
+        m: usize,
+        start_pos: usize,
+        state: &mut dyn LayerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let rt = &self.rt;
+        let gpu = ctx.gpu;
+        ensure!(
+            m >= 1 && m <= rt.max_tokens,
+            "deepseek-v4.1: {m} tokens exceeds the {}-token workspace",
+            rt.max_tokens
+        );
+        ensure!(
+            start_pos == 0 || m == 1,
+            "deepseek-v4.1: chunked prefill is not supported (start {start_pos}, {m} tokens); raise --max-prefill-tokens"
+        );
+        let st = state
+            .as_any_mut()
+            .downcast_mut::<V41LayerState>()
+            .context("deepseek-v4.1 layer given a foreign state")?;
+        let streams = ctx.buffers.hc_streams();
+        let (h, hc) = (rt.hidden, rt.hc_mult);
+        if step_graph_on() {
+            self.note_window(st.attn.window());
+        }
+
+        if self.idx == 0 {
+            if start_pos == 0 {
+                // 2026-09-25: A new sequence: fresh shared slots, hasher and
+                // step hashes.
+                *rt.shared.lock().unwrap() = SharedV41::default();
+                rt.hasher.lock().unwrap().reset();
+                *rt.step_hashes.lock().unwrap() = None;
+            }
+            // 2026-09-25: A new step: the captured step's device-side
+            // position and selection are stale.
+            rt.attn.lock().unwrap().invalidate_decode_uploads();
+            // 2026-09-25: The initial pre-mix is one-hot on stream 0.
+            let mut onehot = vec![0u8; m * hc * 4];
+            for t in 0..m {
+                onehot[t * hc * 4..t * hc * 4 + 4].copy_from_slice(&1f32.to_le_bytes());
+            }
+            gpu.copy_h2d(&onehot, rt.pre_prev)?;
+            ops::hc_expand(
+                gpu,
+                self.k_hc_expand,
+                hidden,
+                streams,
+                m as u32,
+                h as u32,
+                hc as u32,
+                stream,
+            )?;
+        }
+        if self.idx == 0 {
+            *rt.step_start.lock().unwrap() = Some(std::time::Instant::now());
+            *rt.step_moe.lock().unwrap() = Default::default();
+            *rt.step_attn_ms.lock().unwrap() = 0.0;
+            *rt.step_engram_ms.lock().unwrap() = 0.0;
+        }
+        // 2026-09-25: The multi-layer segment graphs (`step_seg.rs`) take the
+        // single-token step at a position > 0; layer 0 uploads every engram
+        // layer's rows up front.
+        let seg_mode = step_graph_on()
+            && m == 1
+            && start_pos > 0
+            && !gpu.debug_sync_kernels()
+            && !rt.seg.lock().unwrap().disabled;
+        if seg_mode {
+            return self.step_seg(hidden, start_pos, st, ctx, stream);
+        }
+        let te = std::time::Instant::now();
+        if let Some(hi) = self.engram_index
+            && !std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1")
+        {
+            self.engram(hi, streams, m, start_pos, ctx, stream)?;
+        }
+        *rt.step_engram_ms.lock().unwrap() += te.elapsed().as_secs_f64() * 1e3;
+        let diag = diag_on();
+        if diag {
+            gpu.synchronize(stream)?;
+            tracing::info!(
+                "DS41 L{} in: streams rms {:.4} (token 0)",
+                self.idx,
+                diag_rms_f32(gpu, streams, hc * h)
+            );
+        }
+
+        // 2026-09-25: Only the single-token step at a position > 0 is
+        // captured; prefill (m > 1, or a one-token prompt at position 0) runs
+        // eagerly.
+        let mode = graph_mode();
+        let graph = mode != GraphMode::Off && m == 1 && start_pos > 0 && !gpu.debug_sync_kernels();
+        match (graph, mode) {
+            (false, _) => self.step_eager(hidden, m, start_pos, st, ctx, stream),
+            (true, GraphMode::Oracle) => self.step_oracle(hidden, start_pos, st, ctx, stream),
+            (true, _) => self.step_graph(hidden, start_pos, st, ctx, stream),
+        }
+    }
+
+    /// 2026-09-25: `METRALE_DS41_PREDICT_TRACE`, single-token steps at a
+    /// position > 0: before this layer's routing, run its router on the MoE
+    /// inputs of layers L-1 and L-2 (kept in `rt.pred_x`), keep the 12 best of
+    /// each, note which of the layer's experts are resident now, then save
+    /// this layer's input for the layers after it. Diagnostics: each
+    /// prediction waits for its logits download.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn predict_before_moe(
+        &self,
+        gpu: &dyn GpuBackend,
+        normed: DevicePtr,
+        m: usize,
+        start_pos: usize,
+        stream: u64,
+    ) -> Result<Option<(Vec<bool>, Vec<Vec<usize>>)>> {
+        let rt = &self.rt;
+        if m != 1 || start_pos == 0 || rt.pred_trace.lock().unwrap().is_none() {
+            return Ok(None);
+        }
+        let h = rt.hidden;
+        let slot = |l: usize| DevicePtr(rt.pred_x.0 + ((l % 3) * h * 2) as u64);
+        let moe = rt.moe.lock().unwrap();
+        let mut preds = Vec::new();
+        for d in 1..=2 {
+            if self.idx >= d {
+                preds.push(moe.route_predict(gpu, &self.moe_w, slot(self.idx - d), 12, stream)?);
+            }
+        }
+        gpu.copy_d2d_async(normed, slot(self.idx), h * 2, stream)?;
+        let lru = rt.lru.lock().unwrap();
+        let resident: Vec<bool> = (0..rt.moe_cfg.n_routed)
+            .map(|e| lru.contains(self.idx as u32, e as u32))
+            .collect();
+        Ok(Some((resident, preds)))
+    }
+
+    pub(super) fn predict_log(
+        &self,
+        start_pos: usize,
+        resident: &[bool],
+        preds: &[Vec<usize>],
+        actual: &[usize],
+    ) {
+        use std::io::Write;
+        let mut g = self.rt.pred_trace.lock().unwrap();
+        let Some(w) = g.as_mut() else { return };
+        let ids = |v: &[usize]| {
+            v.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let misses: Vec<usize> = actual.iter().copied().filter(|&e| !resident[e]).collect();
+        let _ = write!(
+            w,
+            "pos={start_pos} L{} act={} miss={}",
+            self.idx,
+            ids(actual),
+            ids(&misses)
+        );
+        for (i, p) in preds.iter().enumerate() {
+            // 2026-09-25: The prediction, and the part of it a prefetch would
+            // have to read.
+            let cold: Vec<usize> = p.iter().copied().filter(|&e| !resident[e]).collect();
+            let _ = write!(w, " d{}={} c{}={}", i + 1, ids(p), i + 1, ids(&cold));
+        }
+        let _ = writeln!(w);
+    }
+
+    /// 2026-09-25: The eager step after the engram: every launch issued from
+    /// the host, the attention and the MoE with their host work inline. Taken
+    /// by prefill, by every step with `GraphMode::Off`, and by the segment
+    /// graphs' eager fallbacks.
+    pub(super) fn step_eager(
+        &self,
+        hidden: DevicePtr,
+        m: usize,
+        start_pos: usize,
+        st: &mut V41LayerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let rt = &self.rt;
+        let gpu = ctx.gpu;
+        let streams = ctx.buffers.hc_streams();
+        let h = rt.hidden;
+        let diag = diag_on();
+
+        self.mixes_collapse(
+            gpu,
+            &self.hc_attn,
+            streams,
+            rt.pre_a,
+            rt.pre_prev,
+            hidden,
+            m,
+            stream,
+        )?;
+        let normed = ctx.buffers.norm_output();
+        ops::rms_norm(
+            gpu,
+            self.k_rms_norm,
+            hidden,
+            &self.attn_norm,
+            normed,
+            m as u32,
+            h as u32,
+            rt.norm_eps,
+            stream,
+        )?;
+        let ta = std::time::Instant::now();
+        let attn_out = {
+            let attn = rt.attn.lock().unwrap();
+            let mut shared = rt.shared.lock().unwrap();
+            let run = attn.forward(
+                gpu,
+                &self.attn_w,
+                &mut st.attn,
+                &mut shared,
+                normed,
+                m,
+                start_pos,
+                stream,
+            )?;
+            run.out
+        };
+        *rt.step_attn_ms.lock().unwrap() += ta.elapsed().as_secs_f64() * 1e3;
+        if trace_on() {
+            gpu.synchronize(stream)?;
+            tracing::info!(
+                "DS41 trace pos={} L{} attn={:016x} normed={:016x}",
+                start_pos,
+                self.idx,
+                trace_hash(gpu, attn_out, m * h * 2),
+                trace_hash(gpu, normed, m * h * 2)
+            );
+        }
+        if diag {
+            gpu.synchronize(stream)?;
+            tracing::info!(
+                "DS41 L{} attn: in rms {:.4} normed rms {:.4} out rms {:.4}",
+                self.idx,
+                diag_rms_bf16(gpu, hidden, h),
+                diag_rms_bf16(gpu, normed, h),
+                diag_rms_bf16(gpu, attn_out, h)
+            );
+        }
+        // 2026-09-25: The attention's `hc_post` opens the ffn half (`step_ffn.rs`).
+        self.ffn_eager(hidden, m, start_pos, ctx, stream)
+    }
+}

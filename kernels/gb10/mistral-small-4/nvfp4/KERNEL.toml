@@ -1,0 +1,123 @@
+[build]
+# 2026-09-25: -DHDIM=128 is the head dimension the HDIM-sized common/ attention kernels compile for
+# (common/paged_decode_attn.cu defaults it to 256). This target's two paged_decode_attn_*mla.cu files redefine it
+# to 320.
+extra_nvcc_flags = ["--fmad=false", "-DHDIM=128"]
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: Kernels this target may drop from common/ without the build warning about shadow drift; the
+# list is the union over every KERNEL.toml layer. The pairs stay in `shadowed_dropped`, and the boot audit
+# judges an unresolved lookup by MODEL.toml [expected_absent], not by this table.
+#
+# All five are common/rope.cu functions. This target's rope.cu defines only rope_forward and
+# rope_forward_yarn, which rotate adjacent pairs (2i, 2i + 1) with frequencies from an inv_freq table;
+# common/rope.cu's rope_forward rotates (i, i + rotary_dim / 2) and takes no inv_freq argument.
+[shadow_exempt]
+rope = [
+    "rope_forward_proportional",
+    "rope_forward_strided",
+    "rope_forward_yarn_interleaved",
+    "rope_forward_yarn_interleaved_inv",
+    "rope_forward_yarn_scaled",
+]
+
+
+# 2026-09-25: File stem to module name. A stem that no layer's [modules] lists keeps its stem as the module name.
+[modules]
+e2m1_branchless = "e2m1"
+moe_permute = "moe"
+dense_gemm_bf16 = "gemm"
+rms_norm = "norm"
+argmax_bf16 = "argmax"
+dense_gemv_bf16 = "gemv"
+dense_gemv_fp8w = "gemv_fp8w"
+moe_shared_expert_fused_batch2 = "moe_fused_batch2"
+moe_shared_expert_fused_batch3 = "moe_fused_batch3"
+quantize_bf16_to_nvfp4 = "quantize_nvfp4"
+paged_decode_attn = "paged_decode"
+paged_decode_attn_mla = "paged_decode_mla"
+mla_absorbed = "mla_absorbed"
+paged_decode_attn_fp8 = "paged_decode_fp8"
+paged_decode_attn_nvfp4 = "paged_decode_nvfp4"
+w4a16_gemm = "w4a16"
+kv_cache_append = "kv_cache"
+moe_w4a16_grouped_gemm = "moe_w4a16"
+moe_sorted_prefill = "moe_sorted"
+attn_prefill_paged = "prefill_paged"
+attn_prefill_paged_fp8 = "prefill_paged_fp8"
+attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
+attn_prefill_paged_turbo2 = "prefill_paged_turbo2"
+attn_prefill_paged_turbo3 = "prefill_paged_turbo3"
+attn_prefill_paged_turbo4 = "prefill_paged_turbo4"
+attn_prefill_paged_turbo8 = "prefill_paged_turbo8"
+paged_decode_attn_bf16k_turbo4v = "paged_decode_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo3v = "paged_decode_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo2v = "paged_decode_bf16k_turbo2v"
+paged_decode_attn_turbo4k_turbo3v = "paged_decode_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo8v = "paged_decode_turbo4k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v = "paged_decode_turbo3k_turbo8v"
+paged_decode_attn_turbo2 = "paged_decode_turbo2"
+attn_prefill_paged_bf16k_turbo3v = "prefill_paged_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo3v_128 = "paged_decode_bf16k_turbo3v_128"
+attn_prefill_paged_bf16k_turbo4v = "prefill_paged_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo4v_128 = "paged_decode_bf16k_turbo4v_128"
+attn_prefill_paged_bf16k_turbo2v = "prefill_paged_bf16k_turbo2v"
+paged_decode_attn_bf16k_turbo2v_128 = "paged_decode_bf16k_turbo2v_128"
+mla_prefill_attn = "mla_prefill_attn"
+grouped_gemm_mla = "grouped_gemm_mla"
+mla_fused_prefill = "mla_fused_prefill"
+reshape_and_cache_turbo = "reshape_and_cache_turbo"
+paged_decode_attn_turbo4 = "paged_decode_turbo4"
+wht_bf16 = "wht_bf16"
+tq_plus_innerq_apply = "tq_plus_innerq_apply"
+paged_decode_attn_turbo8 = "paged_decode_turbo8"
+paged_decode_attn_turbo4_512 = "paged_decode_turbo4_512"
+paged_decode_attn_turbo8_512 = "paged_decode_turbo8_512"
+paged_decode_attn_turbo3 = "paged_decode_turbo3"
+paged_decode_attn_turbo3_128 = "paged_decode_turbo3_128"
+paged_decode_attn_turbo2_128 = "paged_decode_turbo2_128"
+paged_decode_attn_turbo4_128 = "paged_decode_turbo4_128"
+paged_decode_attn_turbo8_128 = "paged_decode_turbo8_128"
+attn_prefill_paged_fp8k_turbo3v = "prefill_paged_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo3v_128 = "paged_decode_fp8k_turbo3v_128"
+attn_prefill_paged_fp8k_turbo4v = "prefill_paged_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo4v_128 = "paged_decode_fp8k_turbo4v_128"
+attn_prefill_paged_fp8k_turbo2v = "prefill_paged_fp8k_turbo2v"
+paged_decode_attn_fp8k_turbo2v_128 = "paged_decode_fp8k_turbo2v_128"
+attn_prefill_paged_turbo4k_turbo3v = "prefill_paged_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo3v_128 = "paged_decode_turbo4k_turbo3v_128"
+attn_prefill_paged_turbo4k_turbo8v = "prefill_paged_turbo4k_turbo8v"
+paged_decode_attn_turbo4k_turbo8v_128 = "paged_decode_turbo4k_turbo8v_128"
+attn_prefill_paged_turbo3k_turbo8v = "prefill_paged_turbo3k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v_128 = "paged_decode_turbo3k_turbo8v_128"
+paged_decode_attn_fp8k_turbo3v = "paged_decode_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo4v = "paged_decode_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo2v = "paged_decode_fp8k_turbo2v"
+
+
+# 2026-09-25: Files this directory compiles from elsewhere in kernels/ (paths relative to kernels/<hardware>). They
+# are staged with this directory's role, so their quoted #includes resolve here. See crates/closure/src/layout.rs.
+[sources]
+use = [
+  "deepseek-v4-flash/nvfp4/grouped_gemm_mla.cu",
+  "deepseek-v4-flash/nvfp4/w4a16_gemm.cu",
+  "gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu",
+  "minimax-m2-229b/nvfp4/rms_norm.cu",
+]
+
+
+# 2026-09-25: Entries of this directory that win over a common/ entry with the same file stem. Each needs a stated
+# reason; an undeclared win and a declaration that wins nothing are both layout errors.
+[shadow]
+moe_w4a16_grouped_gemm = "uses gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu over gb10/common/moe_w4a16_grouped_gemm.cu (1625 of 1369 lines differ); see kernels/FORKS.md"
+rms_norm = "uses gb10/minimax-m2-229b/nvfp4/rms_norm.cu over gb10/common/rms_norm.cu (1620 of 1433 lines differ); see kernels/FORKS.md"
+rope = "fork of gb10/common/rope.cu (428 of 590 lines differ); see kernels/FORKS.md"
+w4a16_gemm = "uses gb10/deepseek-v4-flash/nvfp4/w4a16_gemm.cu over gb10/common/w4a16_gemm.cu (1402 of 1410 lines differ); see kernels/FORKS.md"

@@ -1,0 +1,6 @@
+# 2026-09-25: Entries of this directory that replace a same-name entry of a lower layer
+# (common/ for a model directory, the inherited tree for an overlay). Every
+# replacement needs a stated reason; kernels/FORKS.md has the diff distances.
+[shadow]
+w8a16_gemv = "hopper-tuned replacement of gb10/common/w8a16_gemv.cu (214 of 223 lines differ); see kernels/FORKS.md"
+w8a16_gemv_fused = "hopper-tuned replacement of gb10/common/w8a16_gemv_fused.cu (346 of 389 lines differ); see kernels/FORKS.md"

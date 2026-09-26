@@ -1,0 +1,145 @@
+# 2026-09-25: LongCat-Flash-Lite NVFP4 kernel target. Its MLA kernels come from
+# deepseek-v4-flash/nvfp4 through [sources] use. They fix the latent width at compile time
+# (`#define MLA_HDIM 576` in mla_prefill_attn.cu), which is LongCat's kv_lora_rank 512 plus
+# qk_rope_head_dim 64 (the test config in crates/config/src/parsers/longcat.rs);
+# mistral-small-4's copy is 320.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[build]
+# 2026-09-25: No -DHDIM, so the common paged-decode kernels keep their default HDIM 256.
+# LongCat's qk head is 192 (nope 128 + rope 64), and -DHDIM=192 would hit their
+# `#error "Unsupported VEC_BF16 (need 4 or 8)"` (192 / 32 = 6).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+extra_nvcc_flags = ["--fmad=false"]
+
+# 2026-09-26: File stem to module name. A stem that no layer's [modules] lists keeps its
+# stem as the module name (crates/kernels/build.rs).
+
+
+
+[modules]
+e2m1_branchless = "e2m1"
+moe_permute = "moe"
+dense_gemm_bf16 = "gemm"
+dense_gemm_splitk = "gemm_splitk"
+dense_gemm_tc = "gemm_tc"
+rms_norm = "norm"
+argmax_bf16 = "argmax"
+dense_gemv_bf16 = "gemv"
+dense_gemv_fp8w = "gemv_fp8w"
+moe_shared_expert_fused_batch2 = "moe_fused_batch2"
+moe_shared_expert_fused_batch3 = "moe_fused_batch3"
+quantize_bf16_to_nvfp4 = "quantize_nvfp4"
+paged_decode_attn = "paged_decode"
+paged_decode_attn_mla = "paged_decode_mla"
+paged_decode_attn_fp8 = "paged_decode_fp8"
+paged_decode_attn_fp8_mla = "paged_decode_fp8_mla"
+paged_decode_attn_nvfp4 = "paged_decode_nvfp4"
+w4a16_gemm = "w4a16"
+kv_cache_append = "kv_cache"
+moe_w4a16_grouped_gemm = "moe_w4a16"
+moe_sorted_prefill = "moe_sorted"
+attn_prefill_paged = "prefill_paged"
+attn_prefill_paged_fp8 = "prefill_paged_fp8"
+attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
+attn_prefill_fp8kv = "prefill_fp8kv"
+nemotron_moe_prefill = "nemotron_moe_prefill"
+mla_absorbed = "mla_absorbed"
+mla_prefill_attn = "mla_prefill_attn"
+grouped_gemm_mla = "grouped_gemm_mla"
+mla_fused_prefill = "mla_fused_prefill"
+mla_paged_decode = "mla_paged_decode"
+mla_paged_decode_fp8 = "mla_paged_decode_fp8"
+reshape_and_cache_turbo = "reshape_and_cache_turbo"
+paged_decode_attn_turbo4 = "paged_decode_turbo4"
+wht_bf16 = "wht_bf16"
+paged_decode_attn_turbo8 = "paged_decode_turbo8"
+paged_decode_attn_turbo4_512 = "paged_decode_turbo4_512"
+paged_decode_attn_turbo8_512 = "paged_decode_turbo8_512"
+paged_decode_attn_turbo3 = "paged_decode_turbo3"
+paged_decode_attn_turbo3_128 = "paged_decode_turbo3_128"
+paged_decode_attn_turbo4_128 = "paged_decode_turbo4_128"
+paged_decode_attn_turbo8_128 = "paged_decode_turbo8_128"
+attn_prefill_512 = "attn_prefill_512"
+paged_decode_attn_512 = "paged_decode_attn_512"
+
+hyper_connection = "hyper_connection"
+
+csa_compress = "csa_compress"
+
+prefill_attn_compressed = "prefill_attn_compressed"
+
+# 2026-09-25: deepseek-v4-flash/nvfp4/moe_silu_mul.cu, used here, defines no
+# silu_mul_quant_fp8. fused_silu_quant_ok (moe/forward_prefill_fp8.rs) sees the zero handle
+# and the unfused silu_mul + per_token_group_quant_fp8 pair runs; this entry keeps the
+# drop out of the build's shadow warning (crates/kernels/build_parse.rs).
+[shadow_exempt]
+moe_silu_mul = ["silu_mul_quant_fp8"]
+
+# 2026-09-26: Files this directory compiles from elsewhere in kernels/ (paths relative to
+# kernels/<hardware>). They are staged with this directory's role, so their quoted
+# #includes resolve here. See crates/closure/src/layout.rs.
+[sources]
+use = [
+  "deepseek-v4-flash/nvfp4/grouped_gemm_mla.cu",
+  "deepseek-v4-flash/nvfp4/mla_absorbed.cu",
+  "deepseek-v4-flash/nvfp4/mla_cache_assemble_fp8.cu",
+  "deepseek-v4-flash/nvfp4/mla_fused_prefill.cu",
+  "deepseek-v4-flash/nvfp4/mla_paged_decode.cu",
+  "deepseek-v4-flash/nvfp4/mla_paged_decode_fp8.cu",
+  "deepseek-v4-flash/nvfp4/mla_prefill_attn.cu",
+  "deepseek-v4-flash/nvfp4/moe_silu_mul.cu",
+  "deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu",
+  "deepseek-v4-flash/nvfp4/paged_decode_attn_fp8_mla.cu",
+  "deepseek-v4-flash/nvfp4/paged_decode_attn_mla.cu",
+  "deepseek-v4-flash/nvfp4/w4a16_gemm.cu",
+  "minimax-m2-229b/nvfp4/rms_norm.cu",
+]
+
+# 2026-09-25: Entries of this directory that replace a same-stem entry of common/. The
+# layout resolver refuses an undeclared replacement, a declaration that replaces nothing,
+# and an empty reason (crates/closure/src/layout.rs, layout_manifest.rs).
+[shadow]
+moe_silu_mul = "uses gb10/deepseek-v4-flash/nvfp4/moe_silu_mul.cu over gb10/common/moe_silu_mul.cu (179 of 169 lines differ); see kernels/FORKS.md"
+moe_w4a16_grouped_gemm = "uses gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu over gb10/common/moe_w4a16_grouped_gemm.cu (1954 of 1494 lines differ); see kernels/FORKS.md"
+rms_norm = "uses gb10/minimax-m2-229b/nvfp4/rms_norm.cu over gb10/common/rms_norm.cu (1620 of 1433 lines differ); see kernels/FORKS.md"
+w4a16_gemm = "uses gb10/deepseek-v4-flash/nvfp4/w4a16_gemm.cu over gb10/common/w4a16_gemm.cu (1402 of 1410 lines differ); see kernels/FORKS.md"

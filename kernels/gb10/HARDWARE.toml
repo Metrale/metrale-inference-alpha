@@ -1,0 +1,222 @@
+[hardware]
+name = "gb10"
+vendor = "nvidia"
+arch = "sm_121f"
+compute_capability = "12.1"
+# 2026-09-25: Compared at boot with the device's SM count; a mismatch logs a warning
+# (gpu-runtime arch_preflight::check_sm_count). Baked as `metrale_kernels::TARGET_SM_COUNT`, which
+# also sizes the paged-decode split-K count and workspace (model-layers
+# qwen3_attention/decode/splitk_dispatch.rs, gpu-runtime buffers/sizes.rs). Equal to
+# `metrale_core::device::sm121::NUM_SMS`.
+sm_count = 48
+memory_bandwidth_gbps = 273
+memory_type = "LPDDR5X"
+memory_gb = 120
+
+# 2026-09-25: Benchmark limits: what a certification campaign and the record policies judge a gb10 box by
+# (crates/bench/src/hardware/limits.rs `limits`). Once `[benchmarks.limits]` exists all four sub-tables are
+# required, and an unknown key fails the parse. This file is one of the configs hashed into every gb10
+# target's closure (crates/bench/src/gate/taxon.rs `configs`).
+
+
+
+
+
+
+
+# 2026-09-25: chassis_park_c / chassis_resume_c: certification parks a node whose hottest chassis zone reads
+# at or above chassis_park_c, or whose driver reports a thermal slowdown, and resumes it once the zone reads
+# at or below chassis_resume_c (crates/server/src/cli/bench_certify/remote/thermal.rs). chassis_park_c is
+# also the chassis ceiling of a Speed record's pre-run check (bench hardware/policy.rs `TempCeilings`).
+# Measured 2026-09-15 on three loaded GB10s: 55-76 °C.
+# chassis_equivalence_delta_c: two gb10 boxes whose hottest zones differ by at most this, with no thermal
+# alert on either, can count as one box for a Speed-class record set (bench hardware/equivalence.rs).
+# gpu_ceiling_c: the die temperature above which a Speed record's pre-run capture is suspect; it refuses the
+# run only under METRALE_HW_TEMP_GATE=1 and warns otherwise (bench hardware/policy.rs). 75 is the midpoint
+# between the 52-66 °C and 70-89 °C two boxes read on 2026-08-15.
+
+
+
+
+
+
+
+[benchmarks.limits.thermal]
+chassis_park_c = 80
+chassis_resume_c = 70
+chassis_equivalence_delta_c = 15
+gpu_ceiling_c = 75
+
+# 2026-09-25: `MemAvailable / MemTotal` a self-started gate needs before its server may start
+# (crates/server/src/cli/bench_certify/preflight.rs).
+
+
+
+
+[benchmarks.limits.memory]
+min_free_fraction = 0.85
+
+# 2026-09-25: Seconds (crates/server/src/cli/bench_certify/plan.rs, bench_lease.rs, bench_selfstart.rs).
+# serve_allowance_s: time a self-served gate may spend before its first sample, server start and checkpoint
+# load, before its deadline counts. boot_timeout_s: how long a started server may take to name its model.
+# A shard is planned at max(its share + shard_overhead_s, shard_floor_s). build_allowance_s: time a remote
+# node may spend building the anchor before its unit's deadline counts. Measured 2026-09-15 on six-way
+# shards: an echolp sixth ran 1650-1873 s against a 1260 s share, a 27B sixth 741-940 s against 1020 s.
+
+
+[benchmarks.limits.timing]
+serve_allowance_s = 600
+boot_timeout_s = 900
+shard_overhead_s = 420
+shard_floor_s = 300
+build_allowance_s = 1800
+
+# 2026-09-25: The non-thermal half of "one box" (bench hardware/equivalence.rs): clock ceilings within
+# clock_spread and memory within mem_spread, each measured as |a - b| / max(a, b).
+
+
+[benchmarks.limits.equivalence]
+clock_spread = 0.01
+mem_spread = 0.05
+
+# 2026-09-25: Serving defaults for this target. build.rs (build_defaults.rs) bakes them into
+# `metrale_kernels::TARGET_DEFAULTS`, and `resolve` in crates/model-layers/src/layers/ops/target_defaults.rs
+# takes each row as the default that a `METRALE_*` variable can override. An unknown key fails the build.
+#
+# Every row is written out (crates/kernels/tests/target_defaults.rs
+# `every_declaring_target_states_every_lever`), and every row but the two W8A8 prefill ceilings equals
+# `build_defaults::baseline` (`gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling`).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[defaults]
+# 2026-09-25: The widest decode batch the BF16 LM head serves with the batched GEMV `dense_gemv_batchm`;
+# wider batches take the tile GEMM (model-engine trait_impl/lm_head_batched.rs `project_bf16_lm_head`),
+# which reassociates the reduction, so the band decides a decode's output bits at each width. The resolver
+# clamps it to `DENSE_GEMV_BATCHM_MAX_M`. `METRALE_LM_HEAD_BATCHM_MAX` overrides.
+
+
+lm_head_batchm_max = 8
+# 2026-09-25: One strided GDN recurrent launch for a multi-sequence decode step whose SSM states are contiguous
+# (qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs). `METRALE_SSM_BATCHED_RECURRENT` overrides.
+ssm_batched_recurrent = false
+# 2026-09-25: The tensor-core GDN chunked-prefill family (model-layers ops/ssm_gdn_a3.rs). Its kernels are in
+# kernels/hopper/common only, which a gb10 build does not compile, so their handles are `KernelHandle(0)`
+# and the gb10 kernels run whatever this row says. `METRALE_GDN_PREFILL_TC` overrides.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+gdn_prefill_tc = false
+# 2026-09-25: Selects `dense_gemm_ba_gates_prefill_hopper` (kernels/hopper/common/ssm_ba_gates_hopper.cu) over
+# the gb10 `dense_gemm_ba_gates_prefill`. That source is not in this tree, so the handle is `KernelHandle(0)`
+# and the gb10 kernel runs (model-layers ops/ssm_ba_gates_hopper.rs). `METRALE_SSM_BA_GATES_HOPPER` overrides.
+
+
+
+
+
+
+
+
+ssm_ba_gates_hopper = false
+# 2026-09-25: Selects `per_token_group_quant_fp8_hopper` (kernels/hopper/common/fp8_act_quant_hopper.cu) over
+# `per_token_group_quant_fp8`. That source is not in this tree, so its handle is 0 and the gb10 quantizer runs
+# (model-layers ops/fp8_act_quant.rs). `METRALE_FP8_ACT_QUANT_HOPPER` overrides.
+
+
+
+
+
+fp8_act_quant_hopper = false
+# 2026-09-25: The split SiLU then down GEMV on the dense-FFN decode path (model-layers dense_ffn.rs). `METRALE_NO_DECODE_SPLIT_SILU` turns it off.
+decode_split_silu = true
+# 2026-09-25: The paged-decode split-K policy (metrale_kernels::attn_splitk). `legacy` is
+# `sm_count / (num_q_heads * split_ref_seqs(num_seqs, max batch))`, or 1 when that product reaches
+# `sm_count` (`legacy_splits`). `METRALE_ATTN_DECODE_SPLITK` overrides, for example with `auto`.
+
+
+
+attn_decode_splitk = "legacy"
+# 2026-09-25: `w8a16_gemm_m16` on the dense-FFN decode path; the kernel is in kernels/hopper/common only.
+# `METRALE_FFN_M16_TC`, else `METRALE_M16_TC`, overrides.
+
+
+ffn_m16_tc = false
+# 2026-09-25: `w8a16_gemm_m16{,_strided}` on the decode Q/K/V and o_proj; kernels/hopper/common only.
+# `METRALE_ATTN_M16_TC`, else `METRALE_M16_TC`, overrides.
+attn_m16_tc = false
+# 2026-09-25: `dense_gemm_m16_bf16` (kernels/hopper/common) for 5 to 16 rows of the BF16 decode head.
+# `METRALE_LM_HEAD_M16_TC` overrides.
+
+lm_head_m16_tc = false
+# 2026-09-25: `w8a16_gemv_batch16_ncol{2,4}` (kernels/hopper/common/w8a16_gemv_ncol.cu) on the decode attention
+# projections. `METRALE_ATTN_NCOL_GEMV` overrides; `METRALE_NO_ATTN_DECODE_BATCH` turns it off.
+attn_ncol_gemv = false
+# 2026-09-25: The fused dense-FFN gate+up decode GEMM. It needs the strided-SiLU consumer `silu_mul_strided.cu`,
+# which only kernels/hopper/common carries (build_defaults.rs `baseline`), so the row changes nothing here.
+# `METRALE_FFN_GATEUP_FUSED` overrides.
+
+
+
+
+ffn_gateup_fused = false
+# 2026-09-25: Upper M for the W8A8 block-scaled dense-FFN prefill: `_widening` for a projection with n > k
+# (gate/up), `_narrowing` otherwise (down) (model-layers dense_ffn_w8a8_prefill.rs `max_m_for`). These are
+# the two rows where gb10 differs from `build_defaults::baseline`, which has no cap.
+#
+# Measured 2026-09-11 on GB10 at the Qwen3.8-27B dims (H=5120, INTER=17408): gate/up (N=17408, K=5120)
+# crosses over from W8A8 to W8A16 at M~64-128, down (N=5120, K=17408) at M~384-512. Each row is the low end
+# of its band.
+#
+# `METRALE_W8A8_PREFILL_MAX_M_WIDENING` / `_NARROWING` override; a parsed 0 means no M takes W8A8 on
+# that shape (target_defaults.rs `resolve_max_m`).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+w8a8_prefill_max_m_widening = 64
+w8a8_prefill_max_m_narrowing = 384
+

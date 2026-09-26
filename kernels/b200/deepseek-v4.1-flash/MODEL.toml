@@ -1,0 +1,104 @@
+# 2026-09-25: B200 target: kernel set inherited from gb10 (HARDWARE.toml `inherits`).
+# Every table below is a copy of kernels/gb10/deepseek-v4.1-flash/MODEL.toml,
+# [expected_absent] included: that list is gb10's, not one taken with
+# `--check-kernels` on B200. `kernel_source` resolves within this hardware set,
+# so the kernels are gb10's deepseek-v4-flash/nvfp4 leaf, inherited (closure layout.rs `discover`).
+
+
+
+[model]
+name = "deepseek-v4.1-flash"
+hf_id = "deepseek-ai/DeepSeek-V4.1-Flash"
+architecture = "MLA + MoE (384 routed, top-6) + mHC + engram + shared compressed attention (CSA)"
+
+# 2026-09-25: The hidden, layer, head, vocab, context, MoE, MLA, engram and
+# index sizes below are the values deepseek_v41_config_from_gguf_metadata
+# (crates/model-weights/src/weights/gguf/deepseek_v41_real_file_test.rs) asserts from the Q2_K GGUF.
+layers_total = 40
+layers_full_attention = 40
+
+hidden_dim = 5120
+head_dim = 512
+q_heads = 64
+kv_heads = 1
+intermediate_size = 0
+
+vocab_size = 129280
+max_position_embeddings = 1048576
+rope_theta = 160000
+partial_rotary_factor = 0.125
+
+
+kv_lora_rank = 512
+q_lora_rank = 1280
+qk_rope_head_dim = 64
+
+
+num_experts = 384
+num_shared_experts = 1
+moe_intermediate_size = 2304
+top_k = 6
+
+
+hc_mult = 4
+
+# 2026-09-25: Keys that deepseek-v4-flash's MODEL.toml does not have.
+engram_layer_ids = [1, 14]
+engram_max_ngram_size = 4
+engram_n_heads = 8
+engram_head_dim = 256
+index_n_heads = 32
+index_head_dim = 128
+index_topk = 512
+compress_rope_theta = 160000
+
+# 2026-09-25: The kernel set is deepseek-v4-flash's. The V4.1-only kernels
+# (attn_v41, engram_v41, hc_v41, kquant_moe, moe_v41) are in that same leaf,
+# kernels/gb10/deepseek-v4-flash/nvfp4.
+
+kernel_source = "deepseek-v4-flash"
+
+[[model_types]]
+model_type = "deepseek_v41"
+hidden_size = 5120
+
+
+
+
+
+
+[sampling.thinking]
+temperature = 1.0
+top_p = 1.0
+top_k = 0
+presence_penalty = 0.0
+
+[sampling.coding]
+temperature = 1.0
+top_p = 1.0
+top_k = 0
+presence_penalty = 0.0
+
+[sampling.general]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+
+[behavior]
+enable_loop_watchdog = true
+thinking_default = false
+
+
+default_kv_dtype = "fp8"
+
+
+
+
+
+[expected_absent.w4a16]
+w4a16_gemm_t_p3 = """
+3-deep weight-pipeline twin shipped ONLY in qwen3.6-27b's shadow. The generic
+model constructor probes it (model/impl_a1.rs), then falls back to
+w4a16_gemm_t, which resolves here. V4.1 never dispatches a w4a16 GEMM: its
+attention and MoE run on the attn_v41 / kquant_moe / moe_v41 kernels."""

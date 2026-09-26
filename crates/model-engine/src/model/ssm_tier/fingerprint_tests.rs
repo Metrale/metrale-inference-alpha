@@ -1,0 +1,264 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: `ModelFingerprint` tests: the FNV-1a and `mix64` primitives against fixed
+//! values, golden fingerprints, per-field sensitivity, string-encoding
+//! injectivity, the decode namespace, and namespace override parsing.
+//!
+//! Owner: model-engine (SSM snapshot tier).
+//! Invariants: none beyond the types.
+
+use std::num::NonZeroU64;
+
+use metrale_config::{LayerType, ModelConfig, QuantizationConfig};
+
+use super::*;
+
+const BLOB: usize = 4096;
+
+fn hybrid() -> ModelConfig {
+    ModelConfig::qwen3_next_80b_nvfp4()
+}
+
+fn dense() -> ModelConfig {
+    let mut c = ModelConfig::qwen3_next_80b_nvfp4();
+    c.model_type = "qwen3".to_string();
+    c.num_hidden_layers = 28;
+    c.layer_types = vec![LayerType::FullAttention; 28];
+    c.num_experts = 0;
+    c.linear_num_key_heads = 0;
+    c.linear_key_head_dim = 0;
+    c.linear_num_value_heads = 0;
+    c.linear_value_head_dim = 0;
+    c
+}
+
+fn fp(cfg: &ModelConfig) -> u64 {
+    ModelFingerprint::derive_with_id(cfg, BLOB, "")
+        .unwrap()
+        .get()
+}
+
+// 2026-09-25: The published FNV-1a/64 reference vectors.
+#[test]
+fn fnv1a_64_matches_reference_vectors() {
+    assert_eq!(fnv1a_64(b""), 0xcbf2_9ce4_8422_2325);
+    assert_eq!(fnv1a_64(b"a"), 0xaf63_dc4c_8601_ec8c);
+    assert_eq!(fnv1a_64(b"foobar"), 0x85944171f73967e8);
+}
+
+// 2026-09-25: Golden fingerprints. Every namespace derived from a fingerprint
+// changes with it, so an encoding change also bumps `FP_VERSION`.
+#[test]
+fn golden_fingerprint_hybrid_moe_is_pinned() {
+    assert_eq!(fp(&hybrid()), 0x5629_922c_51a1_6a10);
+}
+
+#[test]
+fn golden_fingerprint_dense_is_pinned() {
+    assert_eq!(fp(&dense()), 0x971e_b3b4_bd13_22f1);
+}
+
+/// 2026-09-25: `mix64` output is pinned: the SSM (`PagingSnapshotStore::wire`) and
+/// KV (`kv_paging::ns`) paging paths both build peer keys with it, so a changed
+/// constant changes every key.
+#[test]
+fn mix64_frozen_literals() {
+    assert_eq!(mix64(0, 0), 0x0); // 2026-09-25: the splitmix64 finalizer maps 0 to 0
+    assert_eq!(mix64(1, 2), 0xbeeb_8da1_658e_ec67);
+    assert_eq!(
+        mix64(0x5EED_F00D_CAFE_D00D, 0xD3C0_DE12_A5B6_C7D8),
+        0xe567_5d86_f750_1640
+    );
+}
+
+/// 2026-09-25: The KV fingerprint (`derive_kv`) uses the same encoding with
+/// `blob_bytes = 0`, so it differs from every SSM fingerprint.
+#[test]
+fn golden_kv_fingerprint_is_pinned_and_distinct() {
+    let kv = ModelFingerprint::derive_with_id(&hybrid(), 0, "")
+        .unwrap()
+        .get();
+    assert_eq!(kv, 0x8dea_f1c5_3d0f_3540);
+    assert_ne!(
+        kv,
+        fp(&hybrid()),
+        "KV instance must not equal the SSM instance"
+    );
+}
+
+// 2026-09-25: Changing any one fingerprinted field must change the fingerprint.
+#[test]
+/// 2026-09-25: The list is maintained by hand, so it proves only that the listed
+/// fields are hashed. A `ModelConfig` field in neither `derive_with_id` nor this
+/// list goes unnoticed. A field added to `derive_with_id` belongs here too, with
+/// an `FP_VERSION` bump.
+fn every_fingerprint_field_is_load_bearing() {
+    let base = fp(&hybrid());
+    let muts: Vec<(&str, Box<dyn Fn(&mut ModelConfig)>)> = vec![
+        ("model_type", Box::new(|c| c.model_type = "other".into())),
+        (
+            "num_hidden_layers",
+            Box::new(|c| {
+                c.num_hidden_layers += 1;
+                // 2026-09-25: `layer_types` drives the SSM/attention layer counts.
+                c.layer_types.push(LayerType::FullAttention);
+            }),
+        ),
+        (
+            "layer mix (ssm/attn split)",
+            Box::new(|c| {
+                c.layer_types[0] = LayerType::FullAttention;
+            }),
+        ),
+        ("head_dim", Box::new(|c| c.head_dim += 1)),
+        (
+            "num_key_value_heads",
+            Box::new(|c| c.num_key_value_heads += 1),
+        ),
+        ("num_experts", Box::new(|c| c.num_experts = 0)),
+        ("hidden_size", Box::new(|c| c.hidden_size += 1)),
+        (
+            "num_attention_heads",
+            Box::new(|c| c.num_attention_heads += 1),
+        ),
+        ("intermediate_size", Box::new(|c| c.intermediate_size += 1)),
+        (
+            "moe_intermediate_size",
+            Box::new(|c| c.moe_intermediate_size += 1),
+        ),
+        (
+            "num_experts_per_tok",
+            Box::new(|c| c.num_experts_per_tok += 1),
+        ),
+        (
+            "linear_num_key_heads",
+            Box::new(|c| c.linear_num_key_heads += 1),
+        ),
+        (
+            "linear_key_head_dim",
+            Box::new(|c| c.linear_key_head_dim += 1),
+        ),
+        (
+            "linear_num_value_heads",
+            Box::new(|c| c.linear_num_value_heads += 1),
+        ),
+        (
+            "linear_value_head_dim",
+            Box::new(|c| c.linear_value_head_dim += 1),
+        ),
+        (
+            "linear_conv_kernel_dim",
+            Box::new(|c| c.linear_conv_kernel_dim += 1),
+        ),
+        ("mamba_num_heads", Box::new(|c| c.mamba_num_heads = 8)),
+        ("mamba_head_dim", Box::new(|c| c.mamba_head_dim = 64)),
+        ("ssm_state_size", Box::new(|c| c.ssm_state_size = 128)),
+        ("n_groups", Box::new(|c| c.n_groups = 8)),
+        (
+            "quantization_config",
+            Box::new(|c| {
+                c.quantization_config = Some(QuantizationConfig {
+                    quant_method: "modelopt".into(),
+                    quant_algo: "NVFP4".into(),
+                    format: String::new(),
+                    ignore_modules: Vec::new(),
+                });
+            }),
+        ),
+        (
+            "kv_layer_dims",
+            Box::new(|c| c.kv_layer_dims = vec![(2, 256), (4, 128)]),
+        ),
+    ];
+    for (name, m) in muts {
+        let mut c = hybrid();
+        m(&mut c);
+        assert_ne!(fp(&c), base, "field {name} dropped from the fingerprint");
+    }
+    let b2 = ModelFingerprint::derive_with_id(&hybrid(), BLOB + 1, "")
+        .unwrap()
+        .get();
+    assert_ne!(b2, base, "blob_bytes dropped from the fingerprint");
+    // 2026-09-25: The `METRALE_MODEL_ID` salt (read by `derive`) separates
+    // checkpoints of identical geometry.
+    let salted = ModelFingerprint::derive_with_id(&hybrid(), BLOB, "ft-v2")
+        .unwrap()
+        .get();
+    assert_ne!(salted, base, "model_id salt dropped from the fingerprint");
+}
+
+// 2026-09-25: `kv_layer_dims` is hashed in order, so a reorder changes the fingerprint.
+#[test]
+fn kv_layer_dims_order_is_canonical() {
+    let mut a = hybrid();
+    a.kv_layer_dims = vec![(2, 256), (4, 128)];
+    let mut b = hybrid();
+    b.kv_layer_dims = vec![(4, 128), (2, 256)];
+    assert_ne!(fp(&a), fp(&b));
+}
+
+// 2026-09-25: Strings are tagged and length-prefixed, so ("ab", "c") and
+// ("a", "bc") hash differently.
+#[test]
+fn string_encoding_is_injective() {
+    let mut a = hybrid();
+    a.model_type = "ab".into();
+    a.quantization_config = Some(QuantizationConfig {
+        quant_method: "c".into(),
+        quant_algo: String::new(),
+        format: String::new(),
+        ignore_modules: Vec::new(),
+    });
+    let mut b = hybrid();
+    b.model_type = "a".into();
+    b.quantization_config = Some(QuantizationConfig {
+        quant_method: "bc".into(),
+        quant_algo: String::new(),
+        format: String::new(),
+        ignore_modules: Vec::new(),
+    });
+    assert_ne!(fp(&a), fp(&b));
+}
+
+#[test]
+fn underivable_config_fails_fast() {
+    let mut c = hybrid();
+    c.model_type = String::new();
+    c.num_hidden_layers = 0;
+    c.layer_types = Vec::new();
+    let err = ModelFingerprint::derive_with_id(&c, BLOB, "").unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("METRALE_SSM_SWAP_NS"),
+        "actionable message: {msg}"
+    );
+}
+
+#[test]
+fn decode_ns_mixes_fingerprint_domain_and_client_salt() {
+    let fa = ModelFingerprint::derive_with_id(&hybrid(), BLOB, "").unwrap();
+    let fb = ModelFingerprint::derive_with_id(&dense(), BLOB, "").unwrap();
+    let da = derive_decode_ns_salted(fa.get(), 0x1111).get();
+    let other_client = derive_decode_ns_salted(fa.get(), 0x2222).get();
+    let other_model = derive_decode_ns_salted(fb.get(), 0x1111).get();
+    assert_ne!(da, fa.get(), "decode must not alias Marconi for one model");
+    assert_ne!(da, metrale_kernels::DECODE_DOMAIN, "model-blind constant");
+    assert_ne!(da, other_client, "client salt must partition processes");
+    assert_ne!(da, other_model, "fingerprint must partition models");
+}
+
+#[test]
+fn override_precedence_and_strict_parse() {
+    let derived = NonZeroU64::new(0xFEED).unwrap();
+    assert_eq!(resolve_ns_from(None, "V", derived).unwrap(), derived);
+    assert_eq!(resolve_ns_from(Some("42"), "V", derived).unwrap().get(), 42);
+    assert_eq!(
+        resolve_ns_from(Some("0xD3C0"), "V", derived).unwrap().get(),
+        0xD3C0
+    );
+    assert!(resolve_ns_from(Some("banana"), "V", derived).is_err());
+    assert!(resolve_ns_from(Some("-1"), "V", derived).is_err());
+    assert!(resolve_ns_from(Some("18446744073709551616"), "V", derived).is_err());
+    let err = resolve_ns_from(Some("0"), "V", derived).unwrap_err();
+    assert!(format!("{err:#}").contains("passthrough"));
+}

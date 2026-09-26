@@ -1,0 +1,201 @@
+[build]
+extra_nvcc_flags = ["--fmad=false", "-DTQ_PLUS_SIGNS"]
+
+# 2026-09-25: Kernels a model shadow may drop without the shadow-drop build warning, keyed by module name
+# (after `[modules]`) to entry points. This only silences the warning: every dropped pair still goes into
+# `TargetPtxSet::shadowed_dropped` (crates/kernels/build.rs), and the boot audit judges an unresolved lookup
+# by the model's `[expected_absent]`, not by this list.
+#
+#   w4a16::w4a16_dequant: no crate looks it up.
+#   moe_w4a16::moe_w4a16_grouped_gemm: no crate looks it up; the MoE layer uses the `_ptrtable` kernels
+#       (model-layers moe/init.rs).
+#   moe_w4a16 tile variants and moe_w4a16_grouped_stream_probe: looked up by the GLM routed-MoE prefill
+#       (model-arch glm5next_mlp/forward_prefill_gemm, tile chosen by METRALE_GLM_MOE_GEMM_TILE) and by
+#       model-arch examples; `_ptrtable_k32` also by the MoE layer under METRALE_MOE_GROUPED_K32=1.
+#   norm::{rms_norm_residual_vanilla, residual_add_rms_norm_vanilla}: looked up only when
+#       `ships_vanilla_norm_weights(config)` holds (model-layers qwen3_attention/init.rs).
+#   norm::gated_rms_norm_f32_input_strided: looked up with try_kernel (model-layers qwen3_ssm/init.rs);
+#       handle 0 keeps the per-sequence loop.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[shadow_exempt]
+w4a16 = ["w4a16_dequant"]
+moe_w4a16 = [
+  "moe_w4a16_grouped_gemm",
+  "moe_w4a16_grouped_gemm_ptrtable_al_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_m16_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_m16_k256",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_m16_k32",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_m16_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_m16_n128_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_alkm_m16_n128_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_al_m16_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_al_m16_k32",
+  "moe_w4a16_grouped_gemm_ptrtable_al_m16_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_al_m16_n128_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_bt_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_bt_m16_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_bt_m16_k256",
+  "moe_w4a16_grouped_gemm_ptrtable_bt_m16_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_bt_m16_n128_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_k32",
+  "moe_w4a16_grouped_gemm_ptrtable_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_km_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_km_m16_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_km_m16_k32",
+  "moe_w4a16_grouped_gemm_ptrtable_km_m16_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_km_m16_n128_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_km_m16_n128_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_m16_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_m16_k256",
+  "moe_w4a16_grouped_gemm_ptrtable_m16_k32",
+  "moe_w4a16_grouped_gemm_ptrtable_m16_k64",
+  "moe_w4a16_grouped_gemm_ptrtable_m16_n128_k128",
+  "moe_w4a16_grouped_gemm_ptrtable_m16_n128_k32",
+  "moe_w4a16_grouped_gemm_ptrtable_m16_n128_k64",
+  "moe_w4a16_grouped_stream_probe",
+]
+norm = [
+  "rms_norm_residual_vanilla",
+  "residual_add_rms_norm_vanilla",
+  "gated_rms_norm_f32_input_strided",
+]
+
+# 2026-09-25: File stem -> module name overrides; a stem not listed here is its own module name. A model
+# KERNEL.toml may override a key (crates/kernels/build.rs merges the layers' `[modules]` in order).
+[modules]
+e2m1_branchless = "e2m1"
+moe_permute = "moe"
+dense_gemm_bf16 = "gemm"
+dense_gemm_splitk = "gemm_splitk"
+dense_gemm_tc = "gemm_tc"
+rms_norm = "norm"
+argmax_bf16 = "argmax"
+dense_gemv_bf16 = "gemv"
+dense_gemv_fp8w = "gemv_fp8w"
+moe_shared_expert_fused_batch2 = "moe_fused_batch2"
+quantize_bf16_to_nvfp4 = "quantize_nvfp4"
+paged_decode_attn = "paged_decode"
+paged_decode_attn_fp8 = "paged_decode_fp8"
+paged_decode_attn_nvfp4 = "paged_decode_nvfp4"
+w4a16_gemm = "w4a16"
+kv_cache_append = "kv_cache"
+moe_w4a16_grouped_gemm = "moe_w4a16"
+moe_sorted_prefill = "moe_sorted"
+moe_shared_expert_fused_batch3 = "moe_fused_batch3"
+attn_prefill_paged = "prefill_paged"
+attn_prefill_paged_indirect = "prefill_paged_indirect"
+attn_prefill_paged_fp8 = "prefill_paged_fp8"
+attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
+attn_prefill_paged_turbo2 = "prefill_paged_turbo2"
+attn_prefill_paged_turbo3 = "prefill_paged_turbo3"
+attn_prefill_paged_turbo4 = "prefill_paged_turbo4"
+attn_prefill_paged_turbo8 = "prefill_paged_turbo8"
+attn_prefill_paged_bf16k_turbo3v = "prefill_paged_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo3v_128 = "paged_decode_bf16k_turbo3v_128"
+attn_prefill_paged_bf16k_turbo4v = "prefill_paged_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo4v_128 = "paged_decode_bf16k_turbo4v_128"
+paged_decode_attn_bf16k_turbo4v = "paged_decode_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo3v = "paged_decode_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo2v = "paged_decode_bf16k_turbo2v"
+paged_decode_attn_turbo4k_turbo3v = "paged_decode_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo8v = "paged_decode_turbo4k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v = "paged_decode_turbo3k_turbo8v"
+paged_decode_attn_turbo2 = "paged_decode_turbo2"
+attn_prefill_paged_bf16k_turbo2v = "prefill_paged_bf16k_turbo2v"
+paged_decode_attn_bf16k_turbo2v_128 = "paged_decode_bf16k_turbo2v_128"
+attn_prefill_fp8kv = "prefill_fp8kv"
+nemotron_moe_prefill = "nemotron_moe_prefill"
+attn_prefill_paged_fp8k_turbo3v = "prefill_paged_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo3v_128 = "paged_decode_fp8k_turbo3v_128"
+attn_prefill_paged_fp8k_turbo4v = "prefill_paged_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo4v_128 = "paged_decode_fp8k_turbo4v_128"
+attn_prefill_paged_fp8k_turbo2v = "prefill_paged_fp8k_turbo2v"
+paged_decode_attn_fp8k_turbo2v_128 = "paged_decode_fp8k_turbo2v_128"
+attn_prefill_paged_turbo4k_turbo3v = "prefill_paged_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo3v_128 = "paged_decode_turbo4k_turbo3v_128"
+attn_prefill_paged_turbo4k_turbo8v = "prefill_paged_turbo4k_turbo8v"
+paged_decode_attn_turbo4k_turbo8v_128 = "paged_decode_turbo4k_turbo8v_128"
+attn_prefill_paged_turbo3k_turbo8v = "prefill_paged_turbo3k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v_128 = "paged_decode_turbo3k_turbo8v_128"
+paged_decode_attn_fp8k_turbo3v = "paged_decode_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo4v = "paged_decode_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo2v = "paged_decode_fp8k_turbo2v"
+
+# 2026-09-25: A `[modules]` rename makes the compiled module name the one the dispatch looks up, e.g.
+# `gpu.kernel("mamba2_ssm", "mamba2_ssm_decode")` (model-arch nemotron_mamba2.rs).
+
+
+
+
+
+
+
+
+
+
+mamba2_ssm_decode = "mamba2_ssm"
+moe_expert_relu2_down_shared = "moe_relu2_fused"
+# 2026-09-25: The MoE layer looks up `moe_topk_sqrtsoftplus` and `moe_topk_sqrtsoftplus_batched` in
+# `moe_topk_sqrt` (model-layers moe/init.rs) and runs them when the config's `scoring_func` is
+# `sqrtsoftplus` (moe/forward.rs).
+moe_topk_sigmoid = "moe_topk_sig"
+moe_topk_sqrtsoftplus = "moe_topk_sqrt"
+relu_squared = "relu2"

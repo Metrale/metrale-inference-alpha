@@ -1,0 +1,312 @@
+[model]
+name = "qwen3.6-35b-a3b"
+hf_id = "Qwen/Qwen3.6-35B-A3B-FP8"
+params = "35B"
+active_params = "3B"
+architecture = "Gated DeltaNet + Full Attention + MoE + MRoPE"
+
+layers_total = 40
+layers_linear_attention = 30
+layers_full_attention = 10
+layer_pattern = "3:1 (linear, linear, linear, full)"
+
+moe_experts = 256
+moe_topk = 8
+moe_intermediate = 512
+shared_expert_intermediate = 512
+
+hidden_dim = 2048
+head_dim = 256
+q_heads = 16
+kv_heads = 2
+
+linear_attn_key_heads = 16
+linear_attn_key_dim = 128
+linear_attn_value_heads = 32
+linear_attn_value_dim = 128
+linear_conv_kernel = 4
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+partial_rotary_factor = 0.25
+attn_output_gate = true
+
+
+
+
+
+mrope_interleaved = true
+mrope_section = [11, 11, 10]
+
+mtp_layers = 1
+mtp_type = "full_attention"
+
+vision = true
+
+# 2026-09-25: Not read: the server sets effective_context to 0
+# (crates/server/src/main_modules/serve_load.rs).
+
+
+effective_context = 24576
+
+# 2026-09-25: Sampling presets per request category, compiled into the binary by parse_sampling_presets (crates/kernels/build_parse.rs).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+# 2026-09-25: No repetition penalty and no DRY. At temp=0 a 1.1 penalty over the
+# 256-token window suppresses the most recurrent code tokens (newline, `::`)
+# and flips low-margin greedy picks. Measured 2026-06-03, temp=0 A/B: 1.1 gave
+# mangled TOML and finish=length; 1.0 gave clean code and finish=stop.
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+# 2026-09-25: No repetition penalty and no DRY; see [sampling.thinking_coding].
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+
+
+
+[behavior]
+# 2026-09-25: FP8 KV calibration: fit the K/V scales over the first N tokens,
+# then freeze them (model-layers fp8_calibration/state.rs). Read from
+# [behavior] only (build_parse_behavior.rs); --fp8-kv-calibration-tokens
+# overrides it (serve_load.rs).
+
+
+
+
+
+fp8_kv_calibration_tokens = 256
+
+
+
+
+
+
+
+
+
+
+enable_loop_watchdog = true
+# 2026-09-25: Server-side sampling floor and ceiling: after request and preset
+# resolution, min_p is raised to min_p_floor and temperature is capped at
+# temperature_max; 0.0 disables either, and METRALE_FORCE_TEMP_ZERO skips
+# both (crates/server/src/api/chat/sampling_setup.rs).
+
+
+
+
+
+min_p_floor = 0.05
+temperature_max = 0.7
+
+
+
+
+thinking_default = true
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+thinking_in_tools = true
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+max_thinking_budget = 768
+# 2026-09-25: Inter-tool prose budget: content tokens outside tool bodies since
+# the last tool call before the decode rolls back or ends the response
+# (scheduler/decode_logits_content.rs); --max-inter-tool-prose overrides it.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+max_inter_tool_prose = 384
+# 2026-09-25: Post-think content cap: a request with an active grammar ends once
+# its content tokens exceed this (scheduler/decode_logits_content.rs and
+# emit_step/token.rs); 100,000 when unset.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+max_post_think_content_tokens = 8192
+# 2026-09-25: num_drafts when --num-drafts is not given (K = num_drafts + 1;
+# resolve_num_drafts in serve_phases/config.rs).
+
+
+default_num_drafts = 1
+
+[[model_types]]
+model_type = "qwen3_6_moe"
+hidden_size = 2048
+
+[kernel]
+moe_gate_shmem_bytes = 4096
+
+# 2026-09-25: Only draft_model is read at runtime: it names the DFlash drafter
+# when --draft-model is not given (serve_phases/weights.rs). The drafter's shape
+# comes from its own config.json (parse_dflash_config).
+
+
+
+
+
+
+
+[dflash]
+draft_model = "z-lab/Qwen3.6-35B-A3B-DFlash"
+gamma = 16
+window_size = 4096
+mask_token_id = 248070
+target_layer_ids = [1, 10, 19, 28, 37]

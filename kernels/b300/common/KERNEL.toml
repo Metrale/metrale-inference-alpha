@@ -1,0 +1,343 @@
+[build]
+extra_nvcc_flags = ["--fmad=false", "-DTQ_PLUS_SIGNS"]
+
+# 2026-09-25: Kernels a model shadow may drop without the build warning about
+# it. Keyed by module name (after the [modules] mapping), each an array of
+# entry points (build_parse.rs `parse_shadow_exempt`). It only silences the
+# warning: build.rs still records every dropped kernel in
+# `TargetPtxSet::shadowed_dropped`, which the startup kernel gate reads.
+#
+#   w4a16::w4a16_dequant: no crate looks it up.
+#   moe_w4a16::moe_w4a16_grouped_gemm: no crate looks it up.
+#   norm::{rms_norm_residual_vanilla, residual_add_rms_norm_vanilla}: looked
+#       up only when `ships_vanilla_norm_weights(config)` (model-layers
+#       qwen3_attention/init.rs, model-engine model/impl_a1.rs).
+#   norm::gated_rms_norm_f32_input_strided: looked up with try_kernel
+#       (qwen3_ssm/init.rs); on a zero handle the batched GDN decode keeps the
+#       per-sequence norm (trait_decode_multi_seq/ssm_batched_recurrent.rs).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[shadow_exempt]
+w4a16 = ["w4a16_dequant"]
+moe_w4a16 = ["moe_w4a16_grouped_gemm"]
+norm = [
+  "rms_norm_residual_vanilla",
+  "residual_add_rms_norm_vanilla",
+  "gated_rms_norm_f32_input_strided",
+]
+
+# 2026-09-25: File stem → module name overrides. A source not listed here uses
+# its file stem as the module name (build.rs).
+[modules]
+e2m1_branchless = "e2m1"
+moe_permute = "moe"
+dense_gemm_bf16 = "gemm"
+dense_gemm_splitk = "gemm_splitk"
+dense_gemm_tc = "gemm_tc"
+rms_norm = "norm"
+argmax_bf16 = "argmax"
+dense_gemv_bf16 = "gemv"
+dense_gemv_fp8w = "gemv_fp8w"
+moe_shared_expert_fused_batch2 = "moe_fused_batch2"
+quantize_bf16_to_nvfp4 = "quantize_nvfp4"
+paged_decode_attn = "paged_decode"
+paged_decode_attn_fp8 = "paged_decode_fp8"
+paged_decode_attn_nvfp4 = "paged_decode_nvfp4"
+w4a16_gemm = "w4a16"
+kv_cache_append = "kv_cache"
+moe_w4a16_grouped_gemm = "moe_w4a16"
+moe_sorted_prefill = "moe_sorted"
+moe_shared_expert_fused_batch3 = "moe_fused_batch3"
+attn_prefill_paged = "prefill_paged"
+attn_prefill_paged_indirect = "prefill_paged_indirect"
+attn_prefill_paged_fp8 = "prefill_paged_fp8"
+attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
+attn_prefill_paged_turbo2 = "prefill_paged_turbo2"
+attn_prefill_paged_turbo3 = "prefill_paged_turbo3"
+attn_prefill_paged_turbo4 = "prefill_paged_turbo4"
+attn_prefill_paged_turbo8 = "prefill_paged_turbo8"
+attn_prefill_paged_bf16k_turbo3v = "prefill_paged_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo3v_128 = "paged_decode_bf16k_turbo3v_128"
+attn_prefill_paged_bf16k_turbo4v = "prefill_paged_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo4v_128 = "paged_decode_bf16k_turbo4v_128"
+paged_decode_attn_bf16k_turbo4v = "paged_decode_bf16k_turbo4v"
+paged_decode_attn_bf16k_turbo3v = "paged_decode_bf16k_turbo3v"
+paged_decode_attn_bf16k_turbo2v = "paged_decode_bf16k_turbo2v"
+paged_decode_attn_turbo4k_turbo3v = "paged_decode_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo8v = "paged_decode_turbo4k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v = "paged_decode_turbo3k_turbo8v"
+paged_decode_attn_turbo2 = "paged_decode_turbo2"
+attn_prefill_paged_bf16k_turbo2v = "prefill_paged_bf16k_turbo2v"
+paged_decode_attn_bf16k_turbo2v_128 = "paged_decode_bf16k_turbo2v_128"
+attn_prefill_fp8kv = "prefill_fp8kv"
+nemotron_moe_prefill = "nemotron_moe_prefill"
+attn_prefill_paged_fp8k_turbo3v = "prefill_paged_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo3v_128 = "paged_decode_fp8k_turbo3v_128"
+attn_prefill_paged_fp8k_turbo4v = "prefill_paged_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo4v_128 = "paged_decode_fp8k_turbo4v_128"
+attn_prefill_paged_fp8k_turbo2v = "prefill_paged_fp8k_turbo2v"
+paged_decode_attn_fp8k_turbo2v_128 = "paged_decode_fp8k_turbo2v_128"
+attn_prefill_paged_turbo4k_turbo3v = "prefill_paged_turbo4k_turbo3v"
+paged_decode_attn_turbo4k_turbo3v_128 = "paged_decode_turbo4k_turbo3v_128"
+attn_prefill_paged_turbo4k_turbo8v = "prefill_paged_turbo4k_turbo8v"
+paged_decode_attn_turbo4k_turbo8v_128 = "paged_decode_turbo4k_turbo8v_128"
+attn_prefill_paged_turbo3k_turbo8v = "prefill_paged_turbo3k_turbo8v"
+paged_decode_attn_turbo3k_turbo8v_128 = "paged_decode_turbo3k_turbo8v_128"
+paged_decode_attn_fp8k_turbo3v = "paged_decode_fp8k_turbo3v"
+paged_decode_attn_fp8k_turbo4v = "paged_decode_fp8k_turbo4v"
+paged_decode_attn_fp8k_turbo2v = "paged_decode_fp8k_turbo2v"
+
+# 2026-09-25: A more specific layer's KERNEL.toml can override any of these per
+# key: build.rs merges [modules] least specific first.
+
+
+
+
+
+
+
+
+
+
+mamba2_ssm_decode = "mamba2_ssm"
+moe_expert_relu2_down_shared = "moe_relu2_fused"
+# 2026-09-25: The MoE layer (model-layers layers/moe/init.rs) looks up
+# moe_topk_sqrtsoftplus and moe_topk_sqrtsoftplus_batched in moe_topk_sqrt.
+
+moe_topk_sigmoid = "moe_topk_sig"
+moe_topk_sqrtsoftplus = "moe_topk_sqrt"
+relu_squared = "relu2"
+
+# 2026-09-25: The gb10 files this tree compiles, staged into this directory
+# (paths relative to kernels/b300; crates/kernels/build_stage.rs). b300 has no
+# `inherits`, so a gb10/common file reaches it only by being listed here. This
+# list leaves out dense_gemv_bf16_tc, paged_decode_attn_{bf16,fp8}_gqa,
+# reshape_and_cache_fused_k_fp8, w4a16_gemv_tc, w4a4_gemv_mx and
+# w8a16_gemm_pipelined_m32. dsa_indexer.cu, moe_shared_expert_fused.cu,
+# moe_w4a16_grouped_gemm.cu and w8a16_gemv_batch4.cu are b300's own versions
+# (kernels/FORKS.md).
+
+[sources]
+use = [
+  "../gb10/common/argmax_bf16.cu",
+  "../gb10/common/bf16_add.cu",
+  "../gb10/common/causal_conv1d.cu",
+  "../gb10/common/dense_gemm_bf16.cu",
+  "../gb10/common/dense_gemm_splitk.cu",
+  "../gb10/common/dense_gemm_tc.cu",
+  "../gb10/common/dense_gemv_bf16_batch2.cu",
+  "../gb10/common/dense_gemv_bf16_batchm.cu",
+  "../gb10/common/dense_gemv_bf16.cu",
+  "../gb10/common/dense_gemv_fp8w_batch2.cu",
+  "../gb10/common/dense_gemv_fp8w.cu",
+  "../gb10/common/dequant_fp8_blockscaled_bf16.cu",
+  "../gb10/common/dequant_gguf_bf16.cu",
+  "../gb10/common/dequant_nvfp4_bf16.cu",
+  "../gb10/common/dflash2.cu",
+  "../gb10/common/e2m1_branchless.cu",
+  "../gb10/common/e4m3_lut.cuh",
+  "../gb10/common/embed_from_argmax.cu",
+  "../gb10/common/fp8_gemm_t_blockscaled.cu",
+  "../gb10/common/fp8_gemv_rt.cu",
+  "../gb10/common/fp8_scale_transpose.cu",
+  "../gb10/common/fused_k_norm_rope_cache.cu",
+  "../gb10/common/gated_delta_rule.cu",
+  "../gb10/common/gated_delta_rule_fla.cu",
+  "../gb10/common/gated_delta_rule_persistent.cu",
+  "../gb10/common/gated_delta_rule_regresident.cu",
+  "../gb10/common/gated_delta_rule_wy2_resident.cu",
+  "../gb10/common/gated_delta_rule_wy2_resident_f16.cu",
+  "../gb10/common/gated_delta_rule_wy3.cu",
+  "../gb10/common/gated_delta_rule_wy3_f16.cu",
+  "../gb10/common/gated_delta_rule_wy3_resident.cu",
+  "../gb10/common/gated_delta_rule_wy3_resident_f16.cu",
+  "../gb10/common/gated_delta_rule_wy4.cu",
+  "../gb10/common/gated_delta_rule_wy4_f16.cu",
+  "../gb10/common/gated_delta_rule_wy4_woa.cu",
+  "../gb10/common/gated_delta_rule_wy64_prefill.cu",
+  "../gb10/common/gated_delta_rule_wy.cu",
+  "../gb10/common/gated_delta_rule_wy_f16.cu",
+  "../gb10/common/gated_delta_rule_wyn.cu",
+  "../gb10/common/gdn_f16_state.cuh",
+  "../gb10/common/gdn_reduce.cuh",
+  "../gb10/common/gdn_verify_fused_conv_kn.cu",
+  "../gb10/common/gdn_verify_fused_k2.cu",
+  "../gb10/common/glm5next_ffn.cu",
+  "../gb10/common/glm5next_mhc.cu",
+  "../gb10/common/attn_prefill.cu",
+  "../gb10/common/attn_prefill_fp8kv.cu",
+  "../gb10/common/attn_prefill_h128.cu",
+  "../gb10/common/attn_prefill_paged_512.cu",
+  "../gb10/common/attn_prefill_paged_batched.cu",
+  "../gb10/common/attn_prefill_paged_bf16k_turbo2v.cu",
+  "../gb10/common/attn_prefill_paged_bf16k_turbo3v.cu",
+  "../gb10/common/attn_prefill_paged_bf16k_turbo4v.cu",
+  "../gb10/common/attn_prefill_paged.cu",
+  "../gb10/common/attn_prefill_paged_fp8_batched.cu",
+  "../gb10/common/attn_prefill_paged_fp8.cu",
+  "../gb10/common/attn_prefill_paged_fp8k_turbo2v.cu",
+  "../gb10/common/attn_prefill_paged_fp8k_turbo3v.cu",
+  "../gb10/common/attn_prefill_paged_fp8k_turbo4v.cu",
+  "../gb10/common/attn_prefill_paged_indirect.cu",
+  "../gb10/common/attn_prefill_paged_nvfp4_batched.cu",
+  "../gb10/common/attn_prefill_paged_nvfp4.cu",
+  "../gb10/common/attn_prefill_paged_turbo2.cu",
+  "../gb10/common/attn_prefill_paged_turbo3.cu",
+  "../gb10/common/attn_prefill_paged_turbo3k_turbo8v.cu",
+  "../gb10/common/attn_prefill_paged_turbo4.cu",
+  "../gb10/common/attn_prefill_paged_turbo4k_turbo3v.cu",
+  "../gb10/common/attn_prefill_paged_turbo4k_turbo8v.cu",
+  "../gb10/common/attn_prefill_paged_turbo8.cu",
+  "../gb10/common/attn_prefill_v47.cu",
+  "../gb10/common/kda_chunk.cu",
+  "../gb10/common/kda_gate.cu",
+  "../gb10/common/kda_layer_ops.cu",
+  "../gb10/common/kda_recurrent.cu",
+  "../gb10/common/lora_bgmv.cu",
+  "../gb10/common/mamba2_ssd_chunk.cu",
+  "../gb10/common/mamba2_ssm_decode.cu",
+  "../gb10/common/metadata_fill.cu",
+  "../gb10/common/moe_bf16_grouped_gemm.cu",
+  "../gb10/common/moe_decode_atomic_c4.cu",
+  "../gb10/common/moe_expert_gemv.cu",
+  "../gb10/common/moe_expert_gemv_fused.cu",
+  "../gb10/common/moe_expert_relu2_down_shared.cu",
+  "../gb10/common/moe_fp8_grouped_blend.cu",
+  "../gb10/common/moe_fp8_grouped_gemm.cu",
+  "../gb10/common/moe_gate_topk.cu",
+  "../gb10/common/moe_hash_route.cu",
+  "../gb10/common/moe_lora_gather_bgmv.cu",
+  "../gb10/common/moe_lora_grouped_down.cu",
+  "../gb10/common/moe_permute.cu",
+  "../gb10/common/moe_prefill.cu",
+  "../gb10/common/moe_shared_expert_fused_batch2.cu",
+  "../gb10/common/moe_shared_expert_fused_batch2_t.cu",
+  "../gb10/common/moe_shared_expert_fused_batch3.cu",
+  "../gb10/common/moe_shared_expert_fused_batch3_t.cu",
+  "../gb10/common/moe_shared_expert_fused_bf16_batch2.cu",
+  "../gb10/common/moe_shared_expert_fused_bf16.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch2.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch2_t.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch3.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_batch3_t.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_grouped.cu",
+  "../gb10/common/moe_shared_expert_fused_fp8_t.cu",
+  "../gb10/common/moe_shared_expert_fused_t.cu",
+  "../gb10/common/moe_silu_mul.cu",
+  "../gb10/common/moe_sorted_prefill.cu",
+  "../gb10/common/moe_topk.cu",
+  "../gb10/common/moe_topk_sigmoid.cu",
+  "../gb10/common/moe_topk_softmax_bias.cu",
+  "../gb10/common/moe_topk_sqrtsoftplus.cu",
+  "../gb10/common/moe_transpose_batched.cu",
+  "../gb10/common/moe_w8a8_grouped_gemm.cu",
+  "../gb10/common/mx_block_scale.cuh",
+  "../gb10/common/nemotron_moe_prefill.cu",
+  "../gb10/common/nllb_encoder.cu",
+  "../gb10/common/paged_decode_attn_bf16k_turbo2v_128.cu",
+  "../gb10/common/paged_decode_attn_bf16k_turbo2v.cu",
+  "../gb10/common/paged_decode_attn_bf16k_turbo3v_128.cu",
+  "../gb10/common/paged_decode_attn_bf16k_turbo3v.cu",
+  "../gb10/common/paged_decode_attn_bf16k_turbo4v_128.cu",
+  "../gb10/common/paged_decode_attn_bf16k_turbo4v.cu",
+  "../gb10/common/paged_decode_attn.cu",
+  "../gb10/common/paged_decode_attn_fp8.cu",
+  "../gb10/common/paged_decode_attn_fp8k_turbo2v_128.cu",
+  "../gb10/common/paged_decode_attn_fp8k_turbo2v.cu",
+  "../gb10/common/paged_decode_attn_fp8k_turbo3v_128.cu",
+  "../gb10/common/paged_decode_attn_fp8k_turbo3v.cu",
+  "../gb10/common/paged_decode_attn_fp8k_turbo4v_128.cu",
+  "../gb10/common/paged_decode_attn_fp8k_turbo4v.cu",
+  "../gb10/common/paged_decode_attn_nvfp4.cu",
+  "../gb10/common/paged_decode_attn_turbo2_128.cu",
+  "../gb10/common/paged_decode_attn_turbo2.cu",
+  "../gb10/common/paged_decode_attn_turbo3_128.cu",
+  "../gb10/common/paged_decode_attn_turbo3.cu",
+  "../gb10/common/paged_decode_attn_turbo3k_turbo8v_128.cu",
+  "../gb10/common/paged_decode_attn_turbo3k_turbo8v.cu",
+  "../gb10/common/paged_decode_attn_turbo4_128.cu",
+  "../gb10/common/paged_decode_attn_turbo4_512.cu",
+  "../gb10/common/paged_decode_attn_turbo4.cu",
+  "../gb10/common/paged_decode_attn_turbo4k_turbo3v_128.cu",
+  "../gb10/common/paged_decode_attn_turbo4k_turbo3v.cu",
+  "../gb10/common/paged_decode_attn_turbo4k_turbo8v_128.cu",
+  "../gb10/common/paged_decode_attn_turbo4k_turbo8v.cu",
+  "../gb10/common/paged_decode_attn_turbo8_128.cu",
+  "../gb10/common/paged_decode_attn_turbo8_512.cu",
+  "../gb10/common/paged_decode_attn_turbo8.cu",
+  "../gb10/common/per_token_group_quant_fp8.cu",
+  "../gb10/common/prefill_paged_compute_512.cuh",
+  "../gb10/common/prefill_paged_compute_asym.cuh",
+  "../gb10/common/prefill_paged_compute.cuh",
+  "../gb10/common/q2_0_gemv.cu",
+  "../gb10/common/q2_0_gemv_vec.cu",
+  "../gb10/common/quantize_bf16_to_fp8_blockscaled.cu",
+  "../gb10/common/quantize_bf16_to_nvfp4.cu",
+  "../gb10/common/quant_rowwise_fp8.cu",
+  "../gb10/common/relu_squared.cu",
+  "../gb10/common/reshape_and_cache.cu",
+  "../gb10/common/reshape_and_cache_turbo.cu",
+  "../gb10/common/residual_add.cu",
+  "../gb10/common/rms_norm.cu",
+  "../gb10/common/rms_norm_vanilla.cu",
+  "../gb10/common/rope.cu",
+  "../gb10/common/rope_mrope_interleaved.cu",
+  "../gb10/common/ssm_h_dtype.cu",
+  "../gb10/common/ssm_preprocess.cu",
+  "../gb10/common/ssm_state_norm.cu",
+  "../gb10/common/token_overlay.cu",
+  "../gb10/common/tq_plus_innerq_apply.cu",
+  "../gb10/common/tq_plus_innerq.cuh",
+  "../gb10/common/tq_plus_signs.cuh",
+  "../gb10/common/transpose_u8.cu",
+  "../gb10/common/vector_add.cu",
+  "../gb10/common/w4a16_fp8_ldmab.cu",
+  "../gb10/common/w4a16_gemm.cu",
+  "../gb10/common/w4a16_gemv.cu",
+  "../gb10/common/w4a16_gemv_fused.cu",
+  "../gb10/common/w8a16_gemm.cu",
+  "../gb10/common/w8a16_gemm_pipelined.cu",
+  "../gb10/common/w8a16_gemm_t.cu",
+  "../gb10/common/w8a16_gemm_t_m128.cu",
+  "../gb10/common/w8a16_gemv.cu",
+  "../gb10/common/w8a16_gemv_fused.cu",
+  "../gb10/common/wht_bf16.cu",
+  "../gb10/common/widen_block_scale_f32.cu",
+]

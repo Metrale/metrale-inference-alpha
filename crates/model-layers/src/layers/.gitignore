@@ -1,0 +1,4 @@
+# 2026-09-25: These rules match nothing: this directory has no `glm5next_*_ref/`
+# subdirectory. The `glm5next_*_ref/` reference directories are in `crates/model-arch/src/`.
+glm5next_*_ref/*_golden.json
+!glm5next_kda_ref/kda_golden.json

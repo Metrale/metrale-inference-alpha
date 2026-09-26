@@ -1,0 +1,113 @@
+name: Expiring comments
+
+# 2026-09-25: Once a day, list the comments whose time-to-live ends within the
+# warning window (`warn_within` in .comment-ttl.toml) and those already past
+# it, in ONE tracking issue labelled `comment-ttl`. The issue is created on
+# the first day there is something to list, edited in place after that,
+# closed when the list is empty and reopened when it fills again.
+# It judges main as of today (`reference_date: now`), not as of a commit: its
+# job is to warn before the `comments` check in ci.yml starts failing.
+# Undated comments are counted, not listed; the `comments` job reports them.
+#
+# Triggers: the schedule and a manual dispatch only. Nothing here pushes, so no
+# other workflow's run can re-trigger this one.
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: comment-expiry
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  report:
+    name: Expiring-comments issue
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Read the comment-ttl configuration
+        id: cfg
+        run: |
+          set -euo pipefail
+          ttl=$(python3 .github/scripts/comment-ttl-config.py ttl)
+          echo "ttl=$ttl" >> "$GITHUB_OUTPUT"
+      - name: Scan
+        id: scan
+        uses: Metrale/comment-ttl@5313502a9070baab41bf9b636a4e40652509f1c4 # v1.0.1
+        with:
+          comment_ttl: ${{ steps.cfg.outputs.ttl }}
+          reference_date: now
+          fail_on_flag: false
+          annotations: false
+          output_type: json
+          artifact_name: comment-ttl-expiry-report
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          REPORT: ${{ steps.scan.outputs.report_path }}
+        run: |
+          set -euo pipefail
+          title='Comments expiring within the TTL warning window'
+          label='comment-ttl'
+          body="$RUNNER_TEMP/comment-expiry.md"
+
+          listed=$(jq '[.findings[] | select(.classification == "expiring" or .classification == "stale")] | length' "$REPORT")
+          # 2026-09-25: Each excerpt goes inside a code span with its backticks,
+          # pipes and newlines removed, so comment text cannot break the table
+          # or @-mention anyone. 90 rows per table at ~300 bytes each stays under
+          # the 65,536-character issue-body limit.
+          jq -r --arg repo "$REPO" --arg sha "$SHA" '
+            def cell: gsub("[`|\\r\\n]"; " ") | .[0:110];
+            def row: "| [`\(.path):\(.line)`](https://github.com/\($repo)/blob/\($sha)/\(.path)#L\(.line)) | \(.expires) | `\(.text | cell)` |";
+            def table($rows; $cap):
+              if ($rows | length) == 0 then "_None._"
+              else (["| comment | expires | text |", "|---|---|---|"]
+                    + [$rows[:$cap][] | row]
+                    + (if ($rows | length) > $cap
+                       then ["", "…and \(($rows | length) - $cap) more in the `comment-ttl-expiry-report` artifact."]
+                       else [] end)) | join("\n") end;
+            ([.findings[] | select(.classification == "expiring")] | sort_by(.expires, .path, .line)) as $exp
+            | ([.findings[] | select(.classification == "stale")] | sort_by(.expires, .path, .line)) as $stale
+            | [
+                "Comments whose time-to-live (\(.comment_ttl)) ends within \(.warn_within) of \(.reference_date), and dated comments already past it. Re-read each one against the code: re-date it with the day you verified it, rewrite it, or delete it. A comment that cannot be verified is deleted, not re-dated.",
+                "",
+                "Scanned at \($sha[0:12]): \(.counts.comments) comments, \(.counts.expiring) expiring, \(.counts.stale) stale, \(.counts.undated) undated (not listed; see the `comments` check), \(.counts.exempt) exempt.",
+                "",
+                "### Expiring within \(.warn_within)",
+                table($exp; 90),
+                "",
+                "### Already stale",
+                table($stale; 90),
+                "",
+                "<sub>Maintained by `.github/workflows/comment-expiry.yml`; edited in place once a day.</sub>"
+              ] | join("\n")' "$REPORT" > "$body"
+
+          gh label create "$label" --repo "$REPO" --force --color 'FBCA04' \
+            --description 'Comments whose time-to-live is ending or has ended' >/dev/null
+          number=$(gh api "repos/$REPO/issues?labels=$label&state=all&per_page=100" \
+                     --jq "[.[] | select(.pull_request == null and .title == \"$title\") | .number] | first // empty")
+
+          if [ "$listed" -gt 0 ]; then
+            if [ -n "$number" ]; then
+              gh api -X PATCH "repos/$REPO/issues/$number" -F "body=@$body" -f state=open >/dev/null
+              echo "updated #$number: $listed comment(s) listed"
+            else
+              gh api "repos/$REPO/issues" -f "title=$title" -F "body=@$body" -f "labels[]=$label" --jq '"opened #\(.number)"'
+            fi
+          elif [ -n "$number" ]; then
+            gh api -X PATCH "repos/$REPO/issues/$number" -F "body=@$body" -f state=closed >/dev/null
+            echo "nothing expiring or stale: closed #$number"
+          else
+            echo "nothing expiring or stale, and no tracking issue to close"
+          fi

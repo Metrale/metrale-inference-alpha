@@ -1,0 +1,294 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-26: Tests for `met benchmark` argument parsing, mostly through the real `Cli` parser.
+//!
+//! Owner: server CLI (`met benchmark`).
+//! Invariants: none beyond the types.
+
+use super::*;
+use clap::Parser as _;
+
+use crate::cli::Cli;
+
+fn run_args(argv: &[&str]) -> RunArgs {
+    let cli = Cli::try_parse_from(argv).expect("parses");
+    match cli.command {
+        crate::cli::Command::Benchmark(b) => match b.command {
+            Some(BenchmarkCommand::Run(r)) => r,
+            other => panic!("wanted run, got {other:?}"),
+        },
+        other => panic!("wanted benchmark, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_run_takes_repeated_param_overrides() {
+    let a = run_args(&[
+        "met",
+        "benchmark",
+        "run",
+        "concurrency-sweep",
+        "--model",
+        "m",
+        "--param",
+        "osl=8",
+        "--param",
+        "isls=128,512",
+    ]);
+    assert_eq!(a.id, "concurrency-sweep");
+    assert_eq!(a.model.as_deref(), Some("m"));
+    assert_eq!(
+        a.params,
+        vec![
+            ("osl".to_string(), "8".to_string()),
+            ("isls".to_string(), "128,512".to_string()),
+        ]
+    );
+    assert_eq!(
+        a.url, "http://127.0.0.1:8888",
+        "defaults to the local serve"
+    );
+}
+
+#[test]
+fn a_value_may_contain_an_equals_sign() {
+    // 2026-09-26: Split on the first `=` only, so a value may hold one.
+    let (k, v) = parse_kv("prompt=a=b").expect("parses");
+    assert_eq!((k.as_str(), v.as_str()), ("prompt", "a=b"));
+}
+
+#[test]
+fn a_param_without_a_separator_is_rejected_with_an_example() {
+    let err = parse_kv("osl8").expect_err("rejected");
+    assert!(err.contains("KEY=VALUE"), "{err}");
+    assert!(err.contains("--param osl=8"), "shows the shape: {err}");
+    assert!(parse_kv("=8").is_err(), "an empty key is not a key");
+}
+
+#[test]
+fn the_model_is_required_unless_the_gate_supplies_it() {
+    // 2026-09-26: Without the gate, a missing `--model` is a parse error.
+    assert!(
+        Cli::try_parse_from(["met", "benchmark", "run", "concurrency-sweep"]).is_err(),
+        "--model must be supplied when driving an existing endpoint"
+    );
+    // 2026-09-26: Under the gate the recipe supplies it, so it is not required.
+    assert!(
+        Cli::try_parse_from([
+            "met",
+            "benchmark",
+            "run",
+            "bfcl-subset",
+            "--pull-request-gate",
+        ])
+        .is_ok(),
+        "the gate resolves the model from the benchmark's recipe"
+    );
+}
+
+#[test]
+fn the_gate_refuses_a_hand_picked_endpoint() {
+    // 2026-09-26: Under the gate the recipe picks the endpoint and the model, so
+    // `--model` and `--url` conflict with `--pull-request-gate`.
+    for extra in [["--model", "m"], ["--url", "http://127.0.0.1:9999"]] {
+        let mut argv = vec!["met", "benchmark", "run", "bfcl-subset"];
+        argv.extend_from_slice(&extra);
+        argv.push("--pull-request-gate");
+        assert!(
+            Cli::try_parse_from(&argv).is_err(),
+            "{extra:?} must conflict with --pull-request-gate"
+        );
+    }
+}
+
+fn bench_args(argv: &[&str]) -> BenchmarkArgs {
+    let cli = Cli::try_parse_from(argv).expect("parses");
+    match cli.command {
+        crate::cli::Command::Benchmark(b) => b,
+        other => panic!("wanted benchmark, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_pr_without_the_gate_check_is_refused() {
+    // 2026-09-26: `--pr` carries no clap `requires`, so both forms parse (the
+    // `expect` in `bench_args`) and `reject_orphan_pr` refuses them.
+    for argv in [
+        &["met", "benchmark", "--pr", "5", "list"][..],
+        &["met", "benchmark", "--pr", "5"][..],
+    ] {
+        let a = bench_args(argv);
+        let err = a.reject_orphan_pr().expect_err("refused");
+        assert!(err.contains("--pull-request-gate-check"), "{err}");
+        assert!(err.contains("--pr"), "names the orphan flag: {err}");
+    }
+}
+
+#[test]
+fn a_pr_with_the_gate_check_is_accepted() {
+    // 2026-09-26: The accepted pairing parses and passes `reject_orphan_pr`.
+    let a = bench_args(&[
+        "met",
+        "benchmark",
+        "--pull-request-gate-check",
+        "--pr",
+        "513",
+    ]);
+    assert!(a.pull_request_gate_check);
+    assert_eq!(a.pr, Some(513));
+    a.reject_orphan_pr().expect("valid pairing accepted");
+    // 2026-09-26: The gate check without `--pr` is accepted too.
+    let a = bench_args(&["met", "benchmark", "--pull-request-gate-check"]);
+    assert_eq!(a.pr, None);
+    a.reject_orphan_pr().expect("absent --pr is fine");
+}
+
+#[test]
+fn list_and_history_take_an_optional_id() {
+    assert!(Cli::try_parse_from(["met", "benchmark", "list"]).is_ok());
+    assert!(Cli::try_parse_from(["met", "benchmark", "list", "concurrency-sweep"]).is_ok());
+    assert!(Cli::try_parse_from(["met", "benchmark", "history"]).is_ok());
+    assert!(Cli::try_parse_from(["met", "benchmark", "history", "--run", "run-1"]).is_ok());
+}
+
+#[test]
+fn a_run_takes_the_pull_request_gate_flag() {
+    // 2026-09-26: No `--model`: the gate resolves it from the recipe, and passing
+    // one is a conflict (see `the_gate_refuses_a_hand_picked_endpoint`).
+    let a = run_args(&[
+        "met",
+        "benchmark",
+        "run",
+        "agentic-webserver",
+        "--yes",
+        "--pull-request-gate",
+    ]);
+    assert!(a.pull_request_gate);
+    assert!(a.yes);
+    assert!(a.model.is_none());
+    assert!(a.hardware.is_none(), "inferred when the baseline has one");
+}
+
+#[test]
+fn the_gate_takes_an_explicit_checkpoint_variant() {
+    let a = run_args(&[
+        "met",
+        "benchmark",
+        "run",
+        "agentic-webserver",
+        "--checkpoint",
+        "unsloth/Qwen3.8-27B-NVFP4",
+        "--yes",
+        "--pull-request-gate",
+    ]);
+    assert_eq!(a.checkpoint.as_deref(), Some("unsloth/Qwen3.8-27B-NVFP4"));
+}
+
+#[test]
+fn a_checkpoint_without_the_gate_is_refused() {
+    // 2026-09-26: `--checkpoint` carries no clap `requires`, so this parses and
+    // `reject_orphan_checkpoint` refuses it.
+    let a = run_args(&[
+        "met",
+        "benchmark",
+        "run",
+        "agentic-webserver",
+        "--model",
+        "m",
+        "--checkpoint",
+        "unsloth/Qwen3.8-27B-NVFP4",
+    ]);
+    let err = a.reject_orphan_checkpoint().expect_err("refused");
+    assert!(err.contains("--pull-request-gate"), "{err}");
+    assert!(err.contains("--model"), "names the alternative: {err}");
+
+    let gated = run_args(&[
+        "met",
+        "benchmark",
+        "run",
+        "agentic-webserver",
+        "--checkpoint",
+        "unsloth/Qwen3.8-27B-NVFP4",
+        "--yes",
+        "--pull-request-gate",
+    ]);
+    assert!(gated.reject_orphan_checkpoint().is_ok());
+}
+
+#[test]
+fn the_gate_takes_an_explicit_hardware_class() {
+    let a = run_args(&[
+        "met",
+        "benchmark",
+        "run",
+        "ttft-warm-gate",
+        "--hardware",
+        "gb10",
+        "--pull-request-gate",
+    ]);
+    assert_eq!(a.hardware.as_deref(), Some("gb10"));
+}
+
+#[test]
+fn gate_check_runs_without_a_subcommand() {
+    let cli =
+        Cli::try_parse_from(["met", "benchmark", "--pull-request-gate-check"]).expect("parses");
+    match cli.command {
+        crate::cli::Command::Benchmark(b) => {
+            assert!(b.pull_request_gate_check);
+            assert!(b.command.is_none());
+        }
+        other => panic!("wanted benchmark, got {other:?}"),
+    }
+}
+
+#[test]
+fn bare_benchmark_without_gate_check_still_needs_a_subcommand() {
+    // 2026-09-26: `met benchmark` alone is refused (`arg_required_else_help`).
+    assert!(Cli::try_parse_from(["met", "benchmark"]).is_err());
+}
+
+/// 2026-09-26: `bench` is the short spelling of `benchmark`, and `certify` parses
+/// with its defaults and with its remote-campaign flags.
+#[test]
+fn bench_alias_and_certify_parse() {
+    let cli = Cli::try_parse_from(["met", "bench", "certify", "--dry-run"]).unwrap();
+    match cli.command {
+        crate::cli::Command::Benchmark(b) => match b.command {
+            Some(BenchmarkCommand::Certify(c)) => {
+                assert!(c.dry_run);
+                assert!(!c.json);
+                assert_eq!(c.timeout_factor, 3.0);
+            }
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    }
+    let cli = Cli::try_parse_from([
+        "met",
+        "benchmark",
+        "certify",
+        "--pr",
+        "1027",
+        "--gates",
+        "bfcl-subset,decode-floor",
+        "--with-nodes",
+        "10.10.10.2,dgx3.local:34334",
+        "--remote-only",
+        "--json",
+        "--yes",
+    ])
+    .unwrap();
+    let crate::cli::Command::Benchmark(b) = cli.command else {
+        panic!("not benchmark")
+    };
+    let Some(BenchmarkCommand::Certify(c)) = b.command else {
+        panic!("not certify")
+    };
+    assert_eq!(c.pr, Some(1027));
+    assert_eq!(c.gates, ["bfcl-subset", "decode-floor"]);
+    assert_eq!(c.with_nodes, ["10.10.10.2", "dgx3.local:34334"]);
+    assert!(c.remote_only && c.json && c.yes);
+    // 2026-09-26: `--remote-only` without `--with-nodes` is refused by clap itself.
+    assert!(Cli::try_parse_from(["met", "bench", "certify", "--remote-only"]).is_err());
+}

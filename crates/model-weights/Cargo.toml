@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-model-weights"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: weight store and loaders (safetensors, fast weights, RDMA weight/LoRA tiers, preflight)."
+autobenches = false
+
+[features]
+default = ["cuda"]
+cuda = ["metrale-gpu-runtime/cuda", "metrale-storage/cuda", "metrale-core/cuda", "metrale-config/cuda"]
+metal = ["metrale-gpu-runtime/metal", "metrale-storage/metal", "metrale-core/metal", "metrale-config/metal"]
+test-utils = ["metrale-gpu-runtime/test-utils"]
+
+[dependencies]
+metrale-config = { path = "../config", default-features = false }
+metrale-core = { path = "../core", default-features = false }
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
+metrale-storage = { path = "../storage", default-features = false }
+metrale-telemetry = { path = "../telemetry" }
+anyhow = { workspace = true }
+half = "2"
+libc = "0.2"
+memmap2 = "0.9"
+parking_lot = { workspace = true }
+rand = "0.8"
+safetensors = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
+metrale-kernels = { path = "../kernels", default-features = false }
+tempfile = "3"
+
+[[bin]]
+name = "bench_fast_weights"
+path = "benches/bench_fast_weights.rs"
+required-features = ["test-utils"]
+
+[[example]]
+name = "metal_layer3_attention"
+path = "examples/metal_layer3_attention.rs"
+required-features = ["metal"]
+
+[[example]]
+name = "metal_layer3_bench"
+path = "examples/metal_layer3_bench.rs"
+required-features = ["metal"]
+
+[[example]]
+name = "metal_vision_block_forward"
+path = "examples/metal_vision_block_forward.rs"
+required-features = ["metal"]
+
+[[test]]
+name = "fast_weights_parity"
+path = "tests/fast_weights_parity.rs"
+required-features = ["test-utils"]
+
+[lints]
+workspace = true

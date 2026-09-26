@@ -1,0 +1,7 @@
+[build]
+# 2026-09-25: Appended after common/KERNEL.toml's flags and deduplicated
+# (crates/kernels/build_flags.rs, merge_extra_flags); an empty list adds none.
+
+extra_metal_flags = []
+
+[modules]

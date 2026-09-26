@@ -1,0 +1,79 @@
+name: Security Audit
+
+# Read-only by default; jobs needing more grant it themselves.
+permissions:
+  contents: read
+
+on:
+  # Manually runnable. During the 2026-08-06 Actions incident, webhook triggers
+  # were throttled to aid recovery, so pushes stopped creating runs at all --
+  # and with no dispatch trigger there was no way to ask for one. A check that
+  # can only be started by an event you do not control is a check you cannot
+  # get a verdict from when you most need it.
+  workflow_dispatch:
+  # No path filter on pull_request: cargo deny is a required check, and a
+  # path-filtered required check never reports on PRs outside its paths
+  # (kernel-only diffs), leaving them permanently "expected" and unmergeable.
+  # The job itself takes well under a minute.
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - 'deny.toml'
+  # Merge queue: `cargo deny` is in the required set the queue waits on, and
+  # queue commits (temporary gh-readonly-queue/** merge-commits) fire none of
+  # the events above. Unfiltered, same as pull_request — a path-filtered
+  # required check never reports on entries outside its paths, and the entry
+  # would hang until the queue's check timeout ejects it.
+  merge_group:
+  schedule:
+    # Weekly on Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: security-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-deny:
+    name: cargo deny
+    # `cargo deny` is a binary installed by taiki-e/install-action rather than
+    # EmbarkStudios' Docker action: a container action runs only on Linux, and
+    # this job runs on the Mac pool (see `typos` in ci.yml for the routing).
+    runs-on: >-
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The Mac pool's system python3 is not the hosted one; pin it so a check's
+      # verdict does not depend on which runner picked it up.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .github/python-version
+      # The self-hosted command runner executes on our own hardware. It is
+      # only safe while no workflow that reaches its label checks out untrusted
+      # code -- a property of the files today, which this turns into a rule.
+      # Cheap, pure-Python, and it lives in the security job because that is
+      # what it is.
+      # The whole certification self-test, which includes the command-runner
+      # assertion. Every check in it has a negative control -- the guard is
+      # shown FAILING on input it must reject, not merely passing on input it
+      # should accept. Offline: no network, no API, no GPU.
+      # segno generates the certificate's QR matrix; PyYAML parses workflows for
+      # the runner-safety assertion. Both are pure Python and install in seconds.
+      # The suite REFUSES to run without them rather than skipping those checks.
+      - name: Self-test prerequisites
+        run: python3 -m pip install --quiet segno PyYAML
+      - name: Certification pipeline self-test
+        run: bash .github/scripts/certification-selftest.sh
+      # The toolchain comes from rust-toolchain.toml (rustup reads it in the
+      # repo), so cargo-deny resolves metadata with the pinned channel. It is
+      # metadata-only: it audits Cargo.lock and compiles nothing.
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-deny
+      - run: cargo deny check advisories licenses sources bans

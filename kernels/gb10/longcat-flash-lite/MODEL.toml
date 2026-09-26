@@ -1,0 +1,203 @@
+[model]
+name = "longcat-flash-lite"
+hf_id = "meituan-longcat/LongCat-Flash-Lite"
+model_type = "longcat_flash_ngram"
+architecture = "mla_dual_sublayer_moe_ngram"
+parameters = "27B"
+active_parameters = "3B"
+
+# 2026-09-25: 14 checkpoint layers of two sublayers each give 28 engine layers, all MLA
+# (crates/config/src/parsers/longcat.rs).
+layers_total = 28
+layers_full_attention = 28
+
+hidden_dim = 3072
+head_dim = 192
+q_heads = 32
+kv_heads = 32
+intermediate_size = 6144
+
+vocab_size = 131072
+max_position_embeddings = 327680
+rope_theta = 5000000
+
+kv_lora_rank = 512
+q_lora_rank = 1536
+v_head_dim = 128
+qk_rope_head_dim = 64
+qk_nope_head_dim = 128
+
+# 2026-09-25: 256 routed experts plus 128 zero-computation experts; the config parser
+# (crates/config/src/parsers/longcat.rs) sets a softmax router with norm_topk_prob off.
+num_experts = 256
+zero_expert_num = 128
+moe_intermediate_size = 1024
+top_k = 12
+
+
+
+ngram_tables = 12
+ngram_vocab_size_ratio = 78
+
+[[model_types]]
+model_type = "longcat_flash_ngram"
+
+[[model_types]]
+model_type = "longcat_flash"
+
+
+
+
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 0.7
+top_p = 0.95
+top_k = 4
+repetition_penalty = 1.06
+# 2026-09-25: An explicit 0.0 turns min-p and the top-n-sigma filter off for this category;
+# an absent key leaves --default-min-p (0.08) and --default-top-n-sigma (1.0) in charge
+# (api/chat/sampling_setup.rs). The other three categories set the same.
+min_p = 0.0
+top_n_sigma = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.7
+top_p = 0.95
+top_k = 4
+repetition_penalty = 1.06
+
+
+
+min_p = 0.0
+top_n_sigma = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.95
+top_k = 4
+repetition_penalty = 1.06
+
+
+
+min_p = 0.0
+top_n_sigma = 0.0
+
+[sampling.tools]
+temperature = 0.7
+top_p = 0.95
+top_k = 4
+repetition_penalty = 1.06
+
+
+
+min_p = 0.0
+top_n_sigma = 0.0
+
+[behavior]
+
+
+default_kv_dtype = "bf16"
+# 2026-09-25: Chat requests take their default temperature, top-k, top-p, min-p and
+# top-n-sigma from this file's [sampling] category instead of the server-wide defaults;
+# request values win (api/chat/sampling_setup.rs).
+
+use_sampling_presets_for_core = true
+
+# 2026-09-25: Kernel lookups this model's dispatch may issue that this target does not
+# ship. The boot kernel gate refuses any other unresolved lookup unless
+# --dangerously-allow-unresolved-kernel-lookups is set (serve_phases/kernel_gate.rs).
+
+
+
+
+
+[expected_absent.attn_prefill_512]
+attn_prefill_512 = "HDIM>256 prefill arm; dispatch gates on head_dim > 256 and LongCat's qk head is 192 (128 nope + 64 rope). Probed because MLA sets wide_head_dim (kv_lora_rank > 0), a superset gate by design."
+
+[expected_absent.attn_prefill_512tc]
+attn_prefill_512tc = "Tensor-core twin of the same HDIM>256 arm; same head_dim gate, same unreachability."
+
+[expected_absent.paged_decode_attn_512]
+paged_decode_attn = "Same HDIM>256 family; gated on head_dim > 256."
+
+[expected_absent.mla_paged_decode]
+mla_paged_decode_nvfp4 = "DeepSeek-V4-Flash's compressed-576 NVFP4-KV MLA decode arm. Fires only under KvCacheDtype::Nvfp4; this target REQUIRES bf16 KV (MLA latent values exceed E4M3 range — see [behavior] default_kv_dtype), and the kernel ships only in deepseek-v4-flash's PTX set."
+
+[expected_absent.mla_paged_decode_fp8]
+mla_paged_decode_fp8 = "Same family — the FP8-KV V4-Flash arm; unreachable for the same bf16-KV reason."
+
+
+
+[expected_absent.moe_w4a16]
+moe_w4a16_grouped_gemm_ptrtable_e8m0 = "E8M0 variant; NVFP4 target uses the resolved ptrtable grouped GEMM."
+moe_w4a16_grouped_gemm_ptrtable_t_e8m0 = "Same E8M0 family — resolved ptrtable_t variant is used."
+moe_w4a16_grouped_gemm_ptrtable_t_k64_e8m0 = "Same E8M0 family — resolved ptrtable_t_k64 variant is used."
+moe_w4a16_fused_gate_up_t_e8m0 = "Same E8M0 family — resolved fused_gate_up variant is used."
+moe_w4a16_fused_gate_up_t_k64_e8m0 = "Same E8M0 family — resolved fused_gate_up_k64 variant is used."
+moe_w4a16_fused_gate_up_t_k64_fp4 = "FUSED-FP4 gate_up (Holo-3.1 family); dispatch checks handle != 0 before firing."
+moe_w4a16_down_t_k64_fp4 = "FP4 down-projection twin; forward_prefill_routed gates on down_fp4 && handle != 0."
+moe_w4a16_fused_gate_up_t_k64_m128 = "M=128 Block-D variant shipped only in minimax-m2-229b; falls through to M=64."
+
+
+
+
+[expected_absent.nvfp4_mmq]
+metrale_nvfp4_mmq16_nc = "W4A4 MMQ drafter propose family; no drafter on this target."
+metrale_nvfp4_mmq16_wc = "Same family."
+metrale_nvfp4_mmq32_nc = "Same family."
+metrale_nvfp4_mmq32_wc = "Same family."
+metrale_nvfp4_mmq64_nc = "Same family."
+metrale_nvfp4_mmq64_wc = "Same family."
+metrale_nvfp4_mmq128_nc = "Same family."
+metrale_nvfp4_mmq128_wc = "Same family."
+metrale_nvfp4_quantize_bf16 = "MMQ activation quantizer; only used by the W4A4 propose path."
+metrale_nvfp4_repack = "MMQ weight repack; load-time helper for the W4A4 path only."
+metrale_nvfp4_scale_bf16 = "MMQ scale helper; W4A4 path only."
+metrale_nvfp4_silu_mul_quant = "MMQ fused SiLU+quant; W4A4 MoE propose path only."
+metrale_nvfp4_silu_mul_scaled = "Same MMQ SiLU family."
+
+[expected_absent.w4a4]
+w4a4_gemm = "W4A4 drafter GEMM; no drafter on this target."
+w4a4_gemm_mfast = "Shipped only in nemotron-labs-3-puzzle's shadow; falls back to w4a4_gemm."
+
+
+[expected_absent.q4k_mmq]
+metrale_q4k_mmq128_nc = "GGUF Q4_K_M keep-packed path; this target serves NVFP4/BF16."
+metrale_q4k_mmq128_wc = "Same Q4_K family."
+metrale_q8_1_quantize_ds4_bf16 = "Q8_1 activation quantizer for the Q4_K path."
+
+[expected_absent.q4k_quantize]
+q4k_quantize = "Q4_K load-time quantizer; not a format this target serves."
+
+
+[expected_absent.w4a16]
+int8_gemm_faith2 = "INT8 GEMM experiment family; dispatch gated on handle != 0."
+int8_gemm_i32acc = "Same INT8 family."
+requant_a_bf16_int8 = "INT8 activation requant; same family."
+requant_w_nvfp4_int8 = "INT8 weight requant; same family."
+w4a16_gemm_t_p3 = "3-deep pipelined twin shipped only in qwen3.6-27b's shadow; falls back to the resolved w4a16_gemm_t."
+w4a16_gemm_t_k64_p3 = "Same p3 family; falls back to the resolved w4a16_gemm_t_k64."
+w4a16_gemm_t_k64_n64_p3 = "Narrow-N p3 twin; handle-gated."
+w4a16_gemm_t_m128_bf16 = "BF16-projection prefill twin; handle-gated, falls through the resolved w4a16 path."
+w4a16_gemm_t_m128_bf16_v2 = "Same BF16-projection family, v2 twin."
+
+
+
+
+
+
+[expected_absent.rope]
+rope_forward_strided = "Not in this shadow; dispatch gates on handle != 0 and falls back to rope_forward."
+rope_forward_proportional = "Gemma-4-only arm; the rope_proportional flag is never set for this architecture."
+rope_forward_yarn_interleaved = "DeepSeek-V4 interleaved-YaRN arm; LongCat's interleave is folded into weights at load, so the rotate_half arm is correct here."
+rope_forward_yarn_interleaved_inv = "Same V4 interleaved-YaRN family."
+rope_forward_yarn_scaled = "Laguna-S 2.1 rotate_half YaRN variant; resolved via try_kernel elsewhere, absent from this shadow."
+
+
+[expected_absent.moe_silu_mul]
+silu_mul_quant_fp8 = "This target's vendored moe_silu_mul.cu is the swiglu_limit shadow, which deliberately omits the fused FP8 SiLU+quant entry point; the launch site checks the handle and falls back to the unfused silu_mul -> per_token_group_quant_fp8 pair. LongCat's experts are runtime-quantized NVFP4 (the checkpoint ships plain BF16), so the FP8 MoE arm is not on a served path anyway."

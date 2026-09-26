@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: pure Rust LLM inference server (HTTP API, scheduler, TUI, CLI)."
+
+[features]
+default = ["cuda", "nccl"]
+cuda = ["metrale-core/cuda", "metrale-config/cuda", "metrale-gpu-runtime/cuda", "metrale-cache/cuda", "metrale-sampling/cuda", "metrale-storage/cuda", "metrale-comm/cuda", "metrale-model-weights/cuda", "metrale-model-layers/cuda", "metrale-model-arch/cuda", "metrale-model-engine/cuda"]
+nccl = ["cuda", "metrale-comm/nccl"]
+metal = ["metrale-core/metal", "metrale-config/metal", "metrale-gpu-runtime/metal", "metrale-cache/metal", "metrale-sampling/metal", "metrale-storage/metal", "metrale-comm/metal", "metrale-model-weights/metal", "metrale-model-layers/metal", "metrale-model-arch/metal", "metrale-model-engine/metal"]
+gpu-examples = []
+# 2026-09-26: OTLP/HTTP JSON metrics push. It exports only when --telemetry is
+# not off and OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+# is set.
+otlp = ["metrale-telemetry/otlp"]
+# 2026-09-26: NVTX ranges around serve lanes at --telemetry kernel.
+nvtx = ["metrale-telemetry/nvtx"]
+
+[dependencies]
+metrale-bench = { path = "../bench" }
+metrale-cache = { path = "../cache", default-features = false }
+metrale-comm = { path = "../comm", default-features = false }
+metrale-config = { path = "../config", default-features = false }
+metrale-core = { path = "../core", default-features = false }
+metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+metrale-grammar = { path = "../grammar" }
+metrale-kernels = { path = "../kernels" }
+metrale-model-arch = { path = "../model-arch", default-features = false }
+metrale-model-engine = { path = "../model-engine", default-features = false }
+metrale-model-layers = { path = "../model-layers", default-features = false }
+metrale-model-weights = { path = "../model-weights", default-features = false }
+metrale-sampling = { path = "../sampling", default-features = false }
+metrale-speculative = { path = "../speculative" }
+metrale-scheduler = { path = "../scheduler" }
+metrale-storage = { path = "../storage", default-features = false }
+metrale-telemetry = { path = "../telemetry" }
+anyhow = { workspace = true }
+axum = { version = "0.8", features = ["json"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+futures = "0.3"
+http-body = "1"
+hyper = { version = "1", features = ["server", "http1", "http2", "client"] }
+hyper-util = { version = "0.1", features = ["server-auto", "client-legacy", "http1", "tokio"] }
+lazy_static = "1"
+libc = "0.2"
+minijinja = { version = "=2.21.0", features = ["builtins", "adjacent_loop_items", "json", "loop_controls", "preserve_order"] }
+parking_lot = { workspace = true }
+prometheus = { version = "0.14", default-features = false }
+ratatui = "0.29"
+rayon = "1.12"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
+tokio = { version = "1", features = ["full", "parking_lot"] }
+tokio-stream = "0.1"
+toml = "1.1"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["catch-panic", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tui-textarea = "0.7"
+unicode-width = "0.2"
+ureq = { version = "3", features = ["json"] }
+
+[dev-dependencies]
+metrale-closure = { path = "../closure", default-features = false }
+tempfile = "3"
+
+[[bin]]
+name = "met"
+path = "src/main.rs"
+
+[[example]]
+name = "k3_tokenizer_check"
+required-features = ["gpu-examples"]
+
+[lints]
+workspace = true

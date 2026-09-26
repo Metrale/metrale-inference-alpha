@@ -1,0 +1,129 @@
+[model]
+name = "nemotron-labs-3-puzzle-75b-a9b"
+hf_id = "nvidia/NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-NVFP4"
+model_type = "nemotron_h_puzzle"
+architecture = "hybrid_mamba2_latent_moe_attention_puzzle"
+parameters = "75B"
+active_parameters = "9B"
+
+
+
+
+# 2026-09-25: Kernel-target resolution needles (crates/kernels/src/resolve.rs). nemotron-super-120b-a12b also
+# declares (nemotron_h_puzzle, 4096), and the build requires every target of such a collision to declare needles
+# (validate_collision_match_names in crates/kernels/build.rs). The hf_id above contains "puzzle-75b", so a Puzzle
+# checkpoint resolves here.
+match_names = ["puzzle-75b"]
+
+[[model_types]]
+model_type = "nemotron_h_puzzle"
+hidden_size = 4096
+
+
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[behavior]
+enable_loop_watchdog = true
+
+# 2026-09-25: The checkpoint's chat_template.jinja renders tool calls as
+# `<tool_call><function=NAME><parameter=KEY>`, the XML format the qwen3_coder parser reads
+# (crates/server/src/tool_parser.rs).
+thinking_in_tools = true
+disable_tool_steering = true
+tool_call_parser = "qwen3_coder"
+
+
+disable_tool_grammar = true
+
+
+default_kv_dtype = "bf16"
+
+
+
+
+# 2026-09-25: The checkpoint's generation_config.json sets temperature 1.0 and top_p 0.95. With this set, a chat
+# request's unset temperature, top_k and top_p come from the chosen [sampling.*] preset instead of the startup
+# defaults, which take generation_config.json first. Request values win
+# (crates/server/src/api/chat/sampling_setup.rs).
+use_sampling_presets_for_core = true
+max_thinking_budget = 2048
+
+
+
+
+
+
+# 2026-09-25: false makes max_thinking_budget (or a request's own budget) the only thinking cap; true also caps
+# it at 90% of max_tokens (crates/server/src/api/chat/thinking.rs).
+cap_thinking_at_max_tokens = false
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+thinking_default = false
+
+
+
+# 2026-09-25: Kernel lookups this model may issue and fail to resolve, each with its reason. The boot audit fails on
+# an unresolved lookup not listed here unless --dangerously-allow-unresolved-kernel-lookups is set
+# (crates/server/src/main_modules/serve_phases/kernel_gate.rs).
+[expected_absent.w4a16]
+w4a16_gemm_t_p3 = """
+3-deep weight-pipeline twin of w4a16_gemm_t, shipped ONLY in
+qwen3.6-27b's shadow w4a16_gemm.cu. layers::tgemm_kernel probes it,
+then falls back to w4a16_gemm_t, which resolves here. The twin is
+UNMEASURED for Nemotron-H shapes — candidate to measure, not loss."""
+w4a16_gemm_t_k64_p3 = """
+Same family. layers::k64_kernel probes it, then REQUIRES
+w4a16_gemm_t_k64, which resolves here (shadow defines it)."""
+w4a16_gemm_t_k64_n64_p3 = """
+Narrow-N deep-K twin. layers::k64_n64_kernel returns a 0-handle when
+absent; dispatch gates on handle != 0 before firing."""
+w4a16_gemm_t_m128_bf16 = """
+BF16-projection prefill twin; prefill_weights gates the probe (handle
+!= 0) and falls back to the resolved w4a16_gemm_t_m128 path. Note this
+target's shadow does not define w4a16_gemm_t_m128 either — the m128
+fallback resolves from the common module."""

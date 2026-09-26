@@ -1,0 +1,206 @@
+[model]
+name = "laguna-xs-2.1"
+# 2026-09-25: This target compiles laguna-s-2.1's kernel directories: `kernel_source`
+# redirects them to that sibling (crates/closure/src/layout_manifest.rs kernel_source_dir).
+kernel_source = "laguna-s-2.1"
+hf_id = "poolside/Laguna-XS-2.1-NVFP4"
+model_type = "laguna"
+architecture = "Hybrid Full/Sliding Attention + Dense/MoE"
+parameters = "XS (hidden 2048, 40 layers, top_k 8)"
+
+layers_total = 40
+layers_sliding_attention = 30
+layers_full_attention = 10
+layer_pattern = "1 full attention followed by 3 sliding attention"
+
+hidden_dim = 2048
+head_dim = 128
+q_heads = 48
+kv_heads = 8
+intermediate_size = 8192
+moe_experts = 256
+moe_topk = 8
+moe_intermediate = 512
+shared_expert_intermediate = 512
+moe_scoring_func = "sigmoid"
+moe_routing_bias = true
+
+rotary_dim = 64
+rope_theta = 500000
+partial_rotary_factor = 0.5
+vocab_size = 100352
+max_position_embeddings = 262144
+sliding_window = 512
+vision = false
+mtp_layers = 0
+
+[sampling.thinking_text]
+temperature = 0.7
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.7
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+
+
+
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[behavior]
+# 2026-09-25: Turns off the thinking-loop watchdog, which arms a forced `</think>` when the
+# reasoning tail repeats (scheduler/decode_logits_step.rs). laguna-s-2.1/MODEL.toml records
+# the measurement behind the same setting there.
+
+
+
+
+enable_think_loop_watchdog = false
+# 2026-09-25: confidence_early_stop = false stops F2ConfidenceEarlyStop from arming a forced
+# `</think>`; rollback_resteer = false makes the decode-time rollback decline
+# (scheduler/rollback.rs).
+
+confidence_early_stop = false
+rollback_resteer = false
+# 2026-09-25: min_p_floor 0.0 disables the floor. temperature_max is applied after request
+# and preset resolution as temperature.min(temperature_max), unless the run forces
+# temperature 0 (api/chat/sampling_setup.rs).
+
+
+min_p_floor = 0.0
+temperature_max = 1.0
+thinking_in_tools = true
+max_thinking_budget = 8192
+# 2026-09-25: false: max_thinking_budget, or the request's own budget, is the only cap on
+# thinking; true would also cap it at 90% of max_tokens (api/chat/thinking.rs).
+
+
+cap_thinking_at_max_tokens = false
+# 2026-09-25: Thinking off for a request with no thinking directive; an explicit directive
+# overrides it (api/chat/thinking.rs).
+
+
+
+
+
+thinking_default = false
+default_kv_dtype = "fp8"
+tool_call_parser = "poolside_v1"
+# 2026-09-25: Chat requests take their default temperature, top-k and top-p from this file's
+# [sampling] category instead of the server-wide defaults; request values win.
+use_sampling_presets_for_core = true
+# 2026-09-25: No `<environment>` working-directory hint in the system message of a
+# tool-active request (api/chat/msg_entry.rs).
+disable_cwd_hint_injection = true
+# 2026-09-25: Cap on content tokens outside tool bodies since the last tool call on a tool
+# request; past it the sequence rolls back or the response ends
+# (scheduler/decode_logits_content.rs). --max-inter-tool-prose and
+# METRALE_MAX_INTER_TOOL_PROSE outrank it and 0 disables it (resolve_max_inter_tool_prose);
+# an absent key takes DEFAULT_MAX_INTER_TOOL_PROSE (3072, crates/kernels/src/behavior_defaults.rs).
+max_inter_tool_prose = 2048
+
+[[model_types]]
+model_type = "laguna"
+hidden_size = 2048
+
+[kernel]
+moe_gate_shmem_bytes = 6144
+
+# 2026-09-25: Kernel lookups this model's dispatch may issue that this target does not
+# ship. The boot kernel gate refuses any other unresolved lookup unless
+# --dangerously-allow-unresolved-kernel-lookups is set (serve_phases/kernel_gate.rs).
+
+
+
+
+
+[expected_absent.moe_w4a16]
+moe_w4a16_grouped_gemm_ptrtable_e8m0 = """
+E8M0-scale twin; forward_k2/k3 gate on handle != 0 plus the checkpoint's
+scale format, and fall back to the non-e8m0 ptrtable kernels compiled in
+this target's own moe_w4a16_grouped_gemm.cu. Laguna ships FP8 scales,
+never E8M0."""
+moe_w4a16_grouped_gemm_ptrtable_t_e8m0 = "Same family — transposed twin; non-e8m0 sibling resolves here."
+moe_w4a16_grouped_gemm_ptrtable_t_k64_e8m0 = "Same family — k64 twin; non-e8m0 sibling resolves here."
+moe_w4a16_fused_gate_up_t_e8m0 = "Same family — fused gate/up twin; non-e8m0 sibling resolves here."
+moe_w4a16_fused_gate_up_t_k64_e8m0 = "Same family — fused k64 twin; non-e8m0 sibling resolves here."
+moe_w4a16_fused_gate_up_t_k64_fp4 = "FP4-scale twin of the fused k64 kernel; scale-format-gated like the e8m0 twins; the plain sibling resolves from this target's moe_w4a16_grouped_gemm.cu."
+moe_w4a16_down_t_k64_fp4 = "FP4-scale down-projection twin; scale-format-gated; plain sibling resolves here."
+
+[expected_absent.nvfp4_mmq]
+metrale_nvfp4_mmq128_nc = """
+Keep-packed NVFP4 MMQ family (dense-FFN prefill for runtime-quantized
+GGUF/BF16 checkpoints). DenseFfnLayer probes the whole family and gates
+every dispatch on handle != 0; Laguna's single dense FFN (layer 0) loads
+from safetensors NVFP4 and takes the w4a16/dense arms, which resolve from
+this target's own w4a16_gemm.cu. UNMEASURED here — candidate, not loss."""
+metrale_nvfp4_mmq128_wc = "Same family; handle-gated, w4a16 arm resolves."
+metrale_nvfp4_mmq16_nc = "Same family; handle-gated, w4a16 arm resolves."
+metrale_nvfp4_mmq16_wc = "Same family; handle-gated, w4a16 arm resolves."
+metrale_nvfp4_mmq32_nc = "Same family; handle-gated, w4a16 arm resolves."
+metrale_nvfp4_mmq32_wc = "Same family; handle-gated, w4a16 arm resolves."
+metrale_nvfp4_mmq64_nc = "Same family; handle-gated, w4a16 arm resolves."
+metrale_nvfp4_mmq64_wc = "Same family; handle-gated, w4a16 arm resolves."
+metrale_nvfp4_quantize_bf16 = "MMQ-family activation quantizer; only reached from the MMQ arms above."
+metrale_nvfp4_repack = "MMQ-family weight repacker; only reached from the MMQ arms above."
+metrale_nvfp4_scale_bf16 = "MMQ-family scale conversion; only reached from the MMQ arms above."
+metrale_nvfp4_silu_mul_quant = "MMQ-family fused epilogue; only reached from the MMQ arms above."
+metrale_nvfp4_silu_mul_scaled = "MMQ-family fused epilogue; only reached from the MMQ arms above."
+
+[expected_absent.w4a16]
+int8_gemm_faith2 = "Int8 requant experiment probed by dense_ffn; handle-gated, w4a16 arm resolves."
+int8_gemm_i32acc = "Same family; handle-gated."
+requant_a_bf16_int8 = "Same family — activation requant; only reached from the int8 arms above."
+requant_w_nvfp4_int8 = "Same family — weight requant; only reached from the int8 arms above."
+w4a16_gemm_t_p3 = """
+3-deep weight-pipeline twin shipped ONLY in qwen3.6-27b's shadow.
+dense_ffn probes it, falls back to w4a16_gemm_t (resolves from this
+target's w4a16_gemm.cu). UNMEASURED for this target — candidate, not
+loss."""
+w4a16_gemm_t_k64_p3 = "Same family; falls back to the resolved w4a16_gemm_t_k64."
+w4a16_gemm_t_k64_n64_p3 = "Narrow-N twin; qwen3_attention::init returns 0-handle, dispatch gates on handle != 0."
+w4a16_gemm_t_m128_bf16 = "BF16-projection prefill twin; handle-gated, falls back through the resolved w4a16 path."
+w4a16_gemm_t_m128_bf16_v2 = "Same family — v2 twin; handle-gated."
+
+[expected_absent.w4a4]
+w4a4_gemm = """
+Direct FP4-activation GEMM probed by dense_ffn; opt-in path
+(METRALE_ATTN_W4A4-family), handle-gated, never default-dispatched."""
+w4a4_gemm_mfast = """
+Shipped only in nemotron-labs-3-puzzle-75b-a9b. qwen3_attention::init
+probes it; opt-in, handle-gated. UNMEASURED."""
+
+[expected_absent.q4k_mmq]
+metrale_q4k_mmq128_nc = """
+Q4_K keep-packed MMQ (dense-FFN prefill for GGUF Q4_K checkpoints).
+DenseFfnLayer probes the family and gates every dispatch on handle != 0;
+a safetensors NVFP4 checkpoint never installs packed-Q4K weights, so the
+arm is unreachable here."""
+metrale_q4k_mmq128_wc = "Same family — unreachable without packed-Q4K weights."
+metrale_q8_1_quantize_ds4_bf16 = "MMQ-family activation quantizer; only reached from the Q4K MMQ arms above."
+
+[expected_absent.q4k_quantize]
+q4k_quantize = "Q4_K runtime quantizer probed by dense_ffn for GGUF paths; handle-gated, unreachable here."

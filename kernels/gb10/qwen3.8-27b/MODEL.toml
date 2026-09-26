@@ -1,0 +1,243 @@
+[model]
+name = "qwen3.8-27b"
+hf_id = "Qwen/Qwen3.8-27B"
+params = "27B"
+active_params = "27B"
+architecture = "Hybrid Attention + GDN + Dense FFN + MRoPE"
+
+# 2026-09-25: This target and qwen3.6-27b both declare [[model_types]]
+# qwen3_5 / 5120 (below, and in qwen3.6-27b/MODEL.toml), so kernel-target
+# resolution breaks the tie with match_names: a target survives when one of
+# its needles is a case-insensitive substring of a checkpoint reference, and
+# zero or several survivors is `TargetResolveError::Ambiguous`
+# (crates/kernels/src/resolve.rs). kernel_source compiles this target from
+# qwen3.6-27b's kernel tree (crates/closure/src/layout_manifest.rs).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+match_names = ["qwen3.8-27b"]
+kernel_source = "qwen3.6-27b"
+
+
+
+layers_total = 64
+layers_full_attention = 16
+layers_linear_attention = 48
+
+hidden_dim = 5120
+head_dim = 256
+q_heads = 24
+kv_heads = 4
+intermediate_size = 17408
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+attn_output_gate = true
+partial_rotary_factor = 0.25
+
+mrope_interleaved = true
+mrope_section = [11, 11, 10]
+
+mtp_layers = 0
+vision = true
+
+
+
+
+effective_context = 24576
+
+# 2026-09-25: The model card (README.md in the unsloth/Qwen3.8-27B-NVFP4 HF
+# snapshot) gives thinking: temperature 1.0, top_p 0.95, top_k 20, min_p 0.0,
+# presence 0.0, repetition 1.0; non-thinking: temperature 0.7, top_p 0.80,
+# top_k 20, min_p 0.0, presence 1.5, repetition 1.0. It has no tools preset.
+#
+# How the chat API reads these presets for this model: [behavior] does not
+# set use_sampling_presets_for_core, so a request's temperature, top_k, top_p
+# and min_p fall back to the server-wide defaults (api/chat/sampling_setup.rs).
+# Those come from generation_config.json, then [sampling.non_thinking], then
+# the CLI (serve_phases/runtime.rs, resolve_sampling_defaults). The penalties
+# and dry_multiplier come from the request's category preset: tools,
+# thinking_text or non_thinking.
+#
+# [sampling.tools] carries no penalties: they act on the grammar-masked logits
+# (scheduler/logit_processors/mod.rs, process_position_logits step 4), so they
+# would reorder the legal tokens of tool-call JSON, which repeats quotes,
+# braces and key names.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[behavior]
+
+
+
+
+
+
+enable_loop_watchdog = true
+
+
+
+thinking_default = true
+
+thinking_in_tools = true
+max_thinking_budget = 2048
+
+
+
+default_kv_dtype = "fp8"
+
+
+
+
+
+# 2026-09-25: The checkpoint's config.json reports model_type "qwen3_5". The
+# rewrite to "qwen3_6_moe" applies only to MoE checkpoints
+# (crates/config/src/dispatch.rs, `is_moe`), so this target declares only
+# qwen3_5, while qwen3.6-27b also declares qwen3_6_moe.
+
+
+
+
+[[model_types]]
+model_type = "qwen3_5"
+hidden_size = 5120
+
+# 2026-09-25: No [dflash] section. The 27B drafter configured in this tree,
+# z-lab/Qwen3.6-27B-DFlash (qwen3.6-27b/MODEL.toml [dflash]), is built for the
+# Qwen3.6-27B checkpoint.
+
+
+
+
+
+# 2026-09-25: The kernel set is qwen3.6-27b's (kernel_source above), whose
+# w4a4_gemm.cu defines only w4a4_gemm, while the dense dispatch also looks up
+# w4a4_gemm_mfast (model-layers qwen3_attention/init.rs).
+
+
+[expected_absent.w4a4]
+w4a4_gemm_mfast = """
+Same situation as qwen3.6-27b (the kernel set IS qwen3.6-27b's, via
+kernel_source): the shared w4a4_gemm.cu defines only w4a4_gemm; the mfast
+variant exists solely in nemotron-labs-3-puzzle-75b-a9b. Dispatch
+(qwen3_attention/init.rs) falls back to w4a4_gemm, which is correct but
+UNMEASURED against a ported mfast — see the honesty note in
+qwen3.6-27b/MODEL.toml."""

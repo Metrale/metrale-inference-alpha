@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: shared types (dtype, tensor, arch, device, errors, fault scopes)."
+
+[features]
+default = ["cuda"]
+cuda = ["dep:cudarc"]
+metal = []
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+cudarc = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: GLM-5.3-Flash layer launch levers: the prefill sub-chunk width, cuBLASLt for
+//! wide projections, and the batched DSA indexer query.
+//!
+//! Owner: model-arch (GLM-5.3).
+//! Invariants:
+//! - Each function reads its environment variable once per process and caches the result.
+
+/// 2026-09-25: Default tokens per batched prefill sub-chunk, the width `Glm5NextLayer::prefill`
+/// hands `Glm5NextLayer::forward_k` (overridable through [`prefill_rows`]).
+///
+/// 16 is `DENSE_GEMV_BATCHM_MAX_M`, the widest M that `ops::dense_mm_bf16` sends to the batched
+/// GEMV (`dense_gemv_bf16_batchm`), whose rows carry the same bits as the M = 1 GEMV. A wider
+/// sub-chunk moves the dense projections to cuBLASLt or the tile GEMM, which accumulate in a
+/// different order. Measured 2026-09-02: the 12 GLM prefill projection shapes cost 1.36-1.98x less
+/// per token at M = 16 than at M = 8 in 11 of 12 (N4096 K128: 0.77x).
+///
+/// The routed MoE does not follow the width: `glm5next_mlp::forward::forward_moe` splits a wider
+/// row group into even sub-groups of at most `row_batch_max()`, whose default and ceiling is
+/// `MOE_ROW_BATCH_MAX_ROWS` (8).
+pub(crate) const PREFILL_ROWS: usize = 16;
+
+/// 2026-09-25: Send GLM projections with M above `DENSE_GEMV_BATCHM_MAX_M` to cuBLASLt BF16
+/// instead of the tile GEMM. Read by the KDA, DSA and MLP blocks, always behind a
+/// `> DENSE_GEMV_BATCHM_MAX_M` row test, so the M = 1 GEMV and the batched GEMV are never
+/// replaced. On unless `METRALE_GLM_CUBLAS_PROJ=0`.
+pub(crate) fn cublas_wide_proj() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| {
+        let on = std::env::var("METRALE_GLM_CUBLAS_PROJ").as_deref() != Ok("0");
+        tracing::warn!(
+            "METRALE_GLM_CUBLAS_PROJ: wide GLM projections (M > {}) use {}",
+            metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M,
+            if on {
+                "cuBLASLt BF16"
+            } else {
+                "the scalar tile GEMM"
+            }
+        );
+        on
+    })
+}
+
+/// 2026-09-25: Compute the DSA indexer `wq_b` projection for all prefill rows in one cuBLASLt
+/// GEMM instead of one M = 1 GEMV per row. Off unless `METRALE_GLM_DSA_BATCH_QIDX=1`.
+///
+/// Prefill only: it is read in `select_rows_batched`, which runs only when
+/// `batch_select_enabled` holds (`is_prefill && k > 1`). Decode and the speculative verify keep
+/// the per-row GEMV. The GEMM accumulates in a different order from the GEMV.
+pub(crate) fn dsa_batch_qidx() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| {
+        let on = std::env::var("METRALE_GLM_DSA_BATCH_QIDX").as_deref() == Ok("1");
+        tracing::warn!(
+            "METRALE_GLM_DSA_BATCH_QIDX: prefill DSA indexer q uses {}",
+            if on {
+                "ONE batched cuBLASLt GEMM"
+            } else {
+                "one M=1 GEMV per row"
+            }
+        );
+        on
+    })
+}
+
+/// 2026-09-25: `PREFILL_ROWS`, overridable at launch with `METRALE_GLM_PREFILL_ROWS` (values
+/// below 1 or unparsable are ignored). `1` selects the per-token walk: `Glm5NextLayer::prefill`
+/// takes the batched sub-chunk path only when `rows > 1`. A width above
+/// `DENSE_GEMV_BATCHM_MAX_M` changes the projection numerics as well as the speed.
+pub fn prefill_rows() -> usize {
+    static ROWS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ROWS.get_or_init(|| {
+        let r = std::env::var("METRALE_GLM_PREFILL_ROWS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|r| *r >= 1)
+            .unwrap_or(PREFILL_ROWS);
+        if r != PREFILL_ROWS {
+            tracing::warn!("GLM prefill sub-chunk overridden to {r} rows (default {PREFILL_ROWS})");
+        }
+        r
+    })
+}

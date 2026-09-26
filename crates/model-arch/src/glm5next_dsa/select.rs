@@ -1,0 +1,329 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-25: GLM-5.3 DSA token selection: launch geometry, scratch, and the launcher for
+//! the selection kernels.
+//!
+//! Owner: model-arch (GLM-5.3 DSA).
+//! Invariants:
+//! - [`DsaSelectGeometry::plan`] returns `Ok` only when `select_k <= topk_np2`.
+//! - `select_tokens` checks [`DsaSelectScratch::fits`] before its first launch and fails
+//!   when the pass needs more scratch than was allocated.
+//!
+//! ```text
+//! k_normed, gate, valid, ape  -> dsa_kpool_compress   -> pool keys / indices / valid
+//! q, weights, q_pos           -> dsa_index_scores     -> [Q, P] scores + candidacy
+//!                             -> dsa_topk_pools       -> [Q, select_k] pool ids
+//!                             -> dsa_expand_selection -> [Q, out_width] token ids
+//! ```
+//!
+//! # Shared memory does not grow with the context
+//!
+//! `dsa_topk_pools` walks the pool axis in tiles of [`topk_tile`] pools and keeps a running
+//! best list of one tile, so its shared memory ([`topk_smem_for_tile`]) is fixed. The one
+//! limit left is `select_k` of at most one tile, checked in [`DsaSelectGeometry::plan`]: at
+//! `index_topk` 2048 and `index_kpool` 4, `select_k` is 512 against a 2,048-pool tile. The
+//! context is bounded by the indexer cache (`state::max_dsa_context`).
+//!
+//! # No compaction pass
+//!
+//! [`crate::glm5next_dsa_ref::kept_pools`] keeps pool `p` only when every one of its slots
+//! is in range and valid, counting from the first valid token. Over a contiguous cache with
+//! no padding that set is the prefix `0 .. seq / kpool` ([`contiguous_pool_count`], checked
+//! against `kept_pools` in `tests`), so the launcher uses the full arrays in place and
+//! `dsa_compact_pools` is not launched. A left-padded batch would need the compaction;
+//! [`DsaSelectGeometry::plan`] handles contiguous caches only.
+
+use anyhow::{Result, bail};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::kernel_args::KernelLaunch;
+
+use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
+
+/// 2026-09-25: Shared-memory ceiling the top-k select is budgeted against; the same value
+/// as `SMEM_CEILING` in `examples/dsa_indexer_microtest.rs`.
+pub const TOPK_SMEM_CEILING: usize = 49_152;
+
+/// 2026-09-25: Threads per block for `dsa_index_scores`, and the least shared memory it is
+/// given, in bytes (`select_tokens` requests `max(SCORES_BLOCK, 4 * index_heads)`).
+const SCORES_BLOCK: u32 = 128;
+/// 2026-09-25: Threads per block for `dsa_topk_pools` and `dsa_expand_selection`.
+const ROW_BLOCK: u32 = 256;
+
+/// 2026-09-25: Tile width `dsa_topk_pools` walks the pool axis in.
+///
+/// The block holds two tiles, the running best list and the candidate tile, of `[f32, i32]`
+/// pairs: `16 · T` bytes. This is the largest power of two `T` that fits
+/// [`TOPK_SMEM_CEILING`]: 2,048.
+///
+/// `Glm5NextDsaLayer::decode_k` passes this value to `dsa_write_geom` as `tile`; the kernel
+/// has no copy of it.
+pub fn topk_tile() -> usize {
+    let mut t = 2usize;
+    while t * 2 * 16 <= TOPK_SMEM_CEILING {
+        t *= 2;
+    }
+    t
+}
+
+/// 2026-09-25: Shared memory one `dsa_topk_pools` block needs for a tile of `t` pools.
+pub fn topk_smem_for_tile(t: usize) -> usize {
+    t * 2 * 8
+}
+
+/// 2026-09-25: Pools kept over a contiguous, unpadded cache of `seq` tokens.
+///
+/// A pool needs all `kpool` slots, so the trailing partial pool is not a pool. Checked
+/// against `glm5next_dsa_ref::kept_pools` in `tests`.
+pub fn contiguous_pool_count(kpool: usize, seq: usize) -> usize {
+    seq / kpool
+}
+
+/// 2026-09-25: Launch geometry for one selection pass, computed by [`Self::plan`] before any
+/// launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DsaSelectGeometry {
+    /// 2026-09-25: Tokens resident in the indexer cache.
+    pub seq: usize,
+    /// 2026-09-25: Query rows in this pass.
+    pub q_rows: usize,
+    /// 2026-09-25: Pools `dsa_kpool_compress` writes, including the trailing partial one.
+    pub n_pools_full: usize,
+    /// 2026-09-25: Complete pools, the prefix the later kernels read.
+    pub n_pools: usize,
+    /// 2026-09-25: Pools selected per query.
+    pub select_k: usize,
+    /// 2026-09-25: Emitted index-row width.
+    pub out_width: usize,
+    /// 2026-09-25: Tile width the top-k select walks the pool axis in: [`topk_tile`], or the
+    /// next power of two (at least 2) at or above `n_pools` when that is smaller.
+    pub topk_np2: usize,
+    /// 2026-09-25: Shared memory `dsa_topk_pools` needs, in bytes.
+    pub topk_smem: usize,
+    /// 2026-09-25: Channels per compress block.
+    pub index_head_dim: usize,
+    pub index_heads: usize,
+    pub index_kpool: usize,
+}
+
+impl DsaSelectGeometry {
+    /// 2026-09-25: Plan a selection over a contiguous, unpadded cache.
+    ///
+    /// Fails when `cfg` fails validation, when `q_rows` or `seq` is 0, or when `select_k`
+    /// exceeds `topk_np2`.
+    pub fn plan(cfg: &Glm5NextDsaConfig, seq: usize, q_rows: usize) -> Result<Self> {
+        cfg.validate()?;
+        if q_rows == 0 {
+            bail!("DSA select: q_rows must be > 0");
+        }
+        if seq == 0 {
+            bail!("DSA select: seq must be > 0");
+        }
+        let kp = cfg.index_kpool;
+        let n_pools = contiguous_pool_count(kp, seq);
+        // 2026-09-25: `n_pools == 0` (fewer than `index_kpool` tokens) is planned, not
+        // refused: `select_k` is 0, `select_tokens` skips scoring and top-k, and
+        // `dsa_expand_selection` emits the visible tail, which is every token. The reference
+        // `glm5next_dsa_ref::expand_selection` gives the same row
+        // (`sub_pool_selection_is_dense_over_the_visible_tokens`).
+        // `topk_np2` is the tile, smaller when the context is shorter than one tile.
+        let tile = topk_tile();
+        let topk_np2 = n_pools.next_power_of_two().max(2).min(tile);
+        let topk_smem = topk_smem_for_tile(topk_np2);
+        let select_k = cfg.select_k(n_pools);
+        if select_k > topk_np2 {
+            // 2026-09-25: The running best list is one tile, so it cannot hold more winners.
+            // At GLM-5.3's index_topk 2048 and kpool 4, select_k is at most 512.
+            bail!(
+                "DSA select: select_k {select_k} exceeds the {topk_np2}-pool top-k tile \
+                 ({TOPK_SMEM_CEILING} B shared-memory ceiling, index_topk={} \
+                 index_kpool={kp}). Raise the ceiling or lower index_topk.",
+                cfg.index_topk,
+            );
+        }
+        Ok(Self {
+            seq,
+            q_rows,
+            n_pools_full: seq.div_ceil(kp),
+            n_pools,
+            select_k,
+            out_width: cfg.out_width(),
+            topk_np2,
+            topk_smem,
+            index_head_dim: cfg.index_head_dim,
+            index_heads: cfg.index_heads,
+            index_kpool: kp,
+        })
+    }
+
+    /// 2026-09-25: Bytes of each scratch region this pass writes, in [`DsaSelectScratch`]
+    /// field order: pool keys (f32), pool indices (i32), pool validity (u8), scores (f32),
+    /// candidacy (u8), selected pools (i32).
+    fn scratch_bytes(&self) -> [usize; 6] {
+        [
+            self.n_pools_full * self.index_head_dim * 4,
+            self.n_pools_full * self.index_kpool * 4,
+            self.n_pools_full,
+            self.q_rows * self.n_pools * 4,
+            self.q_rows * self.n_pools,
+            self.q_rows * self.select_k * 4,
+        ]
+    }
+}
+
+/// 2026-09-25: Device-side inputs to a selection pass, all owned by the caller.
+#[derive(Debug, Clone, Copy)]
+pub struct DsaSelectInputs {
+    /// 2026-09-25: `[seq, index_head_dim]` BF16 indexer keys, after the `k_norm` LayerNorm.
+    pub k_normed: DevicePtr,
+    /// 2026-09-25: `[seq, index_head_dim]` BF16 `index_kpool_compress_gate` projection.
+    pub gate: DevicePtr,
+    /// 2026-09-25: `[seq]` u8 per-key validity.
+    pub valid: DevicePtr,
+    /// 2026-09-25: `[index_kpool, index_head_dim]` f32 APE table. The checkpoint stores BF16;
+    /// `build_dsa_weights` uploads it as f32.
+    pub ape: DevicePtr,
+    /// 2026-09-25: `[q_rows, index_heads, index_head_dim]` f32.
+    pub q: DevicePtr,
+    /// 2026-09-25: `[q_rows, index_heads]` f32, already carrying the `index_heads^-0.5`
+    /// factor, which `dsa_index_scores` does not apply.
+    pub weights: DevicePtr,
+    /// 2026-09-25: `[q_rows]` i32 absolute position of each query.
+    pub q_pos: DevicePtr,
+    /// 2026-09-25: `[q_rows]` u8; a row whose entry is 0 selects nothing and stays all `-1`.
+    pub q_mask: DevicePtr,
+    /// 2026-09-25: Index of the first valid key; pooling starts here, so left padding is
+    /// skipped.
+    pub first_key: i32,
+    /// 2026-09-25: `[5]` i32 device geometry written by `dsa_write_geom`, or NULL for the
+    /// scalar path.
+    ///
+    /// A captured graph fixes every scalar argument, while S, the pool counts, the tile and
+    /// `select_k` grow with the context; the kernels read them from here when it is non-null.
+    /// Only with `q_rows == 1`: `select_tokens` refuses a ceiling launch otherwise.
+    pub geom_dev: DevicePtr,
+}
+
+/// 2026-09-25: How a pass is launched: exactly, or at the context ceiling so one graph serves
+/// any length.
+///
+/// `Ceiling` requires `DsaSelectInputs::geom_dev` and `q_rows == 1` (`select_tokens` refuses
+/// otherwise). The kernels read their row strides (`out`/`valid_cand` stride `P`, `selected`
+/// stride `select_k`) from the same device geometry, which is sound only because every
+/// `r * stride` is then `0 * stride`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DsaSelectLaunch {
+    /// 2026-09-25: This step's exact grid, from the host geometry.
+    Exact,
+    /// 2026-09-25: Grid and shared memory fixed at `max_pools`; live extents come from
+    /// `geom_dev`.
+    Ceiling { max_pools: usize },
+}
+
+/// 2026-09-25: Scratch the selection kernels write through, allocated once and reused across
+/// steps.
+///
+/// Sized from the largest geometry the caller will run; [`Self::fits`] refuses a pass that
+/// would outgrow it.
+#[derive(Debug, Clone, Copy)]
+pub struct DsaSelectScratch {
+    pool_keys: DevicePtr,
+    pool_indices: DevicePtr,
+    pool_valid: DevicePtr,
+    scores: DevicePtr,
+    valid_cand: DevicePtr,
+    selected: DevicePtr,
+    /// 2026-09-25: `[q_rows, out_width]` i32 token ids, `-1` where nothing was selected. The
+    /// result of the pass; `dsa_expand_selection` writes every slot of each row.
+    tokens: DevicePtr,
+    capacity: [usize; 6],
+    tokens_bytes: usize,
+}
+
+impl DsaSelectScratch {
+    /// 2026-09-25: Allocate for `geom`, the largest pass the caller will run
+    /// (`Glm5NextDsaWorkspace::new` plans it at `max_dsa_context`).
+    pub fn alloc(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        geom: &DsaSelectGeometry,
+    ) -> Result<Self> {
+        let capacity = geom.scratch_bytes();
+        let tokens_bytes = geom.q_rows * cfg.out_width() * 4;
+        Ok(Self {
+            pool_keys: gpu.alloc(capacity[0])?,
+            pool_indices: gpu.alloc(capacity[1])?,
+            pool_valid: gpu.alloc(capacity[2])?,
+            scores: gpu.alloc(capacity[3])?,
+            valid_cand: gpu.alloc(capacity[4])?,
+            selected: gpu.alloc(capacity[5])?,
+            tokens: gpu.alloc(tokens_bytes)?,
+            capacity,
+            tokens_bytes,
+        })
+    }
+
+    /// 2026-09-25: `[q_rows, out_width]` i32 selection produced by the last pass.
+    pub fn tokens(&self) -> DevicePtr {
+        self.tokens
+    }
+
+    /// 2026-09-25: The same scratch with `tokens` pointing at row `row`.
+    ///
+    /// The per-row selector (`q_rows == 1`) writes each row's result into its own slot of
+    /// the `[max_rows, out_width]` output, which the attention reads in one launch. The
+    /// other regions are temporaries of one pass and are shared.
+    pub fn row(&self, row: usize, cfg: &Glm5NextDsaConfig) -> Self {
+        Self {
+            tokens: self.tokens.offset(row * cfg.out_width() * 4),
+            tokens_bytes: self.tokens_bytes - row * cfg.out_width() * 4,
+            ..*self
+        }
+    }
+
+    /// 2026-09-25: Whether `geom` fits what was allocated. `select_tokens` checks it on every
+    /// pass, so a pass larger than the allocation is an error rather than an overrun.
+    pub fn fits(&self, cfg: &Glm5NextDsaConfig, geom: &DsaSelectGeometry) -> Result<()> {
+        let want = geom.scratch_bytes();
+        for (i, (w, c)) in want.iter().zip(self.capacity.iter()).enumerate() {
+            if w > c {
+                bail!(
+                    "DSA select: scratch region {i} needs {w} B but only {c} B was \
+                     reserved ({} tokens, {} pools, {} query rows)",
+                    geom.seq,
+                    geom.n_pools,
+                    geom.q_rows
+                );
+            }
+        }
+        let want_tokens = geom.q_rows * cfg.out_width() * 4;
+        if want_tokens > self.tokens_bytes {
+            bail!(
+                "DSA select: selection output needs {want_tokens} B but only {} B was \
+                 reserved",
+                self.tokens_bytes
+            );
+        }
+        Ok(())
+    }
+
+    pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
+        for p in [
+            self.pool_keys,
+            self.pool_indices,
+            self.pool_valid,
+            self.scores,
+            self.valid_cand,
+            self.selected,
+            self.tokens,
+        ] {
+            gpu.free(p)?;
+        }
+        Ok(())
+    }
+}
+
+mod launch;
+pub use launch::select_tokens;
+
+#[cfg(test)]
+mod tests;

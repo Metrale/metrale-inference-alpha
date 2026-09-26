@@ -1,0 +1,36 @@
+# 2026-09-25: B300, SM 10.3. This tree has no `inherits`: it compiles the gb10
+# files common/KERNEL.toml lists in [sources] use, plus its own. An `sm_103a`
+# build runs only on a CC 10.3 device (metrale_core::arch::ptx_arch_runs_on_device).
+# sm_count is compared at boot with the device's count; a mismatch logs a
+# warning (gpu-runtime arch_preflight::check_sm_count).
+[hardware]
+name = "b300"
+vendor = "nvidia"
+arch = "sm_103a"
+compute_capability = "10.3"
+sm_count = 148
+memory_bandwidth_gbps = 8000
+memory_type = "HBM3e"
+memory_gb = 288
+
+# 2026-09-25: Compiles out every `#ifndef METRALE_NO_WARP_BLOCKSCALE_MMA`
+# region of the sources this target builds, as on hopper and b200.
+[build]
+extra_nvcc_flags = ["-DMETRALE_NO_WARP_BLOCKSCALE_MMA"]
+
+# 2026-09-25: Every row equals `build_defaults::baseline` (tests/target_defaults.rs).
+[defaults]
+lm_head_batchm_max = 8
+ssm_batched_recurrent = false
+gdn_prefill_tc = false
+ssm_ba_gates_hopper = false
+fp8_act_quant_hopper = false
+decode_split_silu = true
+attn_decode_splitk = "legacy"
+ffn_m16_tc = false
+attn_m16_tc = false
+lm_head_m16_tc = false
+attn_ncol_gemv = false
+ffn_gateup_fused = false
+w8a8_prefill_max_m_widening = 4294967295
+w8a8_prefill_max_m_narrowing = 4294967295

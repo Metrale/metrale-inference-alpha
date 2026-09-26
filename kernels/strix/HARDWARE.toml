@@ -1,0 +1,39 @@
+[hardware]
+name = "strix"
+vendor = "amd"
+# 2026-09-25: AMD Strix Halo, Radeon 8060S (gfx1151). `vendor = "amd"` builds
+# with SCALE, which compiles the CUDA .cu sources as they are; `arch` selects
+# SCALE's targets/<arch>/bin/nvcc (crates/kernels/build_target.rs).
+
+arch = "gfx1151"
+compute_capability = "11.5.1"
+# 2026-09-25: The memory keys below are descriptive: no build script or crate reads them.
+
+memory_bandwidth_gbps = 256
+memory_type = "LPDDR5X"
+
+
+
+memory_gb = 64
+# 2026-09-25: The _64 prefill-attention kernels run 32-row tiles here. BR64 is 32
+# under __SCALE__ in gb10/common/prefill_paged_compute.cuh, and the host grid
+# matches through cfg!(metrale_scale) in ops/prefill_attn_main_{a,b}.rs, which
+# crates/model-layers/build.rs sets for every METRALE_TARGET_HW starting with
+# "strix".
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,229 @@
+[model]
+name = "qwen3.6-27b"
+hf_id = "Qwen/Qwen3.6-27B"
+params = "27B"
+active_params = "27B"
+architecture = "Hybrid Attention + GDN + Dense FFN + MRoPE"
+
+
+
+
+
+
+
+# 2026-09-25: Kernel-target resolution needles (crates/kernels/src/resolve.rs). qwen3.8-27b also declares
+# [[model_types]] qwen3_5 / 5120, so match_names breaks the tie: a target survives when one of its needles is a
+# case-insensitive substring of the checkpoint's HF id, --model-name or model dir. "qwen3.5-27b" is listed so that a
+# Qwen3.5-27B checkpoint, which meets this exact (qwen3_5, 5120) entry before qwen3.5-27b's wildcard one, routes here.
+# Neither needle matches a qwen3.8 reference.
+match_names = ["qwen3.6-27b", "qwen3.5-27b"]
+
+
+
+
+
+layers_total = 64
+layers_full_attention = 16
+layers_linear_attention = 48
+
+hidden_dim = 5120
+head_dim = 256
+q_heads = 24
+kv_heads = 4
+intermediate_size = 17408
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+attn_output_gate = true
+partial_rotary_factor = 0.25
+
+
+
+
+mrope_interleaved = true
+mrope_section = [11, 11, 10]
+
+mtp_layers = 0
+vision = true
+
+
+
+effective_context = 24576
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: Chat requests take the `tools` preset when tools are active, else `thinking_text` when thinking, else
+# `non_thinking` (build_sampling, crates/server/src/api/chat/sampling_setup.rs); nothing selects `thinking_coding`.
+# The penalties and dry_multiplier come from the chosen preset. This file does not set [behavior]
+# use_sampling_presets_for_core, so temperature, top_p and top_k come from the checkpoint's generation_config.json,
+# and from `non_thinking` only for a field that file lacks (serve_phases/runtime.rs, resolve_sampling_defaults).
+[sampling.thinking_text]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[behavior]
+
+
+
+
+
+enable_loop_watchdog = true
+
+
+
+# 2026-09-25: thinking_default applies when neither the request nor the server's default directive says whether to
+# think; an explicit directive, and --disable-thinking, win (crates/server/src/api/chat/thinking.rs).
+thinking_default = true
+thinking_in_tools = true
+max_thinking_budget = 2048
+
+
+
+
+# 2026-09-25: preserve_thinking is left unset, so the checkpoint chat template's own default applies. Setting it pins
+# the template variable for this target; a request's chat_template_kwargs.preserve_thinking wins
+# (crates/server/src/api/chat/prepare.rs).
+
+
+
+
+
+
+
+
+default_num_drafts = 3
+
+
+
+
+
+
+
+
+
+default_kv_dtype = "fp8"
+
+
+
+# 2026-09-25: The Qwen3.6-27B checkpoints in the local HF cache (Qwen/Qwen3.6-27B-FP8, nvidia/Qwen3.6-27B-NVFP4,
+# unsloth/Qwen3.6-27B-NVFP4) report model_type "qwen3_5". crates/config/src/dispatch.rs rewrites a model_type to
+# "qwen3_6_moe" only for a MoE checkpoint (qwen3_5_moe or qwen3_vl_moe) with interleaved MRoPE, so these dense
+# checkpoints resolve through the qwen3_5 entry.
+[[model_types]]
+model_type = "qwen3_5"
+hidden_size = 5120
+
+[[model_types]]
+model_type = "qwen3_6_moe"
+hidden_size = 5120
+
+
+
+
+# 2026-09-25: Of [dflash], serve reads only draft_model: the drafter used when --dflash is given without
+# --draft-model (crates/server/src/main_modules/serve_phases/weights.rs). The drafter's own config.json supplies
+# target_layer_ids, and loading fails without them, and mask_token_id
+# (crates/model-arch/src/dflash_head/from_weights.rs).
+[dflash]
+draft_model = "z-lab/Qwen3.6-27B-DFlash"
+gamma = 16
+window_size = 4096
+mask_token_id = 248070
+
+
+
+target_layer_ids = [1, 16, 31, 46, 61]
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-09-25: Kernel lookups this model may issue and fail to resolve. The boot audit fails on an unresolved lookup
+# that is not listed here unless --dangerously-allow-unresolved-kernel-lookups is set
+# (crates/server/src/main_modules/serve_phases/kernel_gate.rs). The preferred fix is to gate the lookup on config so it
+# is never issued (`qwen3_attention::init_arch_gates`).
+#
+# Entry shape: [expected_absent.<module>] <kernel> = "reason". The build panics on an entry whose value is not a
+# non-empty string. `met serve <model> --check-kernels` prints every unresolved lookup and exits with their count
+# (at most 255) as its status.
+
+[expected_absent.w4a4]
+w4a4_gemm_mfast = """
+This model's w4a4_gemm.cu defines only w4a4_gemm; the mfast variant exists solely
+in nemotron-labs-3-puzzle-75b-a9b. Dispatch (qwen3_attention/init.rs) falls back
+to w4a4_gemm, which is correct. This fallback predates the resolution gate and
+was silent until it; it is declared here to unblock serving, NOT because the
+fallback is known to be optimal. Whether porting mfast to this model is a win is
+UNMEASURED - treat as a candidate, not a confirmed loss (routing m=9..32 into a
+GEMV looked like the same shape and measured -14.4% at C=16). Remove this entry
+if mfast is ported."""

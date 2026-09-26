@@ -1,0 +1,269 @@
+# 2026-09-25: Hopper target: kernel set inherited from gb10 (HARDWARE.toml `inherits`).
+# Every table below equals kernels/gb10/qwen3.8-27b/MODEL.toml's except the Hopper-only
+# w4a4_gemm and [expected_absent.nvfp4_mmq] entries; `met serve --check-kernels`
+# reports the lookups that do not resolve on this hardware. The leaf kernels are
+# gb10's qwen3.6-27b/nvfp4, through kernel_source (crates/closure/src/layout.rs `discover`).
+[model]
+name = "qwen3.8-27b"
+hf_id = "Qwen/Qwen3.8-27B"
+params = "27B"
+active_params = "27B"
+architecture = "Hybrid Attention + GDN + Dense FFN + MRoPE"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+match_names = ["qwen3.8-27b"]
+kernel_source = "qwen3.6-27b"
+
+
+
+layers_total = 64
+layers_full_attention = 16
+layers_linear_attention = 48
+
+hidden_dim = 5120
+head_dim = 256
+q_heads = 24
+kv_heads = 4
+intermediate_size = 17408
+
+vocab_size = 248320
+max_position_embeddings = 262144
+rope_theta = 10000000
+attn_output_gate = true
+partial_rotary_factor = 0.25
+
+mrope_interleaved = true
+mrope_section = [11, 11, 10]
+
+mtp_layers = 0
+vision = true
+
+
+
+
+effective_context = 24576
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[sampling.thinking_text]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[behavior]
+
+
+
+
+
+
+enable_loop_watchdog = true
+
+
+
+thinking_default = true
+
+thinking_in_tools = true
+max_thinking_budget = 2048
+
+
+
+default_kv_dtype = "fp8"
+
+
+
+
+
+
+
+
+
+
+
+
+
+[[model_types]]
+model_type = "qwen3_5"
+hidden_size = 5120
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[expected_absent.w4a4]
+w4a4_gemm_mfast = """
+Same situation as qwen3.6-27b (the kernel set IS qwen3.6-27b's, via
+kernel_source): the shared w4a4_gemm.cu defines only w4a4_gemm; the mfast
+variant exists solely in nemotron-labs-3-puzzle-75b-a9b. Dispatch
+(qwen3_attention/init.rs) falls back to w4a4_gemm, which is correct but
+UNMEASURED against a ported mfast — see the honesty note in
+qwen3.6-27b/MODEL.toml."""
+
+# 2026-09-25: Hopper only. w4a4_gemm.cu's kernel sits inside
+# `#ifndef METRALE_NO_WARP_BLOCKSCALE_MMA`, which kernels/hopper/HARDWARE.toml
+# defines: ptxas rejects its block-scale MMA for sm_90a (checked 2026-09-25, nvcc 13.0.88).
+w4a4_gemm = "Hopper sm_90a: mma with block scale is unsupported; the hardware guard excludes this optional NVFP4 entry point."
+
+# 2026-09-25: Hopper only: nvfp4_mmq.cu defines these under BLACKWELL_MMA_AVAILABLE (compute capability 12.x), which sm_90a is not.
+[expected_absent.nvfp4_mmq]
+metrale_nvfp4_mmq128_nc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_mmq128_wc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_mmq16_nc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_mmq16_wc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_mmq32_nc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_mmq32_wc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_mmq64_nc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_mmq64_wc = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_quantize_bf16 = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_repack = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_scale_bf16 = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_silu_mul_scaled = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_silu_mul_quant = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."

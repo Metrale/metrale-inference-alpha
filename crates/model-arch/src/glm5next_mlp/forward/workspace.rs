@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-26: The byte sizes of the GLM-5.3 MLP scratch buffers and
+//! `Glm5NextMlpWorkspace::new`, which allocates them.
+//!
+//! Owner: model-arch (GLM-5.3).
+//! Invariants:
+//! - `mlp_ws_bytes` lists the sizes `Glm5NextMlpWorkspace::new` allocates, in its order.
+
+use anyhow::Result;
+use metrale_gpu_runtime::gpu::GpuBackend;
+
+use super::Glm5NextMlpWorkspace;
+use crate::glm5next_mlp::Glm5NextMlpConfig;
+
+/// 2026-09-25: Byte size of each `Glm5NextMlpWorkspace` buffer, in the order `new` allocates
+/// them: a_gate, a_up, a_act, logits, ids, wts, expert_out, shared_out, u_eid, u_slot,
+/// sorted_token_ids, sorted_expert_ids, expert_offsets, token_to_perm. The loader logs their
+/// sum. `new` computes the same sizes on its own, so the two must change together.
+pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> [usize; 14] {
+    let rows = max_rows.max(1);
+    let max_inter = cfg
+        .local_dense_intermediate
+        .max(cfg.moe_intermediate)
+        .max(cfg.local_shared_intermediate)
+        .max(1);
+    let act_elems = (rows * max_inter)
+        .max(rows * cfg.top_k * cfg.moe_intermediate)
+        .max(1);
+    [
+        act_elems * 2,
+        act_elems * 2,
+        act_elems * 2,
+        rows * cfg.num_experts * 4,
+        rows * cfg.top_k * 4,
+        rows * cfg.top_k * 4,
+        rows * cfg.top_k * cfg.hidden * 2,
+        rows * cfg.hidden * 2,
+        rows * cfg.top_k * 4,
+        rows * cfg.top_k * rows * 4,
+        rows * cfg.top_k * 4,
+        rows * cfg.top_k * 4,
+        (cfg.num_experts + 1) * 4,
+        rows * cfg.top_k * 4,
+    ]
+}
+
+/// 2026-09-25: Total device bytes of one MLP workspace of `max_rows` rows.
+pub fn mlp_ws_total_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize) -> usize {
+    mlp_ws_bytes(cfg, max_rows).iter().sum()
+}
+
+impl Glm5NextMlpWorkspace {
+    pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextMlpConfig, max_rows: usize) -> Result<Self> {
+        let rows = max_rows.max(1);
+        let max_inter = cfg
+            .local_dense_intermediate
+            .max(cfg.moe_intermediate)
+            .max(cfg.local_shared_intermediate)
+            .max(1);
+        // 2026-09-25: The activation buffers hold the widest of a dense or shared-expert pass
+        // (`rows * max_inter`) and a routed pass over every (row, slot)
+        // (`rows * top_k * moe_intermediate`).
+        let act_elems = (rows * max_inter)
+            .max(rows * cfg.top_k * cfg.moe_intermediate)
+            .max(1);
+        Ok(Self {
+            a_gate: gpu.alloc(act_elems * 2)?,
+            a_up: gpu.alloc(act_elems * 2)?,
+            a_act: gpu.alloc(act_elems * 2)?,
+            logits: gpu.alloc(rows * cfg.num_experts * 4)?,
+            ids: gpu.alloc(rows * cfg.top_k * 4)?,
+            wts: gpu.alloc(rows * cfg.top_k * 4)?,
+            expert_out: gpu.alloc(rows * cfg.top_k * cfg.hidden * 2)?,
+            shared_out: gpu.alloc(rows * cfg.hidden * 2)?,
+            u_eid: gpu.alloc(rows * cfg.top_k * 4)?,
+            u_slot: gpu.alloc(rows * cfg.top_k * rows * 4)?,
+            // 2026-09-25: The grouped-GEMM routing tables are allocated whatever the grouped
+            // levers say.
+            sorted_token_ids: gpu.alloc(rows * cfg.top_k * 4)?,
+            sorted_expert_ids: gpu.alloc(rows * cfg.top_k * 4)?,
+            expert_offsets: gpu.alloc((cfg.num_experts + 1) * 4)?,
+            token_to_perm: gpu.alloc(rows * cfg.top_k * 4)?,
+            max_inter,
+            max_rows: rows,
+            max_total_expanded: rows * cfg.top_k,
+        })
+    }
+}
