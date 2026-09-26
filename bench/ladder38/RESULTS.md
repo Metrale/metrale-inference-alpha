@@ -1,6 +1,27 @@
 # Qwen3.8-27B NVFP4 concurrency ladder — Metrale Engine vs latest vLLM (2026-08-16)
 
-**Status: campaign in progress — 6/8 rungs won. PRELIMINARY; not yet gate-certified.**
+**Status: final. Metrale Engine beats vLLM+MTP at all eight rungs, C=1 to C=128, on one
+configuration; round 11 reproduced the full ladder, and all four quality gates pass on the
+final stack (see "Round 11 complete" and "CERTIFICATION COMPLETE" below). Every section after
+"Fingerprint" is the campaign log in the order it ran; intermediate standings are marked as
+such.**
+
+## Final result (round 11, final stack `bf4d7a1267`)
+
+| C | Metrale Engine | vLLM+MTP | ratio |
+|---:|---:|---:|---:|
+| 1 | 23.59 | 19.72 | 1.196x |
+| 2 | 41.02 | 37.11 same-day | 1.105x |
+| 4 | 74.21 | 71.61 | 1.036x |
+| 8 | 125.95 | 124.48 | 1.012x |
+| 16 | 203.36 | 197.03 | 1.032x |
+| 32 | 291.01 | 283.48 | 1.027x |
+| 64 | 386.63 | 361.39 | 1.070x |
+| 128 | 478.11 | 358.57 | 1.333x |
+
+Quality gates on the final stack: ssm-state-poisoning-gate PASS (12 of 12 replays
+byte-identical), decode-floor PASS, agentic-webserver PASS ×2, bfcl-subset PASS (overall
+84.22, normalized 84.12, n=995).
 
 ## Fingerprint
 
@@ -49,7 +70,7 @@ comparison against the no-spec reference is superseded), and **vLLM's C=128 is B
 own C=64** — MTP verification costs it more than it gains at 128-wide, while Metrale Engine's
 speculation self-disables above 32 concurrent sequences and never pays that penalty.
 
-Standing (Metrale Engine C=128 at fp8 = 450.12; other Metrale Engine rungs still bf16 KV pending round 4):
+Intermediate standing after round 2 (Metrale Engine C=128 at fp8 = 450.12; other Metrale Engine rungs still bf16 KV pending round 4):
 
 | C | Metrale Engine | vLLM+MTP | ratio | rung |
 |---:|---:|---:|---:|---|
@@ -86,7 +107,7 @@ served with `METRALE_PREFILL_CODISPATCH=1 METRALE_FP8_ROWWISE=1` and `--prefill-
 | 64 | 360.02 | 312.26 | 1.15x | WON (was 338.38) |
 | 128 | 274.41 | 390.36 | 0.70x | OPEN — KV-capacity bound |
 
-**7 of 8 rungs won.** C=128 mechanism is fully understood and no longer a correctness
+**Round 2: 7 of 8 rungs won against the no-spec reference.** C=128 mechanism is fully understood and no longer a correctness
 problem: preempt-resume + depth-aware admission deliver all 131,072 tokens with ZERO
 kills (the pre-stack build discarded 25% of decode work via 171 preempt-kills that
 returned HTTP-200 empty bodies). The remaining deficit is capacity: the KV pool holds

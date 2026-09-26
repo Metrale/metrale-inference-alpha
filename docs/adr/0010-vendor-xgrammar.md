@@ -63,8 +63,8 @@ upstream periodically.
 **Worse:**
 - We carry maintenance for the fork. Every upstream bug-fix is a
   rebase; every Metrale-local change is a divergence we must justify.
-- License compatibility check (xgrammar is Apache-2.0; AGPL-3.0 can
-  consume Apache-2.0, so we are clear). Future xgrammar relicensing
+- License compatibility check (xgrammar is Apache-2.0, compatible with
+  the engine's MIT OR Apache-2.0). Future xgrammar relicensing
   would force us to evaluate.
 - Vendor directories are excluded from a few of our QA passes
   (`typos`, license-header check) on purpose. Anyone making changes

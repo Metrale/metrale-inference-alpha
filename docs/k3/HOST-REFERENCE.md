@@ -4,8 +4,8 @@
 forward path for the existing KDA, MLA, AttnRes and latent-MoE primitives.
 It is a reference and bring-up foundation, not a GPU serving implementation.
 
-The source comes from integration PR #1150, including the latest callback
-boundaries and row-interleaved matrix-vector loops. Tensor-parallel checkpoint
+It includes the callback boundaries and row-interleaved matrix-vector loops.
+Tensor-parallel checkpoint
 allocation, device binding, serving dispatch and resident GPU callbacks are
 separate changes. Existing main primitives remain unchanged.
 
@@ -22,6 +22,5 @@ packed-format admission, and simulated TP2 reductions. Simulation does not
 prove NCCL or distributed execution.
 
 The checked-in 0.40B golden token fixture is historical independent reference
-evidence. No real-checkpoint inference, GPU measurement or certification was
-rerun for this extraction. Clippy for the core crate and formatting passed.
-Remaining product integration and GPU fallbacks are tracked in #1167-#1170.
+evidence. No real-checkpoint inference, GPU measurement or certification backs this
+path.

@@ -1,4 +1,4 @@
-# Paged decode attention split-K on H100 (#928)
+# Paged decode attention split-K on H100
 
 **Headline: split-K was disabled on Hopper by a constant, not by a kernel.**
 `metrale-core/src/device.rs:16` declares `NUM_SMS = 48` (GB10) in a module named

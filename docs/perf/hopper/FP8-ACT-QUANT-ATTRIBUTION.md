@@ -1,4 +1,4 @@
-# FP8 activation quantizer — 1×H100, Qwen3.8-27B-FP8 (#928, #927)
+# FP8 activation quantizer — 1×H100, Qwen3.8-27B-FP8
 
 `per_token_group_quant_fp8` turns every W8A8 projection's BF16 activation into
 FP8 E4M3 bytes plus one FP32 scale per (token, 128-K-group) — pure bandwidth

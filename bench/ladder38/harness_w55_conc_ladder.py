@@ -5,7 +5,7 @@
 # Owner: bench, concurrency ladder.
 # Invariants: none beyond the types.
 """
-PR #388 definitive concurrency ladder — C=1..128, one client, both engines.
+Definitive concurrency ladder — C=1..128, one client, both engines.
 
 Pinned by recipes/qwen3.6/qwen3.6-27b-w55-sweep-dev.yaml. Every measurement
 knob is a constant or a required argument; nothing is defaulted silently.

@@ -250,7 +250,7 @@ line of every failure, and the worst register/spill numbers. It exits non-zero
 if anything failed.
 
 **What it found, 2026-09-05** (CUDA 13.0.88; re-run the gate to reproduce —
-`scripts/hopper_ptx_gate.sh --hw hopper --model all --strict`, see #899):
+`scripts/hopper_ptx_gate.sh --hw hopper --model all --strict`):
 **870 of 871** kernels
 across the five P0 targets emitted PTX and assembled for sm_90a on the first
 pass. The one that did not was
@@ -362,7 +362,7 @@ memory. So `sm_100a` PTX is not "sm_121 PTX that also runs on a B200", and
 neither arch's PTX runs on the other.
 
 **What the gate found, 2026-09-05** (CUDA 13.0.88;
-`scripts/hopper_ptx_gate.sh --hw b200 --model all`, see #899):
+`scripts/hopper_ptx_gate.sh --hw b200 --model all`):
 **870 of 871** kernels across the five P0 targets emitted PTX and assembled for
 sm_100a on the first pass — the same count as Hopper, and the same single
 kernel failing, but for a **different reason**:
@@ -485,9 +485,8 @@ Hopper and fail for gb10. The
 `ptxas` on every emitted module. On 2026-09-05 it found 22 of 173 gb10
 `qwen3.6-35b-a3b` modules (42 entry functions, the BR=64 prefill variants and
 their BR=32 siblings) rejected for `sm_121f` on CUDA 13.0.88. That is a
-pre-existing gb10 finding, independent of the Hopper and B200 targets; the
-inventory, receipts and runtime trace live with the campaign notes in
-Metrale/metrale-inference-alpha#899.
+pre-existing gb10 finding, independent of the Hopper and B200 targets; re-run
+the gate with `--hw gb10` to list the modules.
 
 ### Device validation
 

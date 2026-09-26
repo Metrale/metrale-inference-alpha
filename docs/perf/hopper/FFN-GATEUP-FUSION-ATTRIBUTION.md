@@ -1,4 +1,4 @@
-# Where the dense-FFN gate+up decode GEMMs go (#927, H100)
+# Where the dense-FFN gate+up decode GEMMs go (H100)
 
 **Headline: the weight bytes are read once either way — the gap is the second
 launch.** At `n = 16` the dense FFN issues TWO cuBLASLt W8A8 GEMMs per layer at

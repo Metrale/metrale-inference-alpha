@@ -191,9 +191,8 @@ agree on the commit.
 every limit in §1–§4, and adds one: the shards were measured in separate
 processes, so any property that depends on request ORDER within a run
 is not preserved by the split — and the count itself is part of the
-partition, so two campaigns at different `n` are two draws of that effect. That is measured, not hypothetical: issue #936
-ran the golden draw whole and as its four shards at one commit on the shipped
-serve and found **12 of 995** samples answering differently —
+partition, so two campaigns at different `n` are two draws of that effect. That is measured, not hypothetical: running the golden draw whole and as its four shards at one commit on the shipped
+serve found **12 of 995** samples answering differently —
 `live_irrelevance_{2-0-2, 8-0-8, 14-2-2, 15-2-3, 16-2-4, 40-2-28, 47-2-35,
 55-2-43, 71-2-59, 79-2-67}`, `live_multiple_57-22-4`,
 `live_parallel_multiple_3-2-1` — because a request restores from whichever SSM
@@ -201,7 +200,7 @@ snapshot anchor an earlier request happened to leave in the shared pool, and at
 a near-tied argmax that flips the token.
 
 The certified regime **keeps that reuse on, by decision** (2026-09-13). It is
-not `--hermetic`, which closes the channels and reads 0 of 995 (#981) at a
+not `--hermetic`, which closes the channels and reads 0 of 995 at a
 measurable cost in score; `--hermetic` is pinned as the subject of
 `kat-equality-gate` only. What follows from the choice is stated where it
 bites: the twelve are listed in `benchmarks::bfcl::sensitive`, every run warns

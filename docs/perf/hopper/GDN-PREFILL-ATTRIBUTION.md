@@ -1,4 +1,4 @@
-# GDN chunked-prefill attribution — 1×H100, Qwen3.8-27B-FP8 (#928)
+# GDN chunked-prefill attribution — 1×H100, Qwen3.8-27B-FP8
 
 Source: nsys round 9 (`nsys-r9-prefill`, cell XY, 2026-09-11); prefill A = 1193
 tok / 368.263 ms busy union, prefill B = 4593 tok / 1163.475 ms. Both windows
@@ -136,7 +136,7 @@ kernel is latency-bound, worth re-testing now the MMA rewrite changed that bound
 
 ---
 
-# The two remnants, attributed — and the Hopper twins (#928, 2026-09-11)
+# The two remnants, attributed — and the Hopper twins (2026-09-11)
 
 Same trace, same geometry (`nk=16`, `nv=48`, `kd=vd=128`, `CHUNK=64`; 912 CTAs
 at T=1193, 3456 at T=4593; 96 launches each). The section above named

@@ -4,12 +4,12 @@
 #
 # Owner: bench, qwen4_exp references.
 # Invariants: none beyond the types.
-"""Golden for PLE n-gram injection — Metrale Engine #753 item C, PLAN.md phase D.
+"""Golden for PLE n-gram injection — PLAN.md phase D.
 
 PLE is the top correctness risk in this port, for two reasons that both fail
 SILENTLY:
 
-  * The ID computation does NOT transfer from LongCat (#746). LongCat uses a
+  * The ID computation does NOT transfer from LongCat. LongCat uses a
     polynomial rolling hash over token ids; Qwen multiplies by SplitMix64-
     derived odd multipliers and XORs. A wrong hash returns VALID rows from a
     320M-row table — every lookup succeeds, every shape checks out, and the

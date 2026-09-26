@@ -307,4 +307,4 @@ You will not be penalised for writing code by hand. You will be asked why.
 
 ## License & CLA
 
-By contributing, you agree that your contributions will be governed by our [Contributor License Agreement (CLA)](CLA.md). Your work will be distributed under the project's licence, [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), and you grant us the right to commercially re-license it.
+By contributing, you agree that your contributions will be governed by our [Contributor License Agreement (CLA)](CLA.md). Your work will be distributed under the project's licence, [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).

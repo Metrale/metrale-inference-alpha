@@ -18,11 +18,9 @@ router, AttnRes or the full model graph onto GPU.
 
 ## Prerequisites
 
-The review base is `extract/k3-serving-foundation`. The B200 K3 target #1177
-provides `dense_f32io` kernels for this opt-in path; this Rust slice does not
-silently add a target or enable dense execution elsewhere. The foundation's
-separate communication, capacity, shutdown and tokenizer prerequisites remain.
-Expert gate/up batching #1163 remains independent and is not duplicated here.
+The B200 K3 target (`kernels/b200/kimi-k3/`) provides the `dense_f32io` kernels
+for this opt-in path; it does not add a target or enable dense execution
+elsewhere.
 
 ## Oracles and limits
 
@@ -44,9 +42,7 @@ METRALE_TARGET_QUANT=mxfp4`, then run the desired test binary with
 `--ignored --nocapture --test-threads=1`. Use the same target settings for build
 and test. Do not run all heavy tests concurrently on a shared device.
 
-The source is extracted from #1150's tested development path, but these new
-stack heads have no GPU certification. A Metal-feature model-library compile
-check passes locally; that checks Rust interfaces, not CUDA behavior. Prior
-B200 twin lifecycle and oracle receipts do not validate a reconstructed tree.
-Run its own Linux/CUDA tests and bounded multi-rank lifecycle before landing.
-Full official weights, B300 execution, TP8 and multi-host remain unvalidated.
+This path has no GPU certification. A Metal-feature model-library compile
+check passes; that checks Rust interfaces, not CUDA behavior. Run the
+Linux/CUDA tests and a bounded multi-rank lifecycle before relying on it. Full
+official weights, B300 execution, TP8 and multi-host remain unvalidated.

@@ -43,7 +43,7 @@ interval `wall_s` and `tok_s` are computed from. GPU RAIL ONLY: on GB10
 LPDDR5X are outside the number and every figure is a LOWER BOUND on system
 energy. Say "GPU rail" wherever it is shown.
 
-PR #388 definitive concurrency ladder — C=1..128, one client, both engines.
+Definitive concurrency ladder — C=1..128, one client, both engines.
 
 Pinned by recipes/qwen3.6/qwen3.6-27b-w55-sweep-dev.yaml. Every measurement
 knob is a constant or a required argument; nothing is defaulted silently.

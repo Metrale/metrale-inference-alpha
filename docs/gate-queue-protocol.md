@@ -10,8 +10,8 @@ with other PRs or with a `main` that moved after the records were measured.
 
 This means a record-bearing performance PR can be **fully green at its head
 and still bounce in the queue, repeatedly, with zero code defects**. Observed
-2026-08-23: #732 bounced behind #731, then behind post-#733 `main`; #731 then
-bounced behind post-#733 `main`. Every head was green the whole time.
+2026-08-23: two record-bearing PRs each bounced, first behind the other and
+then behind a `main` that had moved. Every head was green the whole time.
 
 This is not a gate bug. Two independently-measured campaigns do not compose:
 the combined tree's interactions are unmeasured, and "measure-then-declare"
@@ -53,7 +53,7 @@ one was invisible to isolated numeric checks and caught only by task gates).
 
 ## Which gates want `mtp_gate=force`, and which must not have it
 
-`Metrale/metralectl#16` pinned `mtp_gate: force` on the recipes backing the gates,
+A recipe change pinned `mtp_gate: force` on the recipes backing the gates,
 because in `auto` the MTP gate is a bandit arbiter that switches MTP↔serial at
 runtime on wall-clock tok/s, and speculation is not output-neutral at
 temperature 0. A campaign on 2026-08-28 confirmed the effect end to end:
@@ -68,7 +68,7 @@ rule is about the **shape of the bar**, not the engine:
 | bar | example | mode |
 |---|---|---|
 | absolute / exact-match | `agentic-webserver` `followed_directions min = 10.0`, "takes no noise" | **pin `force`** — nondeterminism against a zero-headroom bar is a coin flip, and re-running until it passes is retry-until-green |
-| empirical, measured | `bfcl-subset` `overall_accuracy min = 83.42` — "the four-shard aggregate read 83.82 (#936), less the documented ±0.4 MTP-nondeterminism noise floor" | **run in the mode the bar was measured in** — for the two BFCL gates that mode is four shards, scored open (since 2026-09-13) |
+| empirical, measured | `bfcl-subset` `overall_accuracy min = 83.42` — "the four-shard aggregate read 83.82, less the documented ±0.4 MTP-nondeterminism noise floor" | **run in the mode the bar was measured in** — for the two BFCL gates that mode is four shards, scored open (since 2026-09-13) |
 | wall-clock / throughput | `decode-floor`, `concurrency-sweep` | **leave `auto`** — the arbiter optimises the metric under test; it is part of the product being benchmarked |
 
 The middle row is the one that bites. `bfcl-subset`'s bar already *prices in*
@@ -82,7 +82,7 @@ uninterpretable against its own bar.
 `force` first, then pin. Never pin against a bar measured the other way — that
 is `measure-then-declare` read backwards.
 
-**Scope goes stale.** `#16` named the recipes backing the gates *on
+**Scope goes stale.** That change named the recipes backing the gates *on
 2026-08-09*. The required `bfcl-subset` subject flipped from Qwen3.6-27B to
 Qwen3.8-27B on 2026-08-15, so its pin followed the old subject and the gate it
 was written for ran unpinned. When a `BENCH.toml` `default = true` moves to a

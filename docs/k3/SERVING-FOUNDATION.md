@@ -22,28 +22,11 @@ refuses expert parallelism and GGUF for that path, and pins packed K3 to an
 actually compiled MXFP4 kernel target. K3 per-token prefill keeps the scheduler's
 chunk budget; it does not inherit the unrelated single-chunk MLA restriction.
 
-## Dependencies and integration
-
-The review base is the clean runtime-weight-loader stack, which already
-contains the host reference and shared planner. Separately integrate:
-
-- GB10 expert source registration (#1165), or the B200 target (#1177).
-- Idle command receive and bounded broadcast completion (#1171).
-- Vocabulary-aware receive capacity (#1173).
-- Plain-completion whitespace (#1174) and ordered worker teardown (#1175).
-- Official XTML chat guard and raw-marker handling (#1178).
-
-Packed expert gate/up batching (#1163) is a separate optimization. None of these
-independent changes are silently duplicated here. Real integration validation
-must run against their combined final tree, with exact source/binary identity.
-
 ## Validation limits
 
-On this extracted tree, 107 core K3 tests pass (11 fixture-dependent tests
-ignored), and Metal-feature production-library checks for model/server plus
-the server binary check pass on macOS. These do not execute CUDA. Existing ungated CUDA-only tests
-prevent the full model test target from compiling with that feature selection.
-Linux/CUDA tests, launch, shutdown and numerical regressions remain required on
-the new extracted head. Historical twin evidence belongs to the original
-integration tree; it does not certify this reconstruction. Full K3 weights,
-B300, TP8, multiple hosts and XTML chat/tools are not validated here.
+The host K3 tests pass with 11 fixture-dependent tests ignored
+(`cargo test -p metrale-model-weights --lib kimi_k3`), and Metal-feature
+library checks for model/server pass on macOS. These do not execute CUDA.
+Linux/CUDA tests, launch, shutdown and numerical regressions are still
+required. Full K3 weights, B300, TP8, multiple hosts and XTML chat/tools are
+not validated here.

@@ -60,7 +60,7 @@ Python is **not** allowed in `crates/`.
   fighting an upstream caching allocator.
 - No GIL, no Python-side scheduling jitter. The scheduler's per-tick
   budget is dominated by GPU work, not host overhead.
-- License story is simpler — no PyTorch (BSD-3) intermixed with our AGPL
+- License story is simpler — no PyTorch (BSD-3) intermixed with our own
   code in the same process.
 
 **Worse:**

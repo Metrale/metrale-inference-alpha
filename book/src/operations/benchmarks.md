@@ -245,8 +245,8 @@ group sums each subset's `(hits, n)` integers and applies the hierarchy once.
 #### The number is partition-dependent, and that is the certified regime
 
 The shards are scored **open**: cross-request SSM snapshot reuse stays on, as
-in production, and the serve is not `--hermetic`. The consequence is measured
-(#936): running the golden draw whole and as its four shards at one commit
+in production, and the serve is not `--hermetic`. The consequence is measured:
+running the golden draw whole and as its four shards at one commit
 changes the answer on **12 of 995** samples — ten in `live_irrelevance`, one
 each in `live_multiple` and `live_parallel_multiple` — because a request
 restores from whichever SSM snapshot an earlier request left behind. The twelve

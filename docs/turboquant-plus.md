@@ -1,8 +1,5 @@
 # TurboQuant+ — KV-cache compression beyond the Google baseline
 
-Tracking issue: [#91](https://github.com/Metrale/metrale-inference-alpha/issues/91)
-(proposal + planned scope).
-
 This document describes the TurboQuant+ (TQ+) integration in Metrale Engine: what
 changed vs upstream, why each piece matters, before/after numbers, and
 exactly how to reproduce them.

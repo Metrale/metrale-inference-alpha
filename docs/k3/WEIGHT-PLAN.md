@@ -39,5 +39,4 @@ The combined core stack has 107 passing host K3 tests and 11 ignored real-model
 cases. Planner checks exercise tensor aliases, bad layouts, packed byte sizes,
 rank slicing and overflow; the header harness rejects wrong range responses.
 No full checkpoint or distributed execution is claimed. The rank-memory example
-was run locally in config mode only. Existing observed rental evidence stays in
-#1150. Review the numerical and allocation gates before any hardware run.
+was run locally in config mode only. Review the numerical and allocation gates before any hardware run.

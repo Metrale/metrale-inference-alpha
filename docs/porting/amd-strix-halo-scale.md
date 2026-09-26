@@ -51,8 +51,7 @@ target/release/met serve Qwen/Qwen3.6-27B-FP8 \
   --kv-cache-dtype bf16 --kv-high-precision-layers max --max-batch-size 4
 ```
 
-A ready-made script lives at `serve-amd.sh` in the repo root. Sections 1–6
-below explain each step, the SCALE mechanics, and why each shim is needed.
+Sections 1–6 below explain each step, the SCALE mechanics, and why each shim is needed.
 
 ---
 
@@ -280,8 +279,7 @@ if SCALE ships it, §4.1(b) becomes a no-op.
 
 ## 5. Build, deploy, run
 
-Verified on native Ubuntu (kernel 6.17.0-oem), gfx1151, SCALE 1.7.1. The repo
-ships `build-amd.sh` and `serve-amd.sh` that wrap exactly the commands below.
+Verified on native Ubuntu (kernel 6.17.0-oem), gfx1151, SCALE 1.7.1.
 
 ```bash
 # Build — SCALE_HOME set, kernels compiled for gfx1151:

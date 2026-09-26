@@ -4,7 +4,6 @@ Short definitions for the acronyms and names that recur in this book and the Met
 
 | Term | Definition |
 |---|---|
-| **AGPL-3.0** | GNU Affero General Public License, v3. Metrale Engine's former license; it is now MIT OR Apache-2.0. Copyleft; network use counts as distribution. |
 | **axum** | Rust async web framework (built on tokio + tower). Metrale Engine's HTTP layer. |
 | **BF16** | Brain Floating-Point 16. 1 sign + 8 exponent + 7 mantissa. Standard precision for Metrale Engine activations and residual streams. |
 | **CLA** | Contributor License Agreement. Required before Metrale Engine PR merge; see `CLA.md`. |

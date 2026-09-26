@@ -69,7 +69,7 @@ The test matrix has caught many issues that would have looked like "model halluc
 
 ## The CLA
 
-By contributing, you agree to the [Contributor License Agreement](https://github.com/Metrale/metrale-inference-alpha/blob/main/CLA.md). Your work goes out under MIT OR Apache-2.0, and you grant Metrale Engine the right to relicense for the Enterprise Edition.
+By contributing, you agree to the [Contributor License Agreement](https://github.com/Metrale/metrale-inference-alpha/blob/main/CLA.md). Your work goes out under MIT OR Apache-2.0.
 
 The `CLA Assistant` bot automatically comments on every PR. You must explicitly acknowledge and sign before merge.
 
