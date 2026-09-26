@@ -20,6 +20,24 @@ use metrale_model_layers::layer::{ForwardContext, TransformerLayer};
 use metrale_model_layers::layers::ops;
 
 impl TransformerModel {
+    /// 2026-09-25: Mamba-2 has no per-token state clamp, so every 64 decode tokens the
+    /// h-state is re-normalized; a failure is logged and decode continues. Runs only when
+    /// `run`, and the caller must then be outside CUDA graph capture:
+    /// `normalize_ssm_states` H2D-copies a temporary host pointer table, and recording that
+    /// memcpy replays a freed host address (CUDA 716) whenever the capture step's seq_len is
+    /// a multiple of 64. The graph path calls it before capture or replay, the eager path
+    /// inside the forward body.
+    pub(super) fn normalize_ssm_outside_graph(&self, seq: &SequenceState, stream: u64, run: bool) {
+        if run
+            && self.config.mamba_num_heads > 0
+            && seq.seq_len > 0
+            && seq.seq_len.is_multiple_of(64)
+            && let Err(e) = self.normalize_ssm_states(seq, stream)
+        {
+            tracing::warn!("Periodic SSM state normalization failed: {e:#}");
+        }
+    }
+
     /// 2026-09-25: Single-token decode forward body. `decode_dispatch_with` runs it
     /// once per step, eagerly or inside a capture, and runs it again eagerly when
     /// the capture fails (capture records without executing, so the step still
@@ -77,15 +95,9 @@ impl TransformerModel {
             self.gpu.synchronize(stream)?;
         }
 
-        // 2026-09-25: Mamba-2 models (`mamba_num_heads > 0`): normalise the SSM state
-        // every 64 tokens. A failure is logged and decode continues.
-        if self.config.mamba_num_heads > 0
-            && seq.seq_len > 0
-            && seq.seq_len.is_multiple_of(64)
-            && let Err(e) = self.normalize_ssm_states(seq, stream)
-        {
-            tracing::warn!("Periodic SSM state normalization failed: {e:#}");
-        }
+        // 2026-09-25: Eager only. The graph path runs the same helper before capture
+        // or replay; recording it bakes a host memcpy from a freed buffer.
+        self.normalize_ssm_outside_graph(seq, stream, !use_graphs);
 
         let normed = self.buffers.norm_output();
         let h = self.config.hidden_size as u32;
