@@ -13,10 +13,10 @@ For end-to-end recipes per supported model see [`QUICKSTART.md`](../QUICKSTART.m
 ```bash
 docker run -d \
   --name metrale \
-  --gpus all --ipc=host -p 8888:8888 \
+  --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   metrale/metrale-inference-gb10:latest \
-  serve <hf-model-id> \
+  serve --bind 0.0.0.0 <hf-model-id> \
     --max-seq-len 16384 \
     --max-batch-size 1 \
     --gpu-memory-utilization 0.85
@@ -62,8 +62,9 @@ on rank 0.
 | Pure TP=2 | 2 | 1 | Dense / attention sharding only (rare) |
 | TP+EP overlap | 2 | 2 | Both attention and experts sharded; the two NCCL groups share one comm |
 
-Run via the canonical launcher (single-node default; override with env
-for cross-node):
+Run via the canonical launcher (`HEAD_IP` and `WORKER_IP` default to
+`127.0.0.1`; set both for cross-node, and `IMAGE` to the image you built,
+default `metrale-122b:latest`):
 
 ```bash
 # Single-node EP=2 (both ranks on this machine)
@@ -102,12 +103,12 @@ can evict cold blocks to NVMe and stream them back as needed:
 # High-speed swap uses io_uring — it REQUIRES the two container flags below
 # (--security-opt seccomp=unconfined --ulimit memlock=-1). Without them the
 # io_uring setup fails and swap silently does nothing.
-docker run -d --gpus all --ipc=host -p 8888:8888 \
+docker run -d --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   --security-opt seccomp=unconfined --ulimit memlock=-1 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -v /mnt/fast-nvme/metrale-kv:/mnt/fast-nvme/metrale-kv \
   metrale/metrale-inference-gb10:latest \
-  serve <model> \
+  serve --bind 0.0.0.0 <model> \
     --max-seq-len 65536 \
     --high-speed-swap \
     --high-speed-swap-cache-blocks-per-seq 64 \
@@ -138,7 +139,8 @@ but every other container — MP4/MOV, WebM/Matroska, AVI, covering H.264,
 H.265, VP9 and AV1 — is decoded by invoking `ffmpeg` as a subprocess.
 
 * Install: `apt install ffmpeg` (Debian/Ubuntu), `dnf install ffmpeg`
-  (Fedora/RHEL). The official image ships it.
+  (Fedora/RHEL). The images built from `docker/` do not install it; add it
+  to the runtime stage to serve video from a container.
 * Enable: `--video-allow-ffmpeg`. It is **off by default**, because it makes
   the server execute another program per video request.
 * Pin a specific build with `--video-ffmpeg-path /usr/bin/ffmpeg`.

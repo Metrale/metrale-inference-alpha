@@ -73,8 +73,8 @@ The Turbo family is Metrale-specific: Walsh-Hadamard rotates out the outlier str
 
 ## Files to read
 
-- `kernels/gb10/<model>/fp8/` — per-model FP8 kernel sets (Qwen3.6 has its own leaf).
-- `kernels/gb10/<model>/<quant>/paged_decode_attn_fp8.cu` — native FP8 KV attention.
+- `kernels/gb10/common/fp8_gemm_t_blockscaled.cu`, `moe_fp8_grouped_gemm.cu`, `w8a16_gemm*.cu` — the FP8 weight paths. FP8 checkpoints run on their model's `nvfp4` kernel target, which carries the FP8 kernels (`quant_pair_compatible` in `crates/server/src/main_modules/serve_quant.rs`).
+- `kernels/gb10/common/paged_decode_attn_fp8.cu` — native FP8 KV attention.
 - `crates/core/src/numeric.rs` — the FP8 E4M3 LUT and the f32 → BF16 RNE cast, with the PyTorch-parity vectors.
 - `crates/model-layers/src/quant_format/` — per-format descriptors and runtime dispatch.
 - `crates/cache/src/kv_cache.rs` — `KvCacheDtype::Fp8` sizing + calibration plumbing.

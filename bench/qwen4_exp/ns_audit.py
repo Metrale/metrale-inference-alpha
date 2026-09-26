@@ -60,7 +60,7 @@ for f, c in fam.items():
     g[0] += 1
     g[1] += c
 
-print(f'{"families":>9} {"tensors":>9}  destination (issue #753 item)')
+print(f'{"families":>9} {"tensors":>9}  destination (port item)')
 for k in sorted(groups):
     fams, cnt = groups[k]
     print(f'{fams:9d} {cnt:9d}  {k}')

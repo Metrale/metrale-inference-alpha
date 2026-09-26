@@ -21,7 +21,7 @@ This is not a gimmick — it's the logical extension of our philosophy. If AI ca
 ### Prerequisites
 
 - CUDA 13.0+ with `nvcc`
-- Rust stable (see `rust-toolchain.toml`)
+- Rust, at the release `rust-toolchain.toml` pins
 - NVIDIA GB10 GPU (for kernel testing — unit tests run without GPU)
 
 ### Build & Test
@@ -49,10 +49,9 @@ METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test --workspace
 cargo fmt --all -- --check          # formatting
 ```
 
-`scripts/check.sh` wraps the same idea, but it exports `SKIP_METRALE_BUILD`, and
-`crates/kernels/build.rs` matches on `METRALE_SKIP_BUILD` only — so the
-wrapper does **not** currently skip the PTX build. Use the explicit env vars
-above until the script is fixed.
+`scripts/check.sh` wraps the same idea: it exports `METRALE_SKIP_BUILD=1` and
+`CUDARC_CUDA_VERSION=13000` and runs `cargo check` (or the cargo subcommand you
+pass, e.g. `scripts/check.sh clippy --tests`).
 
 The file-size cap (≤500 LoC per `crates/**/*.rs`) is enforced by
 `.github/workflows/file-size-cap.yml`, which carries a long allow-list of
@@ -77,8 +76,8 @@ cargo test -p metrale-server --release -- --ignored
 # DGX Spark cluster. Defaults to localhost for single-node runs.
 python3 tests/run_all_models.py
 
-# Microbenchmarks (single GPU).
-cargo bench -p metrale-bench
+# GPU kernel microtests (single GPU), e.g.
+cargo run --release -p metrale-model-arch --features gpu-examples --example fp8gemm_microtest
 ```
 
 CI enforces (all GPU-free): `fmt`, `clippy`, `cargo test --workspace`
@@ -92,9 +91,9 @@ file), file-size cap (≤500 LoC per `crates/**/*.rs`), and mdBook +
 PRs fail without an authoring maintainer needing GPU access — the kernel
 work happens locally.
 
-`ci.yml` also runs `test-macos-metal`, `release-matrix`, and an **advisory**
-`pr-benchmark-gate` (`continue-on-error: true`) that checks committed
-`.benchmarks/*` records against their baselines without reddening the PR.
+`ci.yml` also runs `test-macos-metal`, `release-matrix`, and
+`pr-benchmark-gate` ("PR Benchmark Certifications"), which requires a passing
+committed `.benchmarks/*` record for every gate the commit owes.
 
 **CI-green is not the same as shippable.** The GPU-free CI proves the code
 compiles and is hygienic; it does *not* boot a model. An image is only
@@ -186,7 +185,7 @@ Each hardware × model × quantization combination is a self-contained body of w
    LEVER is one commit across four places — the `TargetDefaults` field, the
    parse arm, the resolver and every target's table — and that commit is the one
    landing the arm which reads it.
-3. Register them in the appropriate `crates/metrale-*` kernel crate
+3. Look the new modules up from the layer that launches them (`crates/model-layers/src/layers/ops/`); the kernels build picks the sources up by itself
 4. Add benchmark shapes to `crates/bench/`
 5. Demonstrate speedup over the baseline (PyTorch, cuBLAS, etc.)
 
@@ -213,7 +212,7 @@ Open an issue with:
 
 ## Code Standards
 
-- **Rust** — `cargo fmt` and `cargo clippy -- -D warnings` must pass
+- **Rust** — `cargo fmt` and `cargo clippy --workspace --tests` must pass (deny-warnings comes from `[workspace.lints]`)
 - **CUDA** — `clang-format` with the repo's `.clang-format` config
 - **No Python in the engine** — the shipped binary is pure Rust + CUDA and the
   image carries no Python runtime. Python is still the language of the *harnesses*
@@ -270,14 +269,15 @@ prose. Each state names its exit condition and the command that proves it.
 
 Invariants an agent must not violate:
 
-- **A gate record is only valid for the commit that produced it.** Any change
-  under `crates/`, `kernels/`, `Cargo.*`, `vendor/`, `jinja-templates/` or
-  `rust-toolchain.toml` invalidates every record. Re-run the gates after your
-  last code commit, not before it.
+- **A gate record is only valid for the code that produced it.** A change
+  under the perf paths (`crates/`, `kernels/`, `Cargo.*`, `vendor/`,
+  `jinja-templates/`, `rust-toolchain.toml`; `PERF_PATHS` in
+  `crates/bench/src/gate/coverage.rs`) invalidates the records it covers.
+  Re-run the gates after your last code commit, not before it.
 - **Never commit a record produced by a dirty tree.** It names a commit whose
   binary did not produce it, which is worse than having no record.
-- **Never lower a threshold in `.benchmarks/*/BASELINE.json` to make a gate
-  pass.** Those are evidence. If a gate is wrong, say so in the PR and argue it.
+- **Never lower a threshold in `kernels/<hw>/<model>/BENCH.toml` to make a
+  gate pass.** Those are evidence. If a gate is wrong, say so in the PR and argue it.
 - **`cargo doc` is part of the sweep.** `fmt`, `clippy` and `test` all pass on a
   broken rustdoc; a dangling intra-doc link only fails under `cargo doc`.
 - **Report what you measured, separately from what you inferred.** A precise
@@ -307,4 +307,4 @@ You will not be penalised for writing code by hand. You will be asked why.
 
 ## License & CLA
 
-By contributing, you agree that your contributions will be governed by our [Contributor License Agreement (CLA)](CLA.md). Your work will be distributed under the project's licence, [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), and you grant us the right to commercially re-license it.
+By contributing, you agree that your contributions will be governed by our [Contributor License Agreement (CLA)](CLA.md). Your work will be distributed under the project's licence, [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).

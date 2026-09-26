@@ -9,13 +9,13 @@ elsewhere:
 
 | For… | Read |
 |------|------|
-| Copy-paste per-model `docker run` recipes | [`QUICKSTART.md`](../QUICKSTART.md) · the `@metrale` [recipe registry](https://github.com/Metrale/metrale-recipes) |
+| Copy-paste per-model `docker run` recipes | [`QUICKSTART.md`](../QUICKSTART.md) · the [metralectl recipes](https://github.com/Metrale/metralectl/tree/main/recipes) (`metralectl run <recipe>`) |
 | Deployment *modes* (single-GPU, EP=2/TP=2, NVMe swap) | [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) |
 | Release/image pipeline, and the native binary | [`docker/docker-guide.md`](../docker/docker-guide.md) · [`docs/releases/`](releases/) |
 | Adding a new model/hardware target | [`docs/HARDWARE.md`](HARDWARE.md) · [`AGENTS.md`](../AGENTS.md) |
 
 **Serve config SSOT:** the `defaults:` block of the matching
-[`metrale-recipes`](https://github.com/Metrale/metrale-recipes) recipe is
+[metralectl recipe](https://github.com/Metrale/metralectl/tree/main/recipes) is
 the authoritative launch config for each model — continuously tuned, pinning the
 flags that hold the quality gates. **If a flag here and a recipe disagree, the
 recipe wins.** This guide is the *why*; the recipe is the exact *what*.
@@ -66,7 +66,7 @@ at conc=1; it trades against batch size and KV dtype (see §4).
 |-------|----------------|----------------------|--------------|--------------|--------|---------------|-------|
 | **Qwen3.6-35B-A3B** ⭐ | `Qwen/Qwen3.6-35B-A3B-FP8` | 35B / 3B | FP8 | hybrid SSM (GDN) + attn + MoE | ~157 (nvfp4) | **64K** | **Daily-driver / agentic coding.** MTP K=2, DFlash drafter `z-lab/…-DFlash`, live tool-call streaming |
 | **Qwen3.6-27B** | `Qwen/Qwen3.6-27B-FP8` | 27B dense | FP8 | hybrid attn + GDN + dense FFN | ~15 | 24K | Dense reasoning; MTP off; DFlash `z-lab/Qwen3.6-27B-DFlash` |
-| **Qwen3.6-27B** (NVFP4) | `nvidia/Qwen3.6-27B-NVFP4` | 27B dense | NVFP4 (mixed) | hybrid attn + GDN + dense FFN | ~14 | 24K | Dense; MTP off; ModelOpt mixed FP8-attn/NVFP4-MLP, requants at load. Avoid `unsloth/Qwen3.6-27B-NVFP4` on current HF main (2026-07-10 re-upload broke the layout, see #327; old pin `890bdef7` still works) |
+| **Qwen3.6-27B** (NVFP4) | `nvidia/Qwen3.6-27B-NVFP4` | 27B dense | NVFP4 (mixed) | hybrid attn + GDN + dense FFN | ~14 | 24K | Dense; MTP off; ModelOpt mixed FP8-attn/NVFP4-MLP, requants at load. Avoid `unsloth/Qwen3.6-27B-NVFP4` on current HF main (its 2026-07-10 re-upload broke the layout; the old pin `890bdef7` still works) |
 | **Qwen3.5-35B-A3B** | `Sehyo/Qwen3.5-35B-A3B-NVFP4` | 35B / 3B | NVFP4 | hybrid GDN + attn + MoE | ~131 | 24K | MTP K=2. (⚠️ HF-id drift — see below) |
 | **Qwen3.5-27B** | `Kbenkhaled/Qwen3.5-27B-NVFP4` | 27B dense | NVFP4 | hybrid attn + SSM, dense FFN | ~14 | 24K | Dense; MTP off |
 | **Qwen3-Next-80B-A3B** | `nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4` | 80B / 3B | NVFP4 | hybrid SSM + MoE (512 experts) | ~74–104 | 8K | MTP; NVIDIA reference checkpoint |
@@ -98,8 +98,8 @@ id; tracked for reconciliation — the recipe id is what to pull):
 - **Qwen3.6-27B:** registry `MODEL.toml` says `Qwen/Qwen3.6-27B`, but the recipe
   and Dockerfile serve `Qwen/Qwen3.6-27B-FP8` — pull the `-FP8` checkpoint.
   Validated NVFP4 path on GB10: `nvidia/Qwen3.6-27B-NVFP4` (~14 tok/s). Avoid
-  current `unsloth/Qwen3.6-27B-NVFP4` HF main (broken layout after 2026-07-10
-  re-upload; see #327).
+  current `unsloth/Qwen3.6-27B-NVFP4` HF main (broken layout after its
+  2026-07-10 re-upload).
 - **MiniMax-M2.7:** registry `MODEL.toml` (`minimax-m2-229b`) points at the base
   `MiniMaxAI/MiniMax-M2.7`, while the recipe uses the quantized
   `lukealonso/MiniMax-M2.7-NVFP4` — use the recipe's NVFP4 id.
@@ -125,7 +125,7 @@ launch with the recipe's `max_model_len`; trade context against batch/KV via §4
 | **Smallest / dense reasoning** | `Qwen3.5-27B-NVFP4` or `Qwen3.6-27B-FP8` | Dense hybrids; ~14–15 tok/s, low VRAM |
 
 Then copy that model's recipe from [`QUICKSTART.md`](../QUICKSTART.md) or run
-`sparkrun run @metrale/<recipe-stem>`. Deviate from the flagship only with a reason —
+`metralectl run <recipe>`. Deviate from the flagship only with a reason —
 the recipe defaults encode gate-passing choices.
 
 ---
@@ -269,7 +269,7 @@ Failure modes:
 
 Topology quick pick: **EP=2** (`--ep-size 2 --tp-size 1`) for MoE expert sharding
 across two nodes — this is what the 122B and MiniMax-M2.7 recipes use. **TP+EP**
-(`--tp-size 2 --ep-size 2`, a 4-rank layout) is only for a model that must shard
+(`--tp-size 2 --ep-size 2`, both groups on the same two ranks) is only for a model that must shard
 *both* attention and experts; none of the current 2-node recipes need it. Pure TP=2
 is rare and OOM-prone for these models. The 397B needs **EP=4** (4 nodes).
 
@@ -300,4 +300,4 @@ clean checkout against a running server.
 - [`QUICKSTART.md`](../QUICKSTART.md) — the copy-paste recipes this guide routes to.
 - [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — deployment modes + NVMe swap internals.
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md) · [`AGENTS.md`](../AGENTS.md) — building & contributing.
-- [`metrale-recipes`](https://github.com/Metrale/metrale-recipes) — the serve-config SSOT (`sparkrun run @metrale/<recipe>`).
+- [metralectl recipes](https://github.com/Metrale/metralectl/tree/main/recipes) — the serve-config SSOT (`metralectl run <recipe>`).

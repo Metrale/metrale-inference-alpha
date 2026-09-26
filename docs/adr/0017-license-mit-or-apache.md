@@ -2,15 +2,8 @@
 
 **Status:** Accepted
 **Date:** 2026-09-24
-**Supersedes:** [ADR-0001](0001-license-agpl-with-cla.md)
 
 ## Context
-
-[ADR-0001](0001-license-agpl-with-cla.md) chose AGPL-3.0-only with a CLA, to
-close the SaaS loophole while keeping a path to commercial terms. Its own
-"Worse" section named the cost: AGPL-3.0 cannot be embedded in a permissively
-licensed library, and enforcing the network-use clause depends on noticing
-violations.
 
 Metrale Engine is built on a Rust ecosystem that is overwhelmingly
 MIT OR Apache-2.0 (`cudarc`, and most entries in `deny.toml`'s allow-list). The
@@ -28,7 +21,6 @@ owner decided the engine should carry the same licence.
   `THIRD_PARTY_NOTICES.md` with its full text under `LICENSES/`.
 - The workspace crates declare `license = "MIT OR Apache-2.0"`, and
   `deny.toml` no longer needs an entry for the project's own licence.
-- The CLA stays as it is.
 
 ## Consequences
 
@@ -39,11 +31,8 @@ owner decided the engine should carry the same licence.
   clear.
 
 **Worse:**
-- The SaaS-loophole protection ADR-0001 was written for is gone: a hosted
-  fork owes nothing back. This is the trade-off accepted here.
-- A separately licensed commercial edition no longer has a copyleft boundary
-  to sell across.
+- A hosted fork owes nothing back. This is the trade-off accepted here.
 
 **New problems we created:**
-- Nothing in CI fails when a stray "AGPL" string is added to prose. The SPDX
-  check covers headers only.
+- Nothing in CI fails when prose states a different licence. The SPDX check
+  covers headers only.

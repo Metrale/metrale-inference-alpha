@@ -42,7 +42,7 @@ Unlike attention, SSMs carry a **compressed hidden state** across the sequence. 
 
 A chronic issue: prefilling a long prompt through an SSM layer requires computing the full linear recurrence from scratch. The intermediate state can be gigabytes if the prompt is 16k tokens and the batch is moderate.
 
-The **chunked prefill** path in `kernels/gb10/<model>/<quant>/` breaks the prefill into chunks of (typically) 1024 tokens. Each chunk:
+The **chunked prefill** path (the `gated_delta_rule*` kernels in `kernels/gb10/common/`) breaks the prefill into chunks of (typically) 1024 tokens. Each chunk:
 
 1. Starts from the state at the end of the previous chunk.
 2. Processes its tokens through the recurrence.
@@ -91,7 +91,7 @@ Each step calls into `metrale-gpu-runtime::GpuBackend` via the layer's cached `K
 
 ## Files to read
 
-- `kernels/gb10/<model>/<quant>/ssm_preprocess.cu`, `gdr.cu`, `causal_conv1d.cu`
-- `crates/model-layers/src/layers/qwen3_ssm/mod.rs`, `nemotron_mamba2.rs`
-- `crates/telemetry/src/prefix_cache.rs` (Marconi SSM snapshot)
+- `kernels/gb10/common/ssm_preprocess.cu`, `gated_delta_rule*.cu`, `causal_conv1d.cu`
+- `crates/model-layers/src/layers/qwen3_ssm/mod.rs`, `crates/model-arch/src/nemotron_mamba2.rs`
+- `crates/cache/src/radix_tree/snapshot.rs` and `crates/telemetry/src/prefix_cache.rs` (Marconi SSM snapshot)
 - `docs/METRALE_JOURNEY.md` — the SSM/GDN story in narrative form, within the GB10 benchmark retrospective

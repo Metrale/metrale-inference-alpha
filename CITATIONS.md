@@ -1,8 +1,8 @@
 # CITATIONS
 
-This branch (`feature/tq-plus-integration`) integrates TurboQuant+ work from
-prior art that upstream Metrale Engine does not credit. Local-only development; not for
-publication or upstream PR.
+Prior art that Metrale Engine's TurboQuant+ KV-cache work (the `turbo*` KV
+dtypes, [`docs/turboquant-plus.md`](docs/turboquant-plus.md)) builds on, and
+what was ported from each.
 
 ## Prior art (in order it should be cited)
 
@@ -120,7 +120,7 @@ port work needed.
 | File | Change |
 |---|---|
 | `kernels/gb10/common/tq_plus_innerq.cuh` | new — namespace + state declarations + `apply_innerq_scale[_inv]_128` + `accumulate_innerq_calibration_128` helpers |
-| `kernels/gb10/common/tq_plus_innerq.cu` | new — `d_innerq_scale[128]`, `d_innerq_scale_inv[128]`, sq-accum, active/calibrating flags. Host controllers: `turbo_innerq_start_calibration(target, strength)` and `turbo_innerq_finalize(group_size, strength)` |
+| `kernels/gb10/common/tq_plus_innerq_apply.cu` | new — `d_innerq_scale[128]`, `d_innerq_scale_inv[128]`, sq-accum, active/calibrating flags. Host controllers: `turbo_innerq_start_calibration(target, strength)` and `turbo_innerq_finalize(group_size, strength)` |
 
 Default state: identity scales (1.0), active=0. Currently a stand-alone
 infrastructure drop — integration with `wht_bf16_inplace` requires that
@@ -185,9 +185,6 @@ Remaining work for true asymmetric:
 
 ## License note
 
-Upstream Metrale Engine is MIT OR Apache-2.0, with a CLA assigning commercial
-relicense rights. This branch is **local-only**; do not push to
-any public fork or upstream PR. If TQ+ work needs to be made public, file a
-new fork under Tom Turney's account with full prior-art chain (1) → (2) → (3)
-above prominently cited and the original `TheTom/llama-cpp-turboquant`
-attribution at the top of every modified kernel.
+Metrale Engine is MIT OR Apache-2.0. The TurboQuant+ work cites the prior-art
+chain (1) → (2) → (3) above; the licence of the code it draws on is recorded in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) §7.

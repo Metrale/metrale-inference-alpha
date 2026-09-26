@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // provenance-id: 526f6e616c6420522e205374657369616b
+
 // Build: nvcc -O3 -fmad=false -arch=sm_121a (the -fmad=false matters: nvcc contracts a*b+c by default and glibc does not, except where the FMA pattern below says so).
 // Result on GB10, 2026-09-19: expf 0, log1pf 0, sqrt(softplus) 0 mismatches over all 2^32 inputs against glibc 2.39 aarch64.
 // glibc 2.39 aarch64 expf / log1pf ported to CUDA with the FMA pattern of the installed libm (objdump of __expf_finite, __log1pf),

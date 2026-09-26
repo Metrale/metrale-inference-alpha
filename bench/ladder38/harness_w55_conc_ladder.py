@@ -5,7 +5,7 @@
 # Owner: bench, concurrency ladder.
 # Invariants: none beyond the types.
 """
-PR #388 definitive concurrency ladder — C=1..128, one client, both engines.
+Definitive concurrency ladder — C=1..128, one client, both engines.
 
 Pinned by recipes/qwen3.6/qwen3.6-27b-w55-sweep-dev.yaml. Every measurement
 knob is a constant or a required argument; nothing is defaulted silently.
@@ -101,7 +101,7 @@ def set_nonce_base(base: int) -> int:
 
 
 def make_prompt(isl_tokens: int) -> str:
-    """Word-for-word the shape of metrale-plugin's `stats::make_prompt`: the chat
+    """Word-for-word the shape of metrale-bench's `stats::make_prompt`: the chat
     template contributes ~12 tokens, the rest is `needed` filler words, and the
     nonce prefix forces a prefix-cache MISS so every request does real prefill.
 

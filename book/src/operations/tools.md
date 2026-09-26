@@ -1,18 +1,23 @@
 # Tool Calling & Streaming
 
-Metrale Engine supports OpenAI-compatible **function calling** across three wire formats and full **SSE streaming** (OpenAI + Anthropic conventions). This chapter is the operator reference for running agents against Metrale Engine — how to enable tools, stream responses, handle multi-turn tool results, and recognise the failure modes that used to bite real agents.
+Metrale Engine supports OpenAI-compatible **function calling** across several wire formats and full **SSE streaming** (OpenAI + Anthropic conventions). This chapter is the operator reference for running agents against Metrale Engine — how to enable tools, stream responses, handle multi-turn tool results, and recognise the failure modes that used to bite real agents.
 
 ## Enable tools
 
-Tool calling is on by default — just include `tools: [...]` in your request. Metrale Engine auto-selects the wire format from the model's `MODEL.toml`. Overriding: `--tool-call-parser <FORMAT>`.
+Include `tools: [...]` in your request. The wire format comes from `--tool-call-parser <FORMAT>`, else the model's `MODEL.toml` `[behavior].tool_call_parser`, else the model type's entry in `crates/server/tool_defaults.toml`; a model with none of the three has tool calling off.
 
-| Parser | Wire format | Models |
-|---|---|---|
-| `hermes` | `<tool_call>{...}</tool_call>` JSON | Qwen3-VL, Qwen3-Next, MiniMax |
-| `qwen3_coder` | XML-in-tool-call with `<function=...><parameter=...>` | Qwen3.5-27B/35B/122B, Nemotron-H, Qwen3.6 |
-| `mistral` | JSON after `[TOOL_CALLS]` prefix | Mistral-Small-4 |
+| Parser | Wire format |
+|---|---|
+| `hermes` | `<tool_call>{...}</tool_call>` JSON |
+| `qwen3_coder` | XML-in-tool-call with `<function=...><parameter=...>` |
+| `qwen3_xml` | the Qwen3 XML variant |
+| `gemma4` | Gemma-4's tool-call syntax |
+| `mistral` | JSON after the `[TOOL_CALLS]` prefix |
+| `minimax_xml` | `<minimax:tool_call>` XML |
+| `bare_json` | an unwrapped JSON object |
+| `poolside_v1` | Poolside's format |
 
-All three formats are parsed on the server and emitted to the client as standard OpenAI `tool_calls` blocks — you do not need to handle the wire format in your client.
+Every format is parsed on the server and emitted to the client as standard OpenAI `tool_calls` blocks — you do not need to handle the wire format in your client.
 
 ## Minimal tool-call request
 
@@ -148,7 +153,7 @@ curl -s http://localhost:8888/v1/messages \
   }'
 ```
 
-Streaming uses Anthropic's event conventions — `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`. Metrale Engine populates `stop_sequence` on `message_delta` when a stop token was hit (fixed in wave-12 — earlier builds left it null).
+Streaming uses Anthropic's event conventions — `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`. Metrale Engine populates `stop_sequence` on `message_delta` when a stop token was hit.
 
 Tool use on `/v1/messages` uses Anthropic's nested content-block format:
 
@@ -168,16 +173,16 @@ Tool use on `/v1/messages` uses Anthropic's nested content-block format:
 Models that emit `<think>` (Qwen3.5, Nemotron-H, MiniMax) stream reasoning content as a separate channel:
 
 ```
-data: {"choices":[{"delta":{"reasoning":"Let me think step by step. First, ..."}}]}
+data: {"choices":[{"delta":{"reasoning_content":"Let me think step by step. First, ..."}}]}
 
-data: {"choices":[{"delta":{"reasoning":" the user is asking about..."}}]}
+data: {"choices":[{"delta":{"reasoning_content":" the user is asking about..."}}]}
 
 data: {"choices":[{"delta":{"content":"The answer is 42."}}]}
 
 data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 ```
 
-This matches OpenAI's `o1` family convention. Clients that don't parse `reasoning` chunks will ignore them cleanly.
+Clients that don't parse `reasoning_content` chunks will ignore them cleanly.
 
 `--max-thinking-budget` caps the total reasoning tokens; `--disable-thinking` strips them entirely. For agent workloads that want reasoning but don't want unbounded think time, a budget of 2048–4096 is typical.
 
@@ -199,18 +204,18 @@ Qwen3-VL and Qwen3.6 accept images in OpenAI content-parts format:
 }
 ```
 
-`image_url` accepts `data:` URLs (base64-encoded) or `http(s):` URLs (the server fetches them). Multiple images per message are supported.
+`image_url` accepts `data:` URLs (base64-encoded). `http(s):` URLs are refused with a 400 unless the server runs with `--vision-allow-remote-images`, because fetching them lets any client make the server issue outbound requests. Multiple images per message are supported.
 
 ## Known pitfalls and how Metrale Engine addresses them
 
-- **Tool-call hallucination inside markdown fences.** Older builds' parsers ate the surrounding fence characters. Fixed in wave-1 (markdown-fence aware parser) + XGrammar grammar enforcement.
-- **Broken tool-call XML (Qwen3-coder format).** The parser now tolerates literal `</tool_call>` inside JSON string values, missing `</parameter>` tags, and empty `{}` tool-call bodies (wave-7).
-- **Streaming Responses store tool_calls.** The server now persists tool calls to the Responses-API session store mid-stream so multi-turn conversations across the Responses API see them on the next turn (wave-11).
-- **Balanced markdown URL parens.** The citation extractor used to choke on Wikipedia URLs containing parentheses; now uses a balanced parser (wave-11).
-- **Template-forced thinking false-positive.** Qwen3.6's `<think>\n\n</think>\n\n` template prologue was triggering the reasoning parser; now requires the opening `<think>` to be unclosed (wave-4).
-- **Spontaneous `<think>` outside the template position.** Qwen3.6 occasionally emits `<think>` in response mid-stream; Metrale Engine now detects this in all four affected code paths (wave-3).
+- **Tool calls inside markdown fences.** The parser is markdown-fence aware, and XGrammar enforcement keeps the call well-formed.
+- **Broken tool-call XML (Qwen3-coder format).** The parser tolerates literal `</tool_call>` inside JSON string values, missing `</parameter>` tags, and empty `{}` tool-call bodies.
+- **Streaming Responses store tool_calls.** The server persists tool calls to the Responses-API session store mid-stream, so multi-turn conversations across the Responses API see them on the next turn.
+- **Balanced markdown URL parens.** The citation extractor uses a balanced parser, so URLs containing parentheses survive.
+- **Template-forced thinking.** A `<think>\n\n</think>\n\n` template prologue does not trigger the reasoning parser; the opening `<think>` must be unclosed to count.
+- **Spontaneous `<think>` outside the template position.** A `<think>` the model emits mid-stream is detected on every affected code path.
 
-All of these have regression tests under `crates/server/src/tool_parser.rs` and `reasoning_parser.rs`.
+All of these have regression tests under `crates/server/src/tool_parser/` and `crates/server/src/reasoning_parser/`.
 
 ## Running against real agents
 
@@ -224,7 +229,7 @@ Minimum Metrale Engine config for running Claude Code, OpenCode, Cline, or nanob
 
 ## Files to read
 
-- `crates/server/src/tool_parser.rs` — the three parser impls.
+- `crates/server/src/tool_parser.rs` and `tool_parser/` — the parser impls.
 - `crates/server/src/reasoning_parser/` — `<think>` detection + extraction.
 - `crates/server/src/openai/`, `anthropic/` — request/response structs.
 - `crates/server/src/api/` — the HTTP handlers.

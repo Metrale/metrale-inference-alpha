@@ -29,17 +29,16 @@ retain its patch/source archive instead of presenting the label as a clean pin.
 
 This image contains no model weights or credentials. Mount the separately
 verified checkpoint read-only and use the reviewed rank map and explicit serve
-arguments from the [launch harness in PR #1166](https://github.com/Metrale/metrale-inference-alpha/pull/1166). Keep the host's
+arguments from the launch harness in `scripts/k3/` (`scripts/k3/LAUNCH.md`). Keep the host's
 matching driver/NVIDIA Container Toolkit and required network devices available.
 Do not copy dual-DGX-Spark RoCE overrides onto a single-node NVSwitch rental.
 A container build or `serve --help` is not a GPU inference receipt. Start with
 a bounded small-fixture canary before attempting official TP8 weights.
 
-## Extraction status
+## Status
 
-The recipe is extracted unchanged from #1150. The GB10 build/inference receipts
-there apply to that integration revision. No Docker image was rebuilt on this
-extracted head. B300 hardware registration and K3 serving integration must land
-before claiming that the B300 command or K3 inference works from a release.
-This recipe currently rejects B200 explicitly; the rental used native builds.
-Keep that limitation visible rather than treating the host whitelist as support.
+B300
+hardware registration and K3 serving integration must land before claiming
+that the B300 command or K3 inference works from a release. The Dockerfile
+rejects B200 explicitly; keep that limitation visible rather than treating the
+host whitelist as support.

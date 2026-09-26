@@ -104,10 +104,10 @@ variant, etc.), you'll also need to:
 ## Adding a new hardware target
 
 Metrale Engine's NVIDIA targets are **GB10 (Blackwell, sm_121)**, **Hopper
-(H100/H200, sm_90a)** and **B200 (B200/GB200, sm_100a)**; `strix`/`strix-hip`
-(AMD gfx1151) and `metal` are the non-NVIDIA sets. Adding another — say sm_120
-for a consumer Blackwell board, or sm_103 for Blackwell Ultra (B300/GB300) —
-requires:
+(H100/H200, sm_90a)**, **B200 (B200/GB200, sm_100a)** and a Kimi K3 bring-up
+set for **B300 (sm_103a)**; `strix`/`strix-hip` (AMD gfx1151) and `metal` are
+the non-NVIDIA sets. Adding another — say sm_120 for a consumer Blackwell
+board — requires:
 
 1. **`kernels/<new-hw>/HARDWARE.toml`**. The keys are exactly the ones
    `crates/kernels/build.rs` reads, plus documentation:
@@ -250,7 +250,7 @@ line of every failure, and the worst register/spill numbers. It exits non-zero
 if anything failed.
 
 **What it found, 2026-09-05** (CUDA 13.0.88; re-run the gate to reproduce —
-`scripts/hopper_ptx_gate.sh --hw hopper --model all --strict`, see #899):
+`scripts/hopper_ptx_gate.sh --hw hopper --model all --strict`):
 **870 of 871** kernels
 across the five P0 targets emitted PTX and assembled for sm_90a on the first
 pass. The one that did not was
@@ -362,7 +362,7 @@ memory. So `sm_100a` PTX is not "sm_121 PTX that also runs on a B200", and
 neither arch's PTX runs on the other.
 
 **What the gate found, 2026-09-05** (CUDA 13.0.88;
-`scripts/hopper_ptx_gate.sh --hw b200 --model all`, see #899):
+`scripts/hopper_ptx_gate.sh --hw b200 --model all`):
 **870 of 871** kernels across the five P0 targets emitted PTX and assembled for
 sm_100a on the first pass — the same count as Hopper, and the same single
 kernel failing, but for a **different reason**:
@@ -485,9 +485,8 @@ Hopper and fail for gb10. The
 `ptxas` on every emitted module. On 2026-09-05 it found 22 of 173 gb10
 `qwen3.6-35b-a3b` modules (42 entry functions, the BR=64 prefill variants and
 their BR=32 siblings) rejected for `sm_121f` on CUDA 13.0.88. That is a
-pre-existing gb10 finding, independent of the Hopper and B200 targets; the
-inventory, receipts and runtime trace live with the campaign notes in
-Metrale/metrale-inference-alpha#899.
+pre-existing gb10 finding, independent of the Hopper and B200 targets; re-run
+the gate with `--hw gb10` to list the modules.
 
 ### Device validation
 
@@ -495,10 +494,10 @@ Once compiled:
 
 ```bash
 # Smoke test
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   metrale-inference-gb10:latest \
-  serve <new-model-hf-id> --max-seq-len 4096 --max-batch-size 1
+  serve --bind 0.0.0.0 <new-model-hf-id> --max-seq-len 4096 --max-batch-size 1
 
 curl http://localhost:8888/v1/chat/completions -d '{"model":"...","messages":[{"role":"user","content":"hi"}]}'
 
@@ -509,8 +508,8 @@ python3 tests/single_gpu_suite.py --url http://localhost:8888 --model <new-model
 python3 tests/run_all_models.py
 ```
 
-The sweep harness saves per-model JSONs to `tests/all_models_results/`
-that you can diff against the pre-merge baseline (`tests/all_models_results.pre-refactor/`).
+The sweep harness writes a per-model Markdown table to `tests/all_models_results.md`
+that you can diff against a run of the pre-change tree.
 
 ## Reference implementations
 

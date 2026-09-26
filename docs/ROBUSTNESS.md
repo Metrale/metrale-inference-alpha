@@ -1168,7 +1168,7 @@ is the deliverable, because the alternative is re-digging it later.
 **One scare, resolved by looking.** Neither `install.sh` nor `install.ps1` is in
 this repository, which for a script every user pipes into `sh` looked like an
 unversioned, unreviewed artefact. It is not: both live in
-`Metrale/metrale-recipes` under `scripts/`, with a 24 KB test suite
+`Metrale/metralectl` under `scripts/`, with a 24 KB test suite
 beside them, and the served copies are byte-identical to source. Worth recording
 because "the installer is not in this repo" is true, alarming, and wrong as a
 conclusion.

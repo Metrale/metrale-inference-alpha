@@ -1,11 +1,11 @@
 # Qwen3.8-Flash-Next (`qwen4_exp`) — plan of work to first correct token
 
-Written 2026-08-26, after the load milestone (Metrale Engine #753, PR #754). The model
+Written 2026-08-26, after the load milestone. The model
 boots, passes the fail-closed kernel audit, and serves the HTTP API. It does
 not generate: a request reaches model layer 0 and is refused by name.
 
-This file is the sequencing decision and the reasoning behind it. Progress is
-tracked on #753's checkboxes; this is the *order* and the *why*.
+This file is the sequencing decision and the reasoning behind it: the *order*
+and the *why*.
 
 ---
 
@@ -274,7 +274,7 @@ It is a diagnostic that proves the mHC spine end to end, not a result.
 ### D — PLE n-gram injection · large
 
 Spec in `ARCHITECTURE.md` §2 and §4. The row cache, pinned arena, deferred
-load and pre-flight exclusion all transfer from #746. **The ID computation
+load and pre-flight exclusion all transfer from the LongCat n-gram work. **The ID computation
 does not** — LongCat is a polynomial rolling hash, Qwen is SplitMix64.
 
 - [ ] Read `layer_multipliers` `[3]` I64 from the checkpoint; use
@@ -290,7 +290,7 @@ does not** — LongCat is a polynomial rolling hash, Qwen is SplitMix64.
 - [ ] Per-sequence conv state for decode (9 steps x 10240) — new state, sized
       into the KV/state budget
 - [ ] Inject into the 10240 highway **before** model layer **1**'s attn hyper-connection — `ple_layer_ids` is 1-INDEXED (`ple_layer_ids.index(layer_idx + 1)`), so `[2]` means `layer_idx == 1`, and the checkpoint confirms it: the tensors are at `layers.1.ple.*`
-- [ ] Bit-exactness harness for the IDs, in the shape of #746's
+- [ ] Bit-exactness harness for the IDs, in the shape of LongCat's
       `ngram_parity.py` — a wrong hash returns valid rows from a 320M-row
       table and nothing in the log ever says so
 
@@ -353,7 +353,7 @@ Stated rather than asked; all reversible, all narrowing.
 
 | | v1 | why |
 |---|---|---|
-| MTP | **dropped** | #753 item I; saves 4.7 GB and substantial work |
+| MTP | **dropped** | item I; saves 4.7 GB and substantial work |
 | QSA indexer | **sequenced, not dropped** | required (§1.5); unverifiable until F buys a context above 2048. Weights load NOW |
 | batched / multi-seq decode | **refused** | C=1 proves correctness; concurrency is a perf question |
 | vision tower | **text only** | `qwen3_vl.rs` is believed to cover it; untested, so refuse rather than guess |

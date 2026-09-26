@@ -74,7 +74,6 @@
 
 # Appendix
 
-- [Paper Summary](./appendix/paper.md)
 - [A Category-Theoretic Perspective](./appendix/category-theory.md)
 - [Glossary](./appendix/glossary.md)
 - [Further Reading](./appendix/reading.md)

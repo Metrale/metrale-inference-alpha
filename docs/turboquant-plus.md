@@ -1,8 +1,5 @@
 # TurboQuant+ — KV-cache compression beyond the Google baseline
 
-Tracking issue: [#91](https://github.com/Metrale/metrale-inference-alpha/issues/91)
-(proposal + planned scope).
-
 This document describes the TurboQuant+ (TQ+) integration in Metrale Engine: what
 changed vs upstream, why each piece matters, before/after numbers, and
 exactly how to reproduce them.
@@ -144,16 +141,9 @@ docker run -d --name metrale-bench --gpus all --ipc=host \
     --kv-cache-dtype $D --kv-high-precision-layers 0
 ```
 
-Wait for `/v1/models` to respond, then run the bench harness:
-
-```bash
-python3 tests/metrale_matrix_no_hp.py --dtypes $D --out /tmp/$D.json
-```
-
-The harness (in `tests/metrale_matrix_no_hp.py`; the script started life as
-ad-hoc local tooling at `/tmp/metrale_matrix_no_hp.py` on the original test
-host and the same code is reproduced here for reviewer convenience) does
-4 things per dtype:
+Wait for `/v1/models` to respond, then run the checks below against it.
+`tests/metrale_bench_comprehensive.py` (see "Reproduce one cell" below) runs the same
+measurements and starts the container itself. Per dtype:
 
   1. **PPL similarity:** Continues a fixed WikiText Manhattan-Project
      prompt for 64 tokens and reports `difflib.SequenceMatcher` ratio
@@ -188,10 +178,10 @@ docker run --rm --entrypoint /bin/bash \
   -e METRALE_SKIP_BUILD=1 -e CUDARC_CUDA_VERSION=13000 \
   -v $(pwd):/metrale \
   metrale-inference-gb10-tqplus-dev \
-  -c "cd /metrale && cargo test -p metrale-gpu-runtime --tests kv_cache::"
+  -c "cd /metrale && cargo test -p metrale-cache kv_cache::"
 ```
 
-Expected: `test result: ok. 32 passed; 0 failed`.
+Expected: `test result: ok. 35 passed; 0 failed`.
 
 ## Results
 
@@ -208,8 +198,7 @@ prompts that produce ≈ 405 / 1595 / 3177 input tokens respectively.
 `dec_short` is 256-token completion after a short prompt.
 `dec_after_8K` is 128-token completion after an 8K-token prefill —
 wall-time including the prefill, **not** steady-state decode rate.
-It's retained because it's what `tests/metrale_matrix_no_hp.py` in the
-existing repo already reports.
+It is kept because it is the wall time a client sees.
 
 Reproduce one cell:
 

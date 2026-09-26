@@ -1,6 +1,6 @@
 # Installation
 
-Metrale Engine ships as a single Docker image that contains the release binary plus every compiled `(GB10, model, quant)` PTX module — **22 target sets** today, one per `kernels/gb10/<model>/<quant>/` directory. There is no "install Metrale Engine + download kernels" step — the kernels are baked in.
+Metrale Engine ships as a single Docker image that contains the release binary plus every compiled `(GB10, model, quant)` PTX module — one target set per `kernels/gb10/<model>/<quant>/` directory. There is no "install Metrale Engine + download kernels" step — the kernels are baked in.
 
 ## Hardware prerequisites
 
@@ -11,7 +11,21 @@ Metrale Engine is designed for broad hardware support — the engine is vendor-a
 - `docker` with `--gpus all` support (recent `nvidia-container-toolkit`)
 - Internet access for the first model download; models are cached under `~/.cache/huggingface` after that
 
-Other NVIDIA GPUs (H100, B200) and other vendors (AMD, Apple, Intel) are on the roadmap rather than in the shipped image. The PTX that ships today is compiled with `-arch=sm_121` using SM121-specific tile shapes and a software E2M1 conversion — none of that is architectural, it's just the first target we hyperoptimized. Adding a new hardware target is two trait impls plus kernel source; the [Adding a new hardware target](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target) guide in the README walks through an Apple Metal example end to end.
+H100/H200 and B200 images build from `docker/hopper/Dockerfile` and `docker/b200/Dockerfile` (see `docker/docker-guide.md`); AMD and Apple targets build from source. The GB10 image's PTX is compiled with `-arch=sm_121f` using SM121-specific tile shapes and a software E2M1 conversion — none of that is architectural, it's just the first target we hyperoptimized. Adding a new hardware target is two trait impls plus kernel source; see [Adding a new hardware target](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target).
+
+## Install metralectl
+
+`metralectl` launches Metrale Engine recipes: it picks the image, the checkpoint and the serve settings a recipe was validated under and runs the `docker run` they imply.
+
+```bash
+curl -fsSL https://metrale.ai/install.sh | sh       # Linux, macOS
+irm https://metrale.ai/install.ps1 | iex            # Windows (PowerShell)
+uvx metralectl list                                 # or run it with no install
+```
+
+The installer puts the binary in `~/.local/bin` (`METRALECTL_INSTALL_DIR` overrides it), refuses a download whose SHA-256 is not in the release's `SHA256SUMS`, and installs the background agent (`METRALECTL_NO_AGENT=1` skips that). `metralectl list`, `metralectl show` and `metralectl run --print` work without Docker; `metralectl run` needs it. If something stops a launch, see [Troubleshooting](./troubleshooting.md).
+
+The rest of this page runs the image directly with `docker`.
 
 ## Pull the image
 
@@ -19,7 +33,7 @@ Other NVIDIA GPUs (H100, B200) and other vendors (AMD, Apple, Intel) are on the 
 docker pull metrale/metrale-inference-gb10:latest
 ```
 
-The image contains the Rust release binary, all 22 PTX module sets, tokenizer dependencies, and the `nvidia-container-runtime` library surfaces. No Python, no CUDA toolkit.
+The image contains the Rust release binary, every GB10 PTX module set, tokenizer dependencies, and the `nvidia-container-runtime` library surfaces. No Python, no CUDA toolkit.
 
 ## Bring your own weights
 
@@ -42,11 +56,11 @@ Mount the cache directory into the container:
 
 ## Build from source (optional)
 
-You only need to build from source if you are modifying Metrale Engine. The `rust-toolchain.toml` pins `stable`; CUDA 13.0+ with `nvcc` on `PATH` (or `CUDA_HOME` set) is required for a real build. Clippy and fmt can run without CUDA via `METRALE_SKIP_BUILD=1`.
+You only need to build from source if you are modifying Metrale Engine. `rust-toolchain.toml` pins the Rust release; CUDA 13.0+ with `nvcc` on `PATH` (or `CUDA_HOME` set) is required for a real build. Clippy and fmt can run without CUDA via `METRALE_SKIP_BUILD=1`.
 
 ```bash
 git clone https://github.com/Metrale/metrale-inference-alpha.git
-cd metrale
+cd metrale-inference-alpha
 
 # Full build — compiles every (gb10, model, quant) target (~6 min)
 docker build -f docker/gb10/Dockerfile -t metrale-inference-gb10 .

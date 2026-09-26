@@ -70,7 +70,7 @@ Three subtle correctness requirements that must hold throughout:
 2. **The SSM state must track accepted tokens, not drafts.** For hybrid models, the SSM recurrence is stateful — verify passes update the state; rejects must roll back.
 3. **Sampler state (running RNG, penalty counters) must track accepted tokens, not drafts.**
 
-All three are implemented in `crates/model-layers/src/speculative.rs` and the paired `rewind_kv_cache` + `rewind_mamba_state` hooks in `metrale-cache`.
+The model implements them through `ModelVerify` and `ModelSsmState::rollback_ssm_states` (`crates/model-engine/src/traits/model/`), and the scheduler's rollback (`crates/server/src/scheduler/rollback.rs`) truncates the sequence's tokens and rewinds the grammar to the accepted prefix.
 
 ## The bug-sweep history
 
@@ -100,12 +100,13 @@ Acceptance rate is lower (~60%) than MTP (~85%), but it works on any model. Metr
 
 `--ngram-speculative` is the other fallback: an n-gram pattern matcher on recent output. If the model is repeating a token pattern (e.g. verbatim quoting a document), the matcher predicts the continuation directly. Acceptance is binary (0 or 100%), and the average rate on open-ended generation is low, but on certain workloads (summarisation, re-ranking) it's free throughput.
 
-N-gram speculative was experimented with heavily on TRT-LLM (see the `project_ngram_*` notes); Metrale Engine's Rust implementation lives in `crates/speculative/src/ngram.rs` and is much simpler.
+Metrale Engine's implementation lives in `crates/speculative/src/ngram.rs`.
 
 ## Files to read
 
-- `crates/model-layers/src/speculative.rs` — the verify + accept loop.
-- `crates/cache/src/kv_cache.rs` — `rewind_kv_cache`.
-- `kernels/gb10/<model>/<quant>/` — there isn't a "MTP kernel"; MTP reuses the main model's attention/MoE kernels with different shapes.
-- `docs/SPEC-DECODING-TODO.md` — authoritative design + outstanding items.
+- `crates/model-layers/src/speculative.rs` and `speculative/` — the draft-proposer contract and verify keys.
+- `crates/model-engine/src/traits/model/verify.rs`, `ssm_state.rs` — the verify and SSM rollback interface.
+- `crates/server/src/scheduler/rollback.rs` — the accepted-prefix rewind.
+- `crates/speculative/` — the MTP gate, adaptive and DFlash rungs, n-gram proposer.
+- `kernels/gb10/` — there isn't a "MTP kernel"; MTP reuses the main model's attention/MoE kernels with different shapes.
 - `docs/METRALE_JOURNEY.md` — release journey and bug-sweep history.

@@ -5,8 +5,8 @@ Metrale Engine is a **twenty-one**-member Cargo workspace plus a build-time kern
 ## Repository tree (top level)
 
 ```
-metrale/
-├── README.md                     headline, benchmarks, porting guides
+metrale-inference-alpha/
+├── README.md
 ├── QUICKSTART.md                 per-model Docker recipes
 ├── CONTRIBUTING.md, AGENTS.md    contributor workflow
 ├── SECURITY.md                   disclosure
@@ -14,7 +14,7 @@ metrale/
 ├── LICENSE-MIT, LICENSE-APACHE   MIT OR Apache-2.0
 ├── Cargo.toml                    workspace root (21 members)
 ├── Cargo.lock
-├── rust-toolchain.toml           pins stable
+├── rust-toolchain.toml           pins the Rust release
 ├── deny.toml                     cargo-deny allow/deny lists
 ├── crates/                       Rust source for every crate
 ├── kernels/                      CUDA source, organized as (hw, model, quant)
@@ -22,11 +22,12 @@ metrale/
 ├── scripts/                      bench, model-sweep, release helpers
 ├── tests/                        cross-crate integration tests (run_all_models.py lives here)
 ├── docs/                         design notes, history, release notes
-├── paper/                        LaTeX paper (ArXiv)
 ├── jinja-templates/              chat templates for models that need custom ones
-├── bench/                        stable benchmark harness outputs (tracked)
+├── bench/                        benchmark harnesses and tracked results
+├── governance/                   PR journey ledgers (governance/pr-<n>.jsonl)
+├── site/, blog/, web-shared/     web sources
 ├── book/                         this book (mdBook source)
-└── vendor/                       vendored deps (e.g. xgrammar-rs)
+└── vendor/                       vendored deps (cudarc)
 ```
 
 ## The workspace members
@@ -91,28 +92,25 @@ The dependency graph runs strictly downward in the table above — `metrale-core
 
 ```
 kernels/
-└── gb10/                                        # One directory per hardware target
-    ├── HARDWARE.toml                            # vendor, arch, memory specs
-    ├── qwen3-next-80b-a3b/                      # One directory per model target
-    │   ├── MODEL.toml                           # layer counts, sampling presets, behavior
-    │   └── nvfp4/                               # One directory per quantization target
-    │       ├── KERNEL.toml                      # compile flags, module name overrides
-    │       └── *.cu                             # ~35 hand-written CUDA kernels
-    ├── qwen3.5-35b-a3b/
-    │   └── nvfp4/
-    │       └── *.cu
-    ├── qwen3.6-35b-a3b/
-    │   └── fp8/
-    ├── nemotron-3-nano-30b-a3b/
-    │   └── nvfp4/
-    ├── mistral-small-4-119b/
-    │   └── nvfp4/
-    ├── minimax-m2-229b/
-    │   └── nvfp4/
-    └── ... (one leaf per (model, quant) target — 22 under kernels/gb10/ today)
+├── gb10/                                        # One directory per hardware target
+│   ├── HARDWARE.toml                            # vendor, arch, memory specs, serving defaults
+│   ├── common/                                  # the shared baseline every GB10 target compiles
+│   ├── qwen3-next-80b-a3b/                      # One directory per model target
+│   │   ├── MODEL.toml                           # layer counts, sampling presets, behavior
+│   │   └── nvfp4/                               # One directory per quantization target
+│   │       ├── KERNEL.toml                      # compile flags, module names, [sources], [shadow]
+│   │       └── *.cu                             # the kernels this target overrides
+│   ├── qwen3.6-35b-a3b/
+│   │   └── nvfp4/
+│   ├── mistral-small-4/
+│   │   └── nvfp4/
+│   └── ... (one leaf per (model, quant) target)
+├── hopper/, b200/                               # inherit gb10 ([hardware] inherits)
+├── b300/                                        # Kimi K3 bring-up
+└── strix/, strix-hip/, metal/                   # AMD and Apple targets
 ```
 
-Every leaf directory is a fully self-contained `(gb10, model, quant)` target. The kernels inside a leaf can use any tile shape, any register budget, any shared-memory layout — they are physically incapable of regressing a different target.
+A leaf directory holds only what its `(gb10, model, quant)` target changes relative to `common/`; everything else comes from `common/`. A file in a leaf can use any tile shape, any register budget, any shared-memory layout without affecting a different target, because nothing else compiles it. [Philosophy: AI Kernel HyperCompiling](./philosophy.md) describes the layers, `[sources] use` and `[shadow]`.
 
 This is the mechanism that makes `kernels/` a scalable structure. Adding a new GPU is `kernels/<new-hw>/`. Adding a new model is `kernels/<hw>/<new-model>/`. Adding a new quantization is `kernels/<hw>/<model>/<new-quant>/`. Nothing else moves.
 
@@ -122,9 +120,12 @@ This is the mechanism that makes `kernels/` a scalable structure. Adding a new G
 docker/
 ├── gb10/
 │   ├── Dockerfile                         multi-model image — compiles every target
+│   ├── Dockerfile.builder                 build sandbox with CUTLASS and FlashInfer pinned
 │   ├── qwen3-next-80b-a3b/nvfp4/          per-model slim image
 │   ├── qwen3.5-35b-a3b/nvfp4/
 │   └── ... (one slim Dockerfile per supported model)
+├── hopper/, b200/                         H100/H200 and B200 images
+├── k3/                                    Kimi K3 bring-up image
 └── docker-guide.md                        build + run instructions
 ```
 
@@ -145,9 +146,9 @@ The book you're reading in `book/` synthesises all of this into a single narrati
 | You added | You touched |
 |---|---|
 | A new quantization (e.g. MXFP4) | `kernels/<hw>/<model>/<scheme>/*.cu`, a format module under `crates/model-layers/src/quant_format/`, the loader arms in `crates/model-layers/src/weight_map/`, and any new host-side conversion in `crates/core/src/numeric.rs` |
-| A new model family (e.g. Phi-4) | `crates/model-arch/src/weight_loader/<family>.rs`, one arm in `crates/model-engine/src/factory.rs`, `kernels/<hw>/<family>/<quant>/MODEL.toml`, optional `jinja-templates/<family>.j2` |
-| A new hardware vendor (e.g. MI300X) | `crates/core/src/compute.rs` (new `ComputeTarget` impl), `crates/kernels/build.rs::resolve_compute_target()` arm, `crates/gpu-runtime/src/<vendor>_backend.rs` (new `GpuBackend` impl), `crates/comm/src/<vendor>_backend.rs` if the vendor needs its own collective impl, `kernels/<hw>/HARDWARE.toml`, kernel source under `kernels/<hw>/<model>/<quant>/` |
-| A new CLI flag | `crates/server/src/cli.rs`, plumbing wherever it lands |
+| A new model family (e.g. Phi-4) | `crates/model-arch/src/weight_loader/<family>.rs`, one arm in `crates/model-engine/src/factory.rs`, `kernels/<hw>/<family>/<quant>/MODEL.toml`, optional `jinja-templates/<model_type>.jinja` |
+| A new hardware vendor (e.g. MI300X) | `crates/core/src/compute.rs` (new `ComputeTarget` impl), `crates/kernels/build_target.rs::resolve_compute_target()` arm, `crates/gpu-runtime/src/<vendor>_backend.rs` (new `GpuBackend` impl), `crates/comm/src/<name>_backend.rs` if the vendor needs its own collective impl, `kernels/<hw>/HARDWARE.toml`, kernel source under `kernels/<hw>/<model>/<quant>/` |
+| A new CLI flag | `crates/server/src/cli/serve_args.rs` (or its `serve_args/` submodules), plumbing wherever it lands |
 | A new tool-call format | `crates/server/src/tool_parser.rs` |
 
 Each row touches a small, bounded set of files. That bounded-ness is the architectural payoff of the workspace being split along axes of variation. Read [Kernel Dispatch Pipeline](./dispatch.md) next to see the runtime side, or [SBIO](./sbio.md) to see how the trait layering makes the whole thing testable without a GPU.

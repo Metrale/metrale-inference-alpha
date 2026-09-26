@@ -37,7 +37,7 @@ TTFT measurement notes (session-scoped SSM snapshots, 2026-03-27):
   text between warmup and timed runs.
 
   See the quick-speed-bench module docs
-  (crates/metrale-plugin/src/benchmarks/quick_speed.rs) for the full explanation
+  (crates/bench/src/benchmarks/quick_speed.rs) for the full explanation
   of the session isolation mechanism and its impact on TTFT.
 
 Usage:

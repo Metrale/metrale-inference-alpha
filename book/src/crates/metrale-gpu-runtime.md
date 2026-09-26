@@ -1,11 +1,14 @@
 # metrale-gpu-runtime
 
-**Role:** everything that touches the GPU directly. `GpuBackend` trait + CUDA implementation, KV cache, prefix cache, buffer arena, sampler, fast weight loader.
-**Key files:** `gpu.rs`, `gpu/mock.rs`, `cuda_backend.rs`, `buffers.rs` in `crates/gpu-runtime/src/`; `kv_cache.rs`, `radix_tree.rs` in `crates/cache/src/` ([metrale-cache](./metrale-cache.md)); `prefix_cache.rs` in `crates/telemetry/src/`; the sampler in `crates/sampling/src/lib.rs` ([metrale-sampling](./metrale-sampling.md)); `fast_weights/mod.rs`, `weights.rs` in `crates/model-weights/src/` ([metrale-model-weights](./metrale-model-weights.md)).
+**Path:** `crates/gpu-runtime/`
+**Role:** everything that touches the GPU directly: the `GpuBackend` trait and its CUDA and Metal implementations, streams, buffers, the op cache, pinned host memory, the kernel registry and the cuBLASLt/CUTLASS/FlashInfer bridges.
+**Key files:** `gpu.rs`, `gpu/mock.rs`, `cuda_backend.rs`, `metal_backend.rs`, `buffers.rs`, `registry.rs` in `crates/gpu-runtime/src/`.
+
+This chapter also covers the pieces the serving path uses beside it, which live in their own crates: the KV cache and radix tree in `crates/cache/src/` ([metrale-cache](./metrale-cache.md)), the `PrefixCache` trait in `crates/telemetry/src/prefix_cache.rs`, the sampler in `crates/sampling/src/lib.rs` ([metrale-sampling](./metrale-sampling.md)), and the fast weight loader in `crates/model-weights/src/fast_weights/` ([metrale-model-weights](./metrale-model-weights.md)).
 
 ## The load-bearing trait: `GpuBackend`
 
-27 methods across five concerns:
+Its methods fall into five concerns:
 
 - **Memory** — `alloc`, `free`, `copy_h2d`/`d2h`/`d2d`, `memset`, `total_memory`, `free_memory`, `alloc_host_pinned`.
 - **Kernel launch** — `kernel(module, func)` returns a `KernelHandle`; `launch(handle, grid, block, shared, stream, args)` fires the launch.
@@ -19,11 +22,10 @@ Required methods have no default; optional methods have default panics/no-ops so
 
 In `cuda_backend.rs`. Built on `cudarc` (Rust bindings over the CUDA driver API). On construction:
 
-1. `cudarc::driver::CudaDevice::new(ordinal)` acquires a driver context.
-2. For each `PtxModule` in the provided target set: `cuModuleLoadData` uploads the PTX, then `cuModuleGetFunction` caches one `CUfunction` per exported kernel.
-3. Kernel handles are stored in a `HashMap<(module: &str, func: &str), KernelHandle>`.
+1. `MetraleRegistry::load(ordinal, ptx_modules)` (`registry.rs`) loads every PTX module of the chosen target set with `cuModuleLoadData`. The CUDA context and default stream belong to the process host (`cuda_host.rs`) and are shared by every backend.
+2. Kernel lookups (`kernel(module, func)`) resolve a `CUfunction` once and cache it as a `KernelHandle`.
 
-Per-launch the backend unpacks the kernel args into `void*[]`, sets the stream, and calls `cuLaunchKernel`. The launch-side ceremony — converting `DevicePtr`/scalar args into a `void*` pointer array — is abstracted one level up by the `KernelLaunch` builder pattern in `metrale-model-layers::layers::ops`.
+Per-launch the backend unpacks the kernel args into `void*[]`, sets the stream, and calls `cuLaunchKernel`. Typed launch arguments (`gpu_args.rs`, `kernel_args.rs`) keep that conversion out of the layer code.
 
 ## The paged KV cache (`kv_cache.rs`)
 
@@ -33,10 +35,12 @@ Metrale Engine uses paged attention (à la vLLM) with block-level allocation. Co
 pub enum KvCacheDtype {
     Bf16,    // 2 bytes/element — unquantized baseline
     Fp8,     // 1 byte/element — E4M3 + per-tensor scale
-    Nvfp4,   // 0.5 bytes + per-group FP8 scale — maximum compression
+    Nvfp4,   // 0.5 bytes + per-group FP8 scale
     Turbo4,  // 4-bit WHT + Lloyd-Max (TurboQuant) — lower MSE than NVFP4
-    Turbo3,  // 3-bit WHT + Lloyd-Max — smallest
+    Turbo3,  // 3-bit WHT + Lloyd-Max
+    Turbo2,  // 2-bit WHT + Lloyd-Max — smallest
     Turbo8,  // WHT + FP8 — outlier-resistant FP8
+    // … plus asymmetric K/V pairings such as Turbo4KTurbo3V
 }
 ```
 
@@ -44,16 +48,16 @@ pub enum KvCacheDtype {
 
 The **TurboQuant** family (`turbo3`, `turbo4`, `turbo8`) is specific to Metrale Engine: Walsh-Hadamard rotation followed by Lloyd-Max quantization to optimal Gaussian codebook levels. For the same bit rate, turbo4 has ~2× lower MSE than NVFP4 on the kinds of activations transformers produce, because WHT flattens outliers before quantization. See `docs/turboquant-plus.md` and [FP8](../deep-dives/fp8.md) / [NVFP4](../deep-dives/nvfp4.md) chapters.
 
-## Prefix caching (`prefix_cache.rs`, `radix_tree.rs`)
+## Prefix caching (`PrefixCache`, `RadixTree`)
 
 RadixAttention: the system prompt shared by every request can be KV-cached once, reused forever. Implementation:
 
-- **`radix_tree.rs`** — in-memory radix tree keyed on token sequences. Each node owns the KV pages for its token prefix.
-- **`prefix_cache.rs`** — the orchestration layer. When a request arrives, the scheduler calls `prefix_cache.lookup(tokens)` which walks the tree to the deepest matching node. The KV pages for that prefix are already resident on the GPU.
+- **`crates/cache/src/radix_tree.rs`** — in-memory radix tree keyed on token sequences. Each node owns the KV pages for its token prefix.
+- **`crates/telemetry/src/prefix_cache.rs`** — the `PrefixCache` trait the scheduler calls, implemented by `RadixTree` (and `NoPrefixCaching` when caching is off), plus the hit and miss counters. A lookup walks the tree to the deepest matching node; the KV pages for that prefix are already resident on the GPU.
 
 Hit rates are high in practice — system prompts and few-shot examples dominate, and chat agents reuse most of their tool schemas across turns. TTFT drops ~10× on warm-cache hits. This is the feature enabled by `--enable-prefix-caching`.
 
-**Marconi (SSM snapshots)** extends the idea to SSM layers: a full SSM state is ~GB on a 35B model, so prefix cache hits for hybrid models also need a snapshotted SSM state to be genuinely equivalent. That machinery lives partly here and partly in `metrale-model-engine`. See `docs/adr/0003-hybrid-ssm-attention.md` for the SSM-snapshot-cache design.
+**Marconi (SSM snapshots)** extends the idea to SSM layers: a full SSM state is ~GB on a 35B model, so prefix cache hits for hybrid models also need a snapshotted SSM state to be genuinely equivalent. That machinery lives in `metrale-cache` (the snapshot index beside the radix tree) and `metrale-model-engine` (the SSM state pools). See `docs/adr/0003-hybrid-ssm-attention.md` for the SSM-snapshot-cache design.
 
 ## Buffer arena (`buffers.rs`)
 
@@ -63,14 +67,14 @@ One `BufferArena` per serve. Allocates every scratch buffer *once* at startup, s
 - `qkv_output`, `attn_output` — attention projection outputs
 - `gate_logits`, `moe_output` — MoE intermediates
 - `logits` — the final `[M, vocab_size]` output
-- `ssm_qkvz_scratch` — Mamba/GDN projections (sized for 3× positions for MRoPE on models that need it)
-- `expert_outputs` — sized for `max(k_max, max_batch_tokens)` to cover both speculative decode (K=3) and batched MoE prefill
+- `ssm_qkvz`, `ssm_ba`, `ssm_gates` — Mamba/GDN projections
+- `expert_gate_out`, `expert_up_out`, `expert_down_out` — per-expert MoE intermediates, sized to cover both speculative decode and batched MoE prefill
 
 The arena never reallocates during serving. This is one of the invariants that makes CUDA graph capture viable — buffer addresses are graph-stable.
 
-## Sampler (`sampler.rs`)
+## Sampler (`metrale-sampling`)
 
-`SamplingParams` — `temperature`, `top_p`, `top_k`, `top_n_sigma`, `min_p`, `repetition_penalty`, `presence_penalty`. The sampler:
+`SamplingParams` — `temperature`, `top_p`, `top_k`, `top_n_sigma`, `min_p`, `logit_bias`, `repetition_penalty`, `presence_penalty`, `frequency_penalty`. The sampler:
 
 1. Applies penalties (presence, repetition) in-place on the logits buffer.
 2. Applies `top_n_sigma` (entropy-based filter).
@@ -78,7 +82,7 @@ The arena never reallocates during serving. This is one of the invariants that m
 4. Softmax.
 5. Multinomial sampling or argmax (if `temperature == 0`).
 
-A known bug with `temperature=0 && repetition_penalty=0` was fixed in wave-8 of the bug sweeps; the sampler now has explicit div-by-zero guards. `--adaptive-sampling` toggles an entropy-gated greedy path that avoids the full softmax+sample when the logits are effectively one-hot.
+The sampler guards the `temperature=0` and `repetition_penalty=0` divisions explicitly. `--adaptive-sampling` toggles an entropy-gated greedy path that avoids the full softmax+sample when the logits are effectively one-hot.
 
 ## Fast weight loader (`fast_weights/`)
 

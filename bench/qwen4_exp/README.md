@@ -1,7 +1,6 @@
 # qwen4_exp (Qwen3.8-Flash-Next) port tools
 
-Checkpoint-inspection tools for the port tracked in
-[Metrale Engine #753](https://github.com/Metrale/metrale-inference-alpha/issues/753).
+Checkpoint-inspection tools for the `qwen4_exp` port.
 Both read `RadixArk/Qwen3.8-Flash-Next-NVFP4` off disk; set `SNAP` at the top
 of each if your snapshot path differs.
 
@@ -16,7 +15,7 @@ family — including the ones being dropped on purpose (MTP).
 Current state: all 111 families classified, none unclassified.
 
 ```
- families   tensors  destination (issue #753 item)
+ families   tensors  destination (port item)
         2         2  A  embed/head/norm
        11       387  B  mHC
        11       138  C  PLE n-gram

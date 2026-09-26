@@ -4,7 +4,7 @@
 #
 # Owner: bench, qwen4_exp references.
 # Invariants: none beyond the types.
-"""Golden for the QSA indexer — Metrale Engine #753 phase G.
+"""Golden for the QSA indexer — phase G of PLAN.md.
 
 Runs the real `Qwen4ExpTextQSAIndexer` (transformers >= 5.16 ships qwen4_exp
 natively, byte-identical to ref/modeling_qwen4_exp.py) on real checkpoint

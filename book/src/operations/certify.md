@@ -105,8 +105,8 @@ key. A record that fails any of those is removed again and never retried on
 that node. A node that fails twice in a row is retired for the campaign.
 Ctrl-C or a drift on the guarded branch cancels every node's job.
 
-**What metralectl must have.** Each node runs an `metralectl agent` with a
-`bench.yaml` (metrale-recipes `docs/BENCH.md`) and has granted this machine
+**What metralectl must have.** Each node runs a `metralectl agent` with a
+`bench.yaml` (see [`docs/BENCH.md`](https://github.com/Metrale/metralectl/blob/main/docs/BENCH.md) in Metrale/metralectl) and has granted this machine
 `bench` (`metralectl peer grant-bench <fingerprint>` there); this machine
 needs `metralectl` on `PATH` or `--metralectl PATH`, paired with each node.
 `metralectl` is run with this process's environment, so a submitter identity
@@ -129,8 +129,7 @@ kept outside the default directory is selected with
    `met` is running, host memory is at least as free as a self-start
    requires, there is a branch to guard (or `--no-guard`), and any gate that
    needs confirmation has `--yes`. Every refusal names its remedy.
-3. **Lock.** `.oracle_should_begin_cert` at the repo root, the v1 schema the
-   O.R.A.C.L.E skill and the old shell driver wrote. A live lock (its driver
+3. **Lock.** `.oracle_should_begin_cert` at the repo root (schema v1). A live lock (its driver
    running, or a heartbeat under 30 minutes old) is refused by name; a dead
    one is archived beside itself and reclaimed — at once when its status says
    the campaign is over (`campaign_done`, `aborted`), however fresh its last
@@ -186,7 +185,7 @@ Commit the records (`git add .benchmarks`), then `/stamp` and `/seal` the PR.
 The campaign already ran the agreement rule CI will run, so the commit will
 not be refused for a reason the campaign could have seen.
 
-## Superseded
+## The guard outside a campaign
 
-`scripts/campaign-guard.sh` is the shell form of the guard and is kept for CI
-and ad-hoc use; `campaign_pr.sh` / `post_and_bank.sh` are replaced.
+`scripts/campaign-guard.sh` is the shell form of the guard, for CI and
+ad-hoc use.

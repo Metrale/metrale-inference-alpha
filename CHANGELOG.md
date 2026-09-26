@@ -64,7 +64,7 @@ behind specific subsystems — see the
   `kernels/b200` keep `false` — this is an H100 receipt. `METRALE_GDN_PREFILL_TC=0`
   turns the whole family off and `METRALE_NO_GDN_PREFILL_TC_REMNANTS=1` keeps the
   spine while pinning the twins to their parents; both print on the serve's
-  `target defaults (hopper): …` line. Numbers: `GDN-PREFILL-ATTRIBUTION.md`.
+  `target defaults (hopper): …` line. Numbers: `docs/perf/hopper/GDN-PREFILL-ATTRIBUTION.md`.
 - **Serving defaults are now per-hardware-target and live in the repository.**
   `kernels/<hw>/HARDWARE.toml` gained a `[defaults]` table, baked into the
   binary by `build.rs` as `metrale_kernels::TARGET_DEFAULTS`. A kernel-path lever

@@ -17,7 +17,7 @@ Different kernel shapes:
 | `attn_prefill_fp8kv.cu` | prefill | Same structure, FP8 KV read path |
 | `paged_decode_attn_nvfp4.cu` | decode | Online softmax, split-K parallelism, NVFP4 K/V dequant at fragment boundary |
 | `paged_decode_attn_turbo3_128.cu` | decode | Optimised variant for `head_dim=128`, `turbo3` KV |
-| `kv_cache_append.cu` | write | Per-token K/V write into paged cache |
+| `reshape_and_cache.cu` | write | Per-token K/V write into paged cache |
 
 ## Prefill: Flash Attention v2 on SM121
 
@@ -101,7 +101,7 @@ The decode kernel takes three extra arguments beyond a non-paged version:
 - `context_lens` — `[batch]` of valid token counts.
 - `block_size` — compile-time constant for indexing arithmetic.
 
-Inside the kernel, each CTA computes its K/V pointer for a given history position by indexing into the block table: `block_ptr = k_cache + block_tables[seq][pos/16] * block_size * head_dim * bytes_per_elt`. Gather-SMEM-MMA: gather the block pointers into shared memory, then run MMA against the resulting shared tile. Pattern from the FlashInfer paper (MLSys 2025 Best Paper, cited in the README).
+Inside the kernel, each CTA computes its K/V pointer for a given history position by indexing into the block table: `block_ptr = k_cache + block_tables[seq][pos/16] * block_size * head_dim * bytes_per_elt`. Gather-SMEM-MMA: gather the block pointers into shared memory, then run MMA against the resulting shared tile. Pattern from the FlashInfer paper (MLSys 2025 Best Paper).
 
 ## RadixAttention prefix caching
 
@@ -115,12 +115,11 @@ Typical hit rates in production:
 
 TTFT goes from ~400ms cold to ~40ms warm on Qwen3.5-35B. The prefix-cache chapter of the engine test suite validates the hit rate and the byte-identical output under warm vs cold.
 
-For hybrid SSM+attention models, a matching "Marconi" SSM snapshot cache lives in `metrale-telemetry::prefix_cache` — the SSM state at the end of the prefix is checkpointed alongside the attention KV, so a warm hit reconstructs the full model state, not just the attention cache. Without this, prefix caching on an SSM model would produce silently incorrect output.
+For hybrid SSM+attention models, a matching "Marconi" SSM snapshot cache sits beside the radix tree in `metrale-cache` (`crates/cache/src/radix_tree/snapshot.rs`, behind the `PrefixCache` trait in `metrale-telemetry::prefix_cache`) — the SSM state at the end of the prefix is checkpointed alongside the attention KV, so a warm hit reconstructs the full model state, not just the attention cache. Without this, prefix caching on an SSM model would produce silently incorrect output.
 
 ## Files to read
 
-- `kernels/gb10/<model>/<quant>/attn_prefill_v47.cu` — the prefill kernel.
-- `kernels/gb10/<model>/<quant>/paged_decode_attn_*.cu` — decode kernel variants.
-- `kernels/gb10/<model>/<quant>/kv_cache_append.cu` — per-token KV write.
-- `crates/cache/src/kv_cache.rs`, `prefix_cache.rs`, `radix_tree.rs` — Rust side.
-- README "Citations" — links to the Flash Attention 2, Flash Attention 4, FlashInfer, SageAttention 3, and LeanAttention papers.
+- `kernels/gb10/common/attn_prefill_v47.cu` — the prefill kernel.
+- `kernels/gb10/common/paged_decode_attn_*.cu` — decode kernel variants.
+- `kernels/gb10/common/reshape_and_cache*.cu`, `fused_k_norm_rope_cache.cu` — per-token KV write.
+- `crates/cache/src/kv_cache.rs`, `radix_tree.rs`, `crates/telemetry/src/prefix_cache.rs` — Rust side.

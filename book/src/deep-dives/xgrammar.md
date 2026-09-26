@@ -31,9 +31,9 @@ The cost is a grammar compilation step (~ms for typical JSON schemas), amortised
 
 ## How Metrale Engine uses it
 
-Metrale Engine ships XGrammar as a **pure-Rust in-tree crate**, `crates/grammar` — a from-scratch port of mlc-ai/xgrammar v0.1.32, with no C++ core, no `cxx` FFI bridge and no build script. (It was previously a vendored `vendor/xgrammar-rs/` binding wrapping the C++ engine; that directory is gone.) The call sites:
+Metrale Engine ships XGrammar as a **pure-Rust in-tree crate**, `crates/grammar` — a from-scratch port of mlc-ai/xgrammar v0.1.32, with no C++ core, no FFI bridge and no build script. The call sites:
 
-- **Tool calls** — when the request includes `tools: [...]`, Metrale Engine derives an XGrammar grammar from the function schemas + the model's tool-call format (Hermes JSON, Qwen3-coder XML, Mistral JSON). The grammar enforces: opening delimiter → valid function name → opening args bracket → schema-conforming JSON/XML → closing delimiter. `--tool-max-tokens` caps the total argument-generation length.
+- **Tool calls** — when the request includes `tools: [...]`, Metrale Engine derives an XGrammar grammar from the function schemas + the model's tool-call format (Hermes JSON, Qwen3-coder XML, Mistral JSON). The grammar enforces: opening delimiter → valid function name → opening args bracket → schema-conforming JSON/XML → closing delimiter. `--tool-grammar auto|on|off` decides whether requests that do not *require* a tool call get the grammar (`auto` defers to `MODEL.toml`); `tool_choice: "required"`, a named tool and the `minimax_xml` parser always keep it. `--tool-max-tokens` caps the whole completion when tools are present.
 - **Response-format structured output** — OpenAI-compatible `response_format: {type: json_schema, json_schema: {...}}`. Metrale Engine compiles the schema into an XGrammar grammar and constrains the entire response.
 - **Reasoning boundaries** — the reasoning parser uses a lightweight grammar to enforce that `<think>...</think>` blocks close cleanly when `--max-thinking-budget` kicks in, preventing the unclosed-think bug that blocked Claude Code compatibility on Qwen3.6.
 
@@ -51,24 +51,19 @@ grammar.advance(token);                         // transition automaton
 
 The mask-apply and advance calls are both O(1) — a single bitmap test per token, a single state transition per step.
 
-## The integration history
-
-XGrammar integration shipped across two substantial work items:
-
-- **`xgrammar-integration-plan`** (initial) — wiring the FFI, compiling grammars on request, applying masks in the sampler, streaming boundary handling.
-- **`xgrammar2-upgrade-plan`** (current) — moved to the 2.0 API with better handling of long schemas, on-the-fly grammar recompilation, and support for Anthropic-style nested-XML tool-call formats.
+## Grammar and MTP
 
 The payoff compounds with MTP: constrained decoding inside an MTP draft mask blocks draft tokens that would break the grammar, raising the draft acceptance rate from ~70% to ~95% during tool calls. The +37% tool-call throughput win (referenced in the [MTP chapter](./mtp.md)) is a direct result.
 
 ## Opencode & markdown fences
 
-A specific bug worth noting: when a model emits a tool call inside a markdown code fence, Metrale Engine's tool-call parser originally ate the surrounding fence characters — the closing backticks came through as "extra content" and broke downstream code that expected clean JSON. Fixed in wave-1 of the bug sweeps by making the parser markdown-fence aware; XGrammar then enforces the fence is balanced.
+A specific bug worth noting: when a model emits a tool call inside a markdown code fence, the surrounding fence characters must not leak into the call — closing backticks that come through as "extra content" break downstream code that expects clean JSON. The parser is markdown-fence aware, and XGrammar enforces that the fence is balanced.
 
 A related hallucination class: the Qwen3-coder XML format allows the model to emit the literal string `</tool_call>` inside a JSON string value. The parser now disambiguates, and XGrammar's grammar masks it at the source.
 
 ## When to turn it off
 
-XGrammar is lightweight but not free. For vanilla free-form generation (no tools, no response_format), the sampler skips the mask path entirely — there's no `active_grammar`. For workloads that explicitly want the model to deviate from a schema (creative tool exploration), setting `tool_choice: "none"` disables the grammar.
+XGrammar is lightweight but not free. For vanilla free-form generation (no tools, no response_format), the sampler skips the mask path entirely — there's no `active_grammar`. For workloads that explicitly want the model to deviate from a schema (creative tool exploration), `tool_choice: "none"` disables the grammar for a request, and `--tool-grammar off` skips it for every request that does not require a tool call.
 
 The one place where constrained decoding can interact badly with sampling: very low-entropy grammars combined with `temperature=0` greedy sampling can produce repetitive output if the grammar masks the "natural" next token. `--default-top-n-sigma` and `--default-min-p` help; dropping `temperature` below 0.1 is rarely worth it on constrained paths.
 
