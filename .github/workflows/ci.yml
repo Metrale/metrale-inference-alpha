@@ -1507,7 +1507,7 @@ jobs:
         #      context: a sibling repo normally refuses it. Tried anyway,
         #      because "normally" is org policy, not physics — a 200 is a 200,
         #      and the check below believes responses, not documentation.
-        #   3. anonymous — works because metrale-recipes is public
+        #   3. anonymous — works because metralectl is public
         #      (`"private": false`); rate-limited to 60/hr per IP, shared
         #      across the runner fleet, hence last.
         # The first rung answering HTTP 200 with parseable JSON wins. When
@@ -1518,7 +1518,7 @@ jobs:
           REPO_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          API='https://api.github.com/repos/Metrale/metrale-recipes/git/trees/main?recursive=1'
+          API='https://api.github.com/repos/Metrale/metralectl/git/trees/main?recursive=1'
           out=$(mktemp)
           fetch() {  # extra curl args; body on stdout iff the answer was 200
             local code
@@ -1547,7 +1547,7 @@ jobs:
             printf '%s' "$names" > recipes.txt
           else
             : > recipes.txt
-            echo "::notice::metrale-recipes not readable on any rung of the token chain; classifying without recipe context"
+            echo "::notice::metralectl not readable on any rung of the token chain; classifying without recipe context"
           fi
           echo "count=$(wc -l < recipes.txt)" >> "$GITHUB_OUTPUT"
           # Randomized marker, same reason as the diff step: recipe names come
@@ -1685,7 +1685,7 @@ jobs:
             Changed paths (${{ steps.diff.outputs.count }} total, sorted):
             ${{ steps.diff.outputs.paths }}
 
-            Serve recipes available in Metrale/metrale-recipes
+            Serve recipes available in Metrale/metralectl
             (${{ steps.recipes.outputs.count }}):
             ${{ steps.recipes.outputs.names }}
           taxonomy: .github/pr-taxonomy.json

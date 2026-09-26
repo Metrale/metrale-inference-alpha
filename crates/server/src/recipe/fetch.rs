@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::Recipe;
 use super::fetch_github::{self, try_refresh};
 
-pub(super) const REPO: &str = "Metrale/metrale-recipes";
+pub(super) const REPO: &str = "Metrale/metralectl";
 pub(super) const CACHE: &str = "metrale-recipes";
 pub(super) const INDEX: &str = "index.json";
 pub(super) const AGENT: &str = crate::identity::USER_AGENT;

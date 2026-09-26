@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-26: Serving recipes from `Metrale/metrale-recipes`: parse one and render it as `met serve` argv.
+//! 2026-09-26: Serving recipes from `Metrale/metralectl`: parse one and render it as `met serve` argv.
 //!
 //! Owner: server (recipe). `schema` owns the key→flag mapping.
 //! Invariants:
