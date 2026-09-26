@@ -6,8 +6,48 @@
 //! Device routing counts choose the bucket; sparse small buckets fold back into
 //! M128. Both lists and counters belong to the arena and survive graph replay.
 
+use std::sync::Mutex;
+
 use super::*;
 use spark_runtime::kernel_args::KernelLaunch;
+
+struct SideJoin<'a> {
+    gpu: &'a dyn GpuBackend,
+    main: u64,
+    side: u64,
+    done: u64,
+}
+
+impl Drop for SideJoin<'_> {
+    fn drop(&mut self) {
+        // The caller launches SiLU on `main` after this returns. If the GPU
+        // wait cannot be queued, block until the side stream is idle instead.
+        if self.gpu.record_event(self.done, self.side).is_err()
+            || self.gpu.stream_wait_event(self.main, self.done).is_err()
+        {
+            let _ = self.gpu.synchronize(self.side);
+        }
+    }
+}
+
+fn overlap_k2048(k: u32) -> bool {
+    k == 2048
+}
+
+fn k2048_side(gpu: &dyn GpuBackend) -> Result<(u64, u64, u64)> {
+    static SLOT: Mutex<Option<(u64, u64, u64)>> = Mutex::new(None);
+    let mut slot = SLOT.lock().unwrap_or_else(|err| err.into_inner());
+    if let Some(ready) = *slot {
+        return Ok(ready);
+    }
+    let created = (
+        gpu.create_stream()?,
+        gpu.create_event()?,
+        gpu.create_event()?,
+    );
+    *slot = Some(created);
+    Ok(created)
+}
 
 pub(super) fn adaptive_sm_count(gpu: &dyn GpuBackend) -> Result<u32> {
     if gpu.has_module("moe_bucket_builder") && gpu.has_module("moe_w8a8_m16") {
@@ -139,13 +179,25 @@ impl MoeLayer {
         );
         if ctx.stats.once("log:moe_adaptive_fp8_prefill") {
             tracing::info!(
-                "[metrale] Hopper adaptive W8A8 prefill: native-input M16, native-input M64={}, M128={} (non-bit-exact BF16 reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists",
+                "[metrale] Hopper adaptive W8A8 prefill: native-input M16, native-input M64={}, M128={} (non-bit-exact BF16 reduction), SMs={}, small-tile threshold={} (device decision), persistent worklists, K=2048 gate/up large bucket overlaps on a side stream",
                 self.moe_w8a8_native_m64_k.0 != 0,
                 self.moe_w8a8_native_m128_k.0 != 0,
                 self.moe_adaptive_sms,
                 p.threshold
             );
         }
+        // K=2048 gate/up: the M16 grid fills every SM, then a short tail leaves
+        // the rest idle. The M64 bucket writes other experts' rows, so it can
+        // occupy those SMs. Down (K=512) stays on the caller stream.
+        let side = if overlap_k2048(k) {
+            Some(k2048_side(ctx.gpu)?)
+        } else {
+            None
+        };
+        let large_stream = side
+            .as_ref()
+            .map(|(side_stream, _, _)| *side_stream)
+            .unwrap_or(stream);
         KernelLaunch::new(ctx.gpu, self.moe_bucket_builder_k)
             .grid([1, 1, 1])
             .block([256, 1, 1])
@@ -159,6 +211,18 @@ impl MoeLayer {
             .arg_u32(n.div_ceil(64))
             .arg_u32(p.threshold)
             .launch(stream)?;
+        let _join = if let Some((side_stream, ready, done)) = side {
+            ctx.gpu.record_event(ready, stream)?;
+            ctx.gpu.stream_wait_event(side_stream, ready)?;
+            Some(SideJoin {
+                gpu: ctx.gpu,
+                main: stream,
+                side: side_stream,
+                done,
+            })
+        } else {
+            None
+        };
         for &(weights, output) in projections {
             KernelLaunch::new(ctx.gpu, self.moe_w8a8_m16_k)
                 .grid([p.small_grid, 1, 1])
@@ -193,7 +257,7 @@ impl MoeLayer {
                 .arg_u32(k)
                 .arg_ptr(scratch.worklist)
                 .arg_ptr(scratch.total_tiles)
-                .launch(stream)?;
+                .launch(large_stream)?;
         }
         Ok(true)
     }
@@ -201,7 +265,14 @@ impl MoeLayer {
 
 #[cfg(test)]
 mod tests {
-    use super::{plan, select_large_handle};
+    use super::{overlap_k2048, plan, select_large_handle};
+
+    #[test]
+    fn k2048_gate_up_overlaps_and_down_does_not() {
+        assert!(overlap_k2048(2048));
+        assert!(!overlap_k2048(512));
+        assert!(!overlap_k2048(0));
+    }
 
     #[test]
     fn native_large_handle_is_optional_with_original_fallback() {
