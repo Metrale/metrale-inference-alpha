@@ -1,16 +1,17 @@
-# Fast-path: layer a pre-built met binary on top of the previous alpha image.
-# Avoids the multi-minute Cargo dep fetch + release build by reusing the
-# existing Ubuntu + CUDA runtime layers from the last alpha.
+# Fast path: layer a pre-built met binary on top of an image built from
+# docker/gb10/Dockerfile (`docker build -f docker/gb10/Dockerfile -t metrale-gb10 .`).
+# Avoids the multi-minute Cargo dep fetch + release build by reusing that
+# image's Ubuntu + CUDA runtime layers.
 #
 # Build (host must have `target/release/met` already built):
 #   cargo build --release -p metrale-server
 #   cp target/release/met met-fastbin
-#   docker build -f docker/gb10/Dockerfile.fast -t metrale-gb10:alpha-2.14 .
+#   docker build -f docker/gb10/Dockerfile.fast -t metrale-gb10:fast .
 #
 # The `target/` directory is in .dockerignore, so we stage the binary as
 # `met-fastbin` at the repo root for the build context.
 
-FROM metrale-gb10:fix42
+FROM metrale-gb10:latest
 
 COPY met-fastbin /usr/local/bin/met
 COPY jinja-templates/ /jinja-templates/
