@@ -72,8 +72,13 @@ int cuStreamSynchronize(void* s)                    { return hipStreamSynchroniz
 // (`gpu_copy.rs`, `METRALE_D2H_SPIN_SYNC`) keeps spinning only while the status
 // is 600, CUDA's `CUDA_ERROR_NOT_READY`.
 int cuStreamQuery(void* s)                          { return hipStreamQuery((hipStream_t)s); }
+static_assert(hipErrorNotReady == 600, "cuStreamQuery/cuEventQuery forward HIP's not-ready code as CUDA_ERROR_NOT_READY (600)");
 int cuStreamWaitEvent(void* s, void* e, unsigned f) { return hipStreamWaitEvent((hipStream_t)s, (hipEvent_t)e, f); }
+// 2026-09-26: Capture modes and statuses have the same values in both APIs
+// (global/thread-local/relaxed = 0/1/2; none/active/invalidated = 0/1/2).
 int cuStreamBeginCapture(void* s, int mode)         { return hipStreamBeginCapture((hipStream_t)s, (hipStreamCaptureMode)mode); }
+int cuStreamBeginCapture_v2(void* s, int mode)      { return hipStreamBeginCapture((hipStream_t)s, (hipStreamCaptureMode)mode); }
+int cuStreamIsCapturing(void* s, unsigned* status)  { return hipStreamIsCapturing((hipStream_t)s, (hipStreamCaptureStatus*)status); }
 int cuStreamEndCapture(void* s, void** pgraph)      { return hipStreamEndCapture((hipStream_t)s, (hipGraph_t*)pgraph); }
 
 
@@ -81,6 +86,8 @@ int cuEventCreate(void** e, unsigned flags) { return hipEventCreateWithFlags((hi
 int cuEventDestroy_v2(void* e)              { return hipEventDestroy((hipEvent_t)e); }
 int cuEventRecord(void* e, void* s)         { return hipEventRecord((hipEvent_t)e, (hipStream_t)s); }
 int cuEventSynchronize(void* e)             { return hipEventSynchronize((hipEvent_t)e); }
+// 2026-09-26: Non-blocking completion poll; 600 (not ready) while the event's work is pending.
+int cuEventQuery(void* e)                   { return hipEventQuery((hipEvent_t)e); }
 int cuEventElapsedTime(float* ms, void* a, void* b) { return hipEventElapsedTime(ms, (hipEvent_t)a, (hipEvent_t)b); }
 
 // 2026-09-25: Five-parameter form; errNode, logBuf and bufSize are ignored. The
