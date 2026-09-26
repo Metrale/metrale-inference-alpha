@@ -23,7 +23,6 @@ metrale-storage = { path = "../storage", default-features = false }
 metrale-telemetry = { path = "../telemetry" }
 anyhow = { workspace = true }
 half = "2"
-libc = "0.2"
 memmap2 = "0.9"
 parking_lot = { workspace = true }
 rand = "0.8"

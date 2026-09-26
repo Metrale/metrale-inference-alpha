@@ -143,5 +143,4 @@ pub use projection::{PredictorShape, build_projection};
 pub use tiled_attention::{TiledAttention, TiledAttentionDims};
 #[cfg(feature = "cuda")]
 pub use weight_peer::{WeightManifest, WeightTensorRecord};
-#[cfg(feature = "cuda")]
 pub mod tier;
