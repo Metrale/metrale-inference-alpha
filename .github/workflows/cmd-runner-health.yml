@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # Automatic fallback for the self-hosted command runner.
 #
 # WANT is `metrale-macos-burst`, the Apple box — not `metrale-cmd`, which lives on
