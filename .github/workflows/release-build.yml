@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # Reusable build matrix: compile, package and verify `met` for every
 # (OS, arch, GPU-platform) in `.github/release-matrix.json`.
 #
@@ -298,7 +298,7 @@ jobs:
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          # libibverbs/librdmacm: metrale-rdma compiles src/rdma_shim.c against
+          # libibverbs/librdmacm: metrale-gpu-sys compiles src/rdma_shim.c against
           # <infiniband/verbs.h> on every non-macOS target. Same dependency
           # #339 added to the DeepSeek-V4 builder stage.
           sudo apt-get install -y --no-install-recommends \

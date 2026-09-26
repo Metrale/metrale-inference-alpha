@@ -2,9 +2,11 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 # Generate fail-fast GPU library stubs for no-GPU CI runners.
 #
-# metrale-storage uses raw `extern "C"` FFI to libcuda (cuStreamCreate etc.)
-# and metrale-comm links libnccl directly, so linking the workspace needs
-# these libraries present even when `METRALE_SKIP_BUILD=1` avoids nvcc.
+# metrale-storage and metrale-gpu-runtime use raw `extern "C"` FFI to libcuda
+# (cuStreamCreate etc.) and metrale-gpu-sys links libnccl directly, so linking
+# the workspace needs these libraries present even when `METRALE_SKIP_BUILD=1`
+# avoids nvcc. `.github/scripts/assert-gpu-stubs-cover-ffi.py` fails CI when a
+# crate declares a symbol that the matching stub below does not define.
 # Every stub symbol returns a non-success code (CUDA_ERROR_NO_DEVICE = 100,
 # ncclSystemError = 2, cudart/cublasLt = 1) so any code path that actually
 # invokes a GPU call fails-fast at runtime — matching a real no-GPU host.
@@ -17,7 +19,8 @@ CUDA_STUBS=/usr/local/cuda/targets/x86_64-linux/lib/stubs
 
 cat > /tmp/libcuda_stub.c <<'EOF'
 /* Stub for every CUDA driver API symbol that any Metrale Engine crate
- * links against (metrale-storage, metrale-core::registry, cudarc).
+ * links against (metrale-storage, metrale-gpu-runtime, metrale-gpu-sys,
+ * metrale-comm).
  * Each returns CUDA_ERROR_NO_DEVICE (100) so callers fail-fast.
  * Generated for CI link-time only; never exercised at runtime
  * because every test that touches these is #[ignore]-gated. */
@@ -125,8 +128,8 @@ sudo mkdir -p "$CUDA_STUBS"
 sudo install -m 0644 /tmp/libcuda.so "$CUDA_STUBS/libcuda.so"
 
 cat > /tmp/libnccl_stub.c <<'EOF'
-/* Stub for NCCL collective-communication symbols metrale-comm
- * links against. Each returns ncclSystemError (2) so any
+/* Stub for NCCL collective-communication symbols metrale-gpu-sys
+ * and metrale-comm link against. Each returns ncclSystemError (2) so any
  * caller fails-fast; never invoked at runtime in default
  * `cargo test` because every NCCL test is `#[ignore]`-gated. */
 int ncclGetUniqueId(void *uid) { (void)uid; return 2; }

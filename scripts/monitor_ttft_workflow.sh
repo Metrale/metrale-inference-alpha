@@ -45,7 +45,7 @@ claude_lines=$(ps -eo pid,ppid,etime,cmd | grep -E '/workspace/.local/bin/claude
 fingerprint=$(
   {
     git status --short -- \
-      crates/model-engine/src/model.rs \
+      crates/model-engine/src/model/ \
       crates/model-engine/src/traits.rs \
       crates/gpu-runtime/src/buffers.rs \
       crates/gpu-runtime/src/gpu.rs \
@@ -53,9 +53,9 @@ fingerprint=$(
       crates/gpu-runtime/src/buffers/ \
       crates/gpu-runtime/src/gpu/ \
       crates/gpu-runtime/src/cuda_backend/ \
-      crates/server/src/scheduler.rs
+      crates/server/src/scheduler/
     git diff --stat -- \
-      crates/model-engine/src/model.rs \
+      crates/model-engine/src/model/ \
       crates/model-engine/src/traits.rs \
       crates/gpu-runtime/src/buffers.rs \
       crates/gpu-runtime/src/gpu.rs \
@@ -63,7 +63,7 @@ fingerprint=$(
       crates/gpu-runtime/src/buffers/ \
       crates/gpu-runtime/src/gpu/ \
       crates/gpu-runtime/src/cuda_backend/ \
-      crates/server/src/scheduler.rs
+      crates/server/src/scheduler/
   } | sha256sum | awk '{print $1}'
 )
 

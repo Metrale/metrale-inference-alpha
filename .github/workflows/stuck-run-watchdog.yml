@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # Releases workflow runs that are stuck before they ever created a job.
 #
 # This is the worst failure shape this pipeline has, because it is INVISIBLE. A

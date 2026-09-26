@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # Release (dispatch only). Validates the inputs, re-runs the ordinary CI
 # gates, rebuilds the whole matrix via the SAME reusable workflow every PR
 # already exercises, then publishes.

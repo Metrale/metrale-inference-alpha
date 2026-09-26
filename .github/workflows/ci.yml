@@ -503,6 +503,13 @@ jobs:
       - name: CLI booleans are presence flags
         run: bash .github/scripts/check-cli-booleans.sh
 
+      # The no-GPU `cargo test` and coverage jobs link against the stubs in
+      # scripts/ci_gpu_stubs.sh. A GPU-library symbol declared in a crate but
+      # missing there breaks that link only after the change lands, so it is
+      # refused here, where the declaration is made.
+      - name: every declared GPU-library symbol has a no-GPU stub
+        run: python3 .github/scripts/assert-gpu-stubs-cover-ffi.py
+
   # ── Nine checks that did no work, in one job ──────────────────────────────
   #
   # Measured across 11 completed runs, on the self-hosted pool:
@@ -581,6 +588,7 @@ jobs:
           run "SPDX license headers (links)"  python3 .github/scripts/assert-doc-links.py
           run "SPDX license headers (cmds)"   python3 .github/scripts/assert-commands-documented.py
           run "SPDX license headers (notices)" python3 .github/scripts/assert-notices-shipped.py
+          run "SPDX license headers (GPU stubs)" python3 .github/scripts/assert-gpu-stubs-cover-ffi.py
           run "kernel shadow structure"       python3 scripts/check_kernel_shadows.py
           run "harvest triage decision table" bash .github/scripts/harvest-triage-test.sh
           run "Enforce <=500 LoC per source file" bash .github/scripts/check-file-size-cap.sh
@@ -1394,7 +1402,7 @@ jobs:
         with:
           fetch-depth: 0
       # This job runs TWO cargo binaries (`ledger_append`, `implied_benches`)
-      # and had no cache, so both paid a cold build on every PR. metrale-plugin is
+      # and had no cache, so both paid a cold build on every PR. metrale-bench is
       # host-only and CUDA-free, so the workflow-level METRALE_SKIP_BUILD=1 is all
       # it needs besides a warm target/.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2

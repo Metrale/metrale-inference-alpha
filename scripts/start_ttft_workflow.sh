@@ -18,8 +18,8 @@ Metrale Engine repo. Tonight's primary goal is to reduce long-context TTFT for 1
 
 Keep your role as planner/reviewer.
 Use claude_workhorse as the implementation workhorse only for bounded slices.
-First confirm the current chunked-prefill metadata hot path in crates/model-engine/src/model.rs.
-Do not touch crates/server/src/scheduler.rs unless forced.
+First confirm the current chunked-prefill metadata hot path in crates/model-engine/src/model/.
+Do not touch crates/server/src/scheduler/ unless forced.
 
 Bias toward low-risk wins first:
 - remove per-chunk waste
@@ -53,7 +53,7 @@ The standing goal remains:
 First inspect:
 - tasks/codex_agent_2026-03-23/ttft-overnight-ops-2026-03-23.md
 - current worktree diff
-- the existing TTFT slice around chunked-prefill metadata in crates/model-engine/src/model.rs
+- the existing TTFT slice around chunked-prefill metadata in crates/model-engine/src/model/
 
 If another Codex session is already making concrete progress, do not duplicate work blindly.
 Instead, pick the next smallest helpful action:
@@ -62,7 +62,7 @@ Instead, pick the next smallest helpful action:
 - run the next required validation step
 - or document the current blocker and exact next move
 
-Keep scheduler.rs out unless forced.
+Keep crates/server/src/scheduler/ out unless forced.
 Do not lead with chunk-size changes.
 Use claude_workhorse only for bounded implementation slices.
 EOF
