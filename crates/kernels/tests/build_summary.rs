@@ -134,7 +134,7 @@ fn the_overlay_owned_count_is_the_overlays_own_common_files() {
             .count()
     };
     assert_eq!(count("hopper", "qwen3.8-27b", "nvfp4"), own("hopper"));
-    assert_eq!(count("hopper", "qwen3.8-27b", "nvfp4"), 16);
+    assert_eq!(count("hopper", "qwen3.8-27b", "nvfp4"), 18);
     assert_eq!(count("b300", "kimi-k3", "bf16"), 0, "b300 inherits nothing");
     assert_eq!(count("b200", "kimi-k3", "bf16"), 0);
     assert_eq!(

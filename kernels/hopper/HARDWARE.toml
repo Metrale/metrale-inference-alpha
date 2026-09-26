@@ -389,6 +389,10 @@ w8a8_prefill_max_m_narrowing = 4294967295
 #   w8a16_gemm_m16.cu                    `ffn_m16_tc`, `attn_m16_tc`
 #   w8a16_gemv_ncol.cu                   `attn_ncol_gemv`
 #   silu_mul_strided.cu                  `ffn_gateup_fused`
+#   moe_bucket_builder.cu,
+#   moe_w8a8_m16.cu                      short-prefill M16/M128 expert
+#                                        buckets: model-layers MoE
+#                                        `adaptive_fp8`
 #
 # crates/kernels/tests/inherited_targets.rs checks that a replacement is
 # declared in [shadow] and an addition is not.

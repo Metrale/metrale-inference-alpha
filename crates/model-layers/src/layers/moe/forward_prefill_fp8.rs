@@ -6,6 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use metrale_gpu_runtime::buffers::MoeFp8Scratch;
 
 // 2026-09-26: One `ctx.profile` timing step of the FP8 prefill: when the timer `$mt` holds a
 // start time, synchronise `$stream`, log the step's elapsed time under `$label` and restart the
@@ -68,10 +69,14 @@ impl MoeLayer {
         let n = num_tokens as u32;
         let total_expanded = n * top_k;
         let ne = num_experts as usize;
+        // 2026-09-25: Every FP8 activation, scale and work-list temporary below is a
+        // region of the arena's grouped-MoE slab, so nothing here allocates, frees or
+        // synchronizes, and the addresses stay valid across CUDA graph replay.
+        let fp8_scratch = ctx.buffers.moe_fp8_scratch(ctx.config, num_tokens)?;
 
-        // 2026-09-25: Per-step timing only with `ctx.profile`; each step then
-        // synchronises the stream.
-        let profile = ctx.profile;
+        // 2026-09-25: Per-step timing only with `ctx.profile` outside graph capture;
+        // each step then synchronises the stream.
+        let profile = ctx.profile && !ctx.graph_capture;
         let mut mt = if profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -114,8 +119,31 @@ impl MoeLayer {
                 ctx,
                 stream,
             )?;
+        // 2026-09-25: Held across the router so shared W8A8 can leave the main stream.
+        // Dropped after sort, before routed quant reuses `fp8_scratch`.
+        let mut shared_join: Option<super::adaptive_fp8::SideJoin<'_>> = None;
         if !bf16_shared && has_shared && force_w8a8_sh {
-            self.fp8_prefill_shared_w8a8(input, sh, n, h, shared_inter, ctx, stream, &mut mt)?;
+            let shared_stream =
+                if super::adaptive_fp8::overlap_shared_router(num_tokens, num_experts, top_k) {
+                    let join = super::adaptive_fp8::begin_shared_side(ctx.gpu, stream)?;
+                    let side = join.side();
+                    shared_join = Some(join);
+                    side
+                } else {
+                    stream
+                };
+            self.fp8_prefill_shared_w8a8(
+                input,
+                sh,
+                n,
+                h,
+                shared_inter,
+                &fp8_scratch,
+                ctx,
+                stream,
+                shared_stream,
+                &mut mt,
+            )?;
         } else if !bf16_shared && has_shared {
             self.fp8_prefill_shared_w8a16(input, sh, n, h, shared_inter, ctx, stream, &mut mt)?;
         }
@@ -230,6 +258,9 @@ impl MoeLayer {
             stream,
         )?;
         mprof!("sort_by_expert");
+        // 2026-09-25: Router, top-k, and sort do not read shared outputs or fp8 scratch.
+        // Routed quant below reuses that scratch, so the side stream joins here.
+        drop(shared_join);
 
         // 2026-09-25: `max_m_tiles` covers all te rows in one expert, so no
         // expert's rows are cut off; the dense W8A8 kernel takes it as its M-tile
@@ -287,6 +318,7 @@ impl MoeLayer {
                 te,
                 ne,
                 max_m_tiles,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,
@@ -306,6 +338,7 @@ impl MoeLayer {
                 n,
                 te,
                 ne,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,
@@ -344,6 +377,7 @@ impl MoeLayer {
                 te,
                 ne,
                 max_m_tiles,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,
@@ -362,6 +396,7 @@ impl MoeLayer {
                 n,
                 te,
                 ne,
+                &fp8_scratch,
                 ctx,
                 stream,
                 &mut mt,

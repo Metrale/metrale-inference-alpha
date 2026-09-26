@@ -11,7 +11,8 @@ use super::*;
 
 impl MoeLayer {
     /// 2026-09-26: W8A8 shared expert: `input` quantised to FP8 per row and 128-column
-    /// group, then `fp8_gemm_t_blockscaled` for gate, up and down.
+    /// group, then `fp8_gemm_t_blockscaled` for gate, up and down. Every launch goes to
+    /// `shared_stream`; `stream`, the caller's, is what the profile timer synchronizes.
     pub(super) fn fp8_prefill_shared_w8a8(
         &self,
         input: DevicePtr,
@@ -19,8 +20,10 @@ impl MoeLayer {
         n: u32,
         h: u32,
         shared_inter: u32,
+        fp8_scratch: &MoeFp8Scratch,
         ctx: &ForwardContext,
         stream: u64,
+        shared_stream: u64,
         mt: &mut Option<std::time::Instant>,
     ) -> Result<()> {
         macro_rules! mprof {
@@ -30,11 +33,8 @@ impl MoeLayer {
         }
         let shared_gate_out = ctx.buffers.ssm_deinterleaved();
         let shared_up_out = ctx.buffers.ssm_qkvz();
-        let m_us: usize = n as usize;
-        let a_fp8_bytes: usize = m_us * h as usize;
-        let a_scale_bytes: usize = m_us * (h as usize / 128) * 4;
-        let input_fp8 = ctx.gpu.alloc(a_fp8_bytes)?;
-        let input_scale = ctx.gpu.alloc(a_scale_bytes)?;
+        let input_fp8 = fp8_scratch.activation;
+        let input_scale = fp8_scratch.scales;
         ops::per_token_group_quant_fp8(
             ctx.gpu,
             self.per_token_group_quant_fp8_k,
@@ -43,7 +43,7 @@ impl MoeLayer {
             input_scale,
             n,
             h,
-            stream,
+            shared_stream,
         )?;
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
@@ -56,7 +56,7 @@ impl MoeLayer {
             n,
             shared_inter,
             h,
-            stream,
+            shared_stream,
         )?;
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
@@ -69,16 +69,11 @@ impl MoeLayer {
             n,
             shared_inter,
             h,
-            stream,
+            shared_stream,
         )?;
-        ctx.gpu.synchronize(stream)?;
-        ctx.gpu.free(input_fp8)?;
-        ctx.gpu.free(input_scale)?;
         let shared_down_out = ctx.buffers.attn_output();
-        let a2_bytes: usize = m_us * shared_inter as usize;
-        let a2_scale_bytes: usize = m_us * (shared_inter as usize / 128) * 4;
-        let down_in_fp8 = ctx.gpu.alloc(a2_bytes)?;
-        let down_in_scale = ctx.gpu.alloc(a2_scale_bytes)?;
+        let down_in_fp8 = fp8_scratch.activation;
+        let down_in_scale = fp8_scratch.scales;
         if self.fused_silu_quant_ok(shared_inter) {
             // 2026-09-25: Nothing after this reads the BF16 post-SiLU shared
             // intermediate, so the BF16 output pointer is NULL.
@@ -92,7 +87,7 @@ impl MoeLayer {
                 metrale_gpu_runtime::gpu::DevicePtr::NULL,
                 n,
                 shared_inter,
-                stream,
+                shared_stream,
             )?;
         } else {
             ops::silu_mul(
@@ -102,7 +97,7 @@ impl MoeLayer {
                 shared_up_out,
                 shared_gate_out,
                 n * shared_inter,
-                stream,
+                shared_stream,
             )?;
             ops::per_token_group_quant_fp8(
                 ctx.gpu,
@@ -112,7 +107,7 @@ impl MoeLayer {
                 down_in_scale,
                 n,
                 shared_inter,
-                stream,
+                shared_stream,
             )?;
         }
         mprof!("silu_mul_quant");
@@ -127,11 +122,8 @@ impl MoeLayer {
             n,
             h,
             shared_inter,
-            stream,
+            shared_stream,
         )?;
-        ctx.gpu.synchronize(stream)?;
-        ctx.gpu.free(down_in_fp8)?;
-        ctx.gpu.free(down_in_scale)?;
         Ok(())
     }
 

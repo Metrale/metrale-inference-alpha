@@ -110,6 +110,9 @@ pub struct BufferSizes {
     /// element, `[ceil16(M), K]` for the widest K among hidden,
     /// `q_heads * head_dim`, Mamba-2 d_inner and the GDN value dim.
     pub fp8_act: usize,
+    /// 2026-09-25: The grouped FP8 MoE scratch slab (`moe_fp8_scratch::Layout`); 0 for a
+    /// dense model.
+    pub moe_fp8_scratch: usize,
     /// 2026-09-25: One f32 scale per 128 elements of `fp8_act`.
     pub fp8_act_scale: usize,
     /// 2026-09-25: `[K/128, ceil16(M)]` f32 transpose of `fp8_act_scale`, token
@@ -427,6 +430,7 @@ impl BufferSizes {
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
             fp8_act,
+            moe_fp8_scratch: super::moe_fp8_scratch::Layout::new(config, m).bytes,
             fp8_act_scale,
             fp8_act_scale_kmajor,
             lora_xa,
@@ -476,6 +480,7 @@ impl BufferSizes {
             + self.ffn_act_scale
             + self.ffn_act_scale_kmajor
             + self.fp8_act
+            + self.moe_fp8_scratch
             + self.fp8_act_scale
             + self.fp8_act_scale_kmajor
             + self.lora_xa

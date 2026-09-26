@@ -125,12 +125,9 @@ pub fn sample_token(
         }
     }
     if temperature == 0.0 {
-        let best = f32_logits
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, _)| i as u32)
-            .unwrap_or(0);
+        // 2026-09-25: An exact f32 tie keeps the lower id. `max_by` keeps the last tie and
+        // turned a 22.0/22.0 logit tie of "1" vs "2" into the token "2".
+        let best = metrale_sampling::argmax_first_wins_f32(&f32_logits);
         return Ok(best);
     }
     let f32_bytes: &[u8] =
@@ -243,12 +240,7 @@ pub fn sample_token_with_grammar(
     }
     apply_penalties_and_bias(&mut f32_logits, penalties, history);
     if temperature == 0.0 {
-        let best = f32_logits
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, _)| i as u32)
-            .unwrap_or(0);
+        let best = metrale_sampling::argmax_first_wins_f32(&f32_logits);
         return Ok(best);
     }
     let f32_bytes: &[u8] =
