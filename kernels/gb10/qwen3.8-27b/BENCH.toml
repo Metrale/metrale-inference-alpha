@@ -51,8 +51,8 @@ must pin): --gpu-memory-utilization 0.85 --max-batch-size 1 --max-seq-len \
 --ssm-cache-slots 256 --ssm-checkpoint-interval 16 --kv-high-precision-layers \
 auto, thinking ON. The 35B Gate-A profile (0.70 util, batch 2) CANNOT serve \
 this model at all — it dies at boot with no memory left for KV cache — so the \
-recipe is part of the variant, not a detail. The recipe id above now EXISTS in \
-metrale-recipes (merged 2026-08-14 as metrale-recipes#19, commit 20ac6e8), \
+recipe is part of the variant, not a detail. The recipe id above EXISTS in \
+the recipe library (Metrale/metralectl, recipes/; added 2026-08-14), \
 pinning exactly the profile stated above, so this variant can self-start \
 under --pull-request-gate. ★ Note the recipe pins `num_drafts: 3` (K=4), \
 matching the reference run; the qwen3.8-27b target deliberately omits \
@@ -138,7 +138,7 @@ note = """\
 The DENSE 3.8 leg of the BFCL gate. Exists so a Qwen3.8-27B score can be read \
 directly against the recorded Qwen3.6-27B results — same golden ST-995 draw \
 (62/10/10, floor 25, n=995, seed 42, temp 0), same scorer, and a serve recipe \
-whose defaults are byte-identical to the 3.6 sibling's (metrale-recipes#20; only \
+whose defaults are byte-identical to the 3.6 sibling's (only \
 the checkpoint differs). That identity is load-bearing: BFCL's normalized \
 score moves with serve config as well as with the draw, so the two legs must \
 share a config or the generation-over-generation delta means nothing. \

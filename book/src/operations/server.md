@@ -132,7 +132,7 @@ Agent workloads (Claude Code, OpenCode): always enable `--enable-prefix-caching`
 |---|---|---|
 | `--rank` | `0` | 0 = head (HTTP + scheduler); N > 0 = worker |
 | `--world-size` | `1` | Total ranks; `2` enables EP=2 |
-| `--master-addr` | — | Rendezvous host (e.g. head's IB IP) |
+| `--master-addr` | `127.0.0.1` | Rendezvous host (e.g. head's IB IP) |
 | `--master-port` | `29500` | NCCL rendezvous port |
 
 See [Multi-GPU & EP=2](./multi-gpu.md) for the full setup, including the NCCL env vars that matter on GB10.
@@ -143,7 +143,7 @@ See [Multi-GPU & EP=2](./multi-gpu.md) for the full setup, including the NCCL en
 |---|---|---|
 | `--disable-thinking` | off | Kill-switch for `<think>` blocks |
 | `--max-thinking-budget` | from `MODEL.toml` | Per-request `<think>` token ceiling |
-| `--tool-call-parser` | auto from `model_type` | `hermes`, `qwen3_coder`, `qwen3_xml`, `gemma4`, `mistral`, `minimax_xml`, `bare_json` |
+| `--tool-call-parser` | `MODEL.toml`, else `tool_defaults.toml` by `model_type` | `hermes`, `qwen3_coder`, `qwen3_xml`, `gemma4`, `mistral`, `minimax_xml`, `bare_json`, `poolside_v1` |
 | `--tool-max-tokens` | `8192` | **Hard** cap on the whole completion whenever tools are present — `api/chat/sampling_setup.rs` takes `req.max_tokens.min(tool_max_tokens)`, covering prose and reasoning as well as tool arguments. Not a soft cap, and not scoped to arguments |
 
 ## Observability / experimental
@@ -217,7 +217,7 @@ anything is released.
 
 ## Chat templating
 
-Tokenization uses the HF `tokenizers` crate plus `minijinja` for chat templates. Metrale Engine ships its own template overrides for a handful of models in `jinja-templates/<family>.j2` when the upstream template has known issues (e.g. template-forced `<think>` seeding). Naming convention: filename matches the HF repo.
+Tokenization uses the HF `tokenizers` crate plus `minijinja` for chat templates. Metrale Engine ships its own template overrides for a handful of models in `jinja-templates/<model_type>.jinja` when the upstream template has known issues (e.g. template-forced `<think>` seeding). The filename is the checkpoint's `config.json` `model_type`; `--disable-template-overrides` ignores it.
 
 ## Observability
 

@@ -302,8 +302,7 @@ jobs:
   # on `merge_group`, so on a `gh-readonly-queue/**` commit no Seal exists and
   # requiring the raw `Seal` context would wedge the queue forever. This job is
   # the requireable context: it reports on BOTH event types and re-derives the
-  # verdict on the queue side from the PR the entry came from, the same shape
-  # cla.yml uses for the same reason.
+  # verdict on the queue side from the PR the entry came from.
   seal:
     name: seal status
     runs-on: >-
@@ -451,6 +450,12 @@ jobs:
         if: runner.os == 'macOS'
         run: rustup target add x86_64-unknown-linux-gnu
       - run: cargo clippy --workspace --tests ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
+      # 2026-09-26: The Metal build compiles metrale-storage without its `cuda`
+      # feature. Checking that combination here, on Linux, catches a module
+      # gated on `cuda` that an always-built module imports, in seconds and
+      # without the Mac leg.
+      - name: metrale-storage builds without the cuda feature
+        run: cargo check --locked -p metrale-storage --no-default-features ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
 
   license-headers:
     name: SPDX license headers
@@ -502,6 +507,13 @@ jobs:
       # not only in the advisory `cheap checks` batch.
       - name: CLI booleans are presence flags
         run: bash .github/scripts/check-cli-booleans.sh
+
+      # The no-GPU `cargo test` and coverage jobs link against the stubs in
+      # scripts/ci_gpu_stubs.sh. A GPU-library symbol declared in a crate but
+      # missing there breaks that link only after the change lands, so it is
+      # refused here, where the declaration is made.
+      - name: every declared GPU-library symbol has a no-GPU stub
+        run: python3 .github/scripts/assert-gpu-stubs-cover-ffi.py
 
   # ── Nine checks that did no work, in one job ──────────────────────────────
   #
@@ -581,7 +593,9 @@ jobs:
           run "SPDX license headers (links)"  python3 .github/scripts/assert-doc-links.py
           run "SPDX license headers (cmds)"   python3 .github/scripts/assert-commands-documented.py
           run "SPDX license headers (notices)" python3 .github/scripts/assert-notices-shipped.py
+          run "SPDX license headers (GPU stubs)" python3 .github/scripts/assert-gpu-stubs-cover-ffi.py
           run "kernel shadow structure"       python3 scripts/check_kernel_shadows.py
+          run "Dockerfiles copy what the server build reads" bash docker/dockerfile_context_test.sh
           run "harvest triage decision table" bash .github/scripts/harvest-triage-test.sh
           run "Enforce <=500 LoC per source file" bash .github/scripts/check-file-size-cap.sh
           run "No block_on under tui/ or recipe/"  bash .github/scripts/check-no-block-on.sh
@@ -1394,7 +1408,7 @@ jobs:
         with:
           fetch-depth: 0
       # This job runs TWO cargo binaries (`ledger_append`, `implied_benches`)
-      # and had no cache, so both paid a cold build on every PR. metrale-plugin is
+      # and had no cache, so both paid a cold build on every PR. metrale-bench is
       # host-only and CUDA-free, so the workflow-level METRALE_SKIP_BUILD=1 is all
       # it needs besides a warm target/.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -1493,7 +1507,7 @@ jobs:
         #      context: a sibling repo normally refuses it. Tried anyway,
         #      because "normally" is org policy, not physics — a 200 is a 200,
         #      and the check below believes responses, not documentation.
-        #   3. anonymous — works because metrale-recipes is public
+        #   3. anonymous — works because metralectl is public
         #      (`"private": false`); rate-limited to 60/hr per IP, shared
         #      across the runner fleet, hence last.
         # The first rung answering HTTP 200 with parseable JSON wins. When
@@ -1504,7 +1518,7 @@ jobs:
           REPO_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          API='https://api.github.com/repos/Metrale/metrale-recipes/git/trees/main?recursive=1'
+          API='https://api.github.com/repos/Metrale/metralectl/git/trees/main?recursive=1'
           out=$(mktemp)
           fetch() {  # extra curl args; body on stdout iff the answer was 200
             local code
@@ -1533,7 +1547,7 @@ jobs:
             printf '%s' "$names" > recipes.txt
           else
             : > recipes.txt
-            echo "::notice::metrale-recipes not readable on any rung of the token chain; classifying without recipe context"
+            echo "::notice::metralectl not readable on any rung of the token chain; classifying without recipe context"
           fi
           echo "count=$(wc -l < recipes.txt)" >> "$GITHUB_OUTPUT"
           # Randomized marker, same reason as the diff step: recipe names come
@@ -1671,7 +1685,7 @@ jobs:
             Changed paths (${{ steps.diff.outputs.count }} total, sorted):
             ${{ steps.diff.outputs.paths }}
 
-            Serve recipes available in Metrale/metrale-recipes
+            Serve recipes available in Metrale/metralectl
             (${{ steps.recipes.outputs.count }}):
             ${{ steps.recipes.outputs.names }}
           taxonomy: .github/pr-taxonomy.json

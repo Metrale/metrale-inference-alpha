@@ -1,6 +1,6 @@
 # Supported Models
 
-Twelve `(GB10, model, quant)` targets ship in the default image today. One multi-model binary, one Docker image, one `serve <hf-id>` command per model. The binary reads the model's `config.json`, computes the canonical `model_type`, and dispatches to the matching kernel set at startup.
+The default image compiles every `(GB10, model, quant)` target under `kernels/gb10/`; the table below covers the most-used models. One multi-model binary, one Docker image, one `serve <hf-id>` command per model. The binary reads the model's `config.json`, computes the canonical `model_type`, and dispatches to the matching kernel set at startup.
 
 ## The matrix
 
@@ -23,7 +23,7 @@ Throughput figures are p50 single-request decode on a short prompt (`max_tokens 
 
 > **Recently added (not yet tabulated):** DeepSeek-V4-Flash — MLA + MoE + CSA/HCA
 > hybrid attention + mHC, with native MXFP4 (E8M0) routed-expert loading and
-> Phase-K E8M0 GEMM kernels — landed end-to-end on GB10 in #293. Its
+> Phase-K E8M0 GEMM kernels — runs end-to-end on GB10. Its
 > `model_type` dispatches through `factory.rs` (`deepseek_v4`).
 
 ## How to pick

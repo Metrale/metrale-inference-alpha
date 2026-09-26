@@ -4,9 +4,9 @@
 #   docker build -f docker/gb10/qwen3-next-80b-a3b/nvfp4/Dockerfile -t metrale-80b .
 #
 # Run:
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-80b serve nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
+#     metrale-80b serve --bind 0.0.0.0 nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
 
 # ── Build stage ──────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-devel-ubuntu24.04 AS builder
@@ -25,6 +25,9 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
+# metrale-bench include_str!s its benchmark prompts from tests/fixtures;
+# without them the release build fails with "couldn't read".
+COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=qwen3-next-80b-a3b

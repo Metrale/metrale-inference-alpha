@@ -4,9 +4,9 @@
 #   docker build -f docker/gb10/deepseek-v4-flash/nvfp4/Dockerfile -t metrale-deepseek-v4 .
 #
 # Run (single node):
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-deepseek-v4 serve deepseek-ai/DeepSeek-V4-Flash
+#     metrale-deepseek-v4 serve --bind 0.0.0.0 deepseek-ai/DeepSeek-V4-Flash
 #
 # Run (EP=2 — see scripts/start-deepseek-ep2.sh):
 #   docker run --gpus all --ipc=host --network host \
@@ -42,6 +42,9 @@ COPY vendor/ vendor/
 # jinja-templates/deepseek_v4.jinja). Without this the runtime finds no
 # override and falls back to ChatML — wrong delimiters/stop for DeepSeek.
 COPY jinja-templates/ jinja-templates/
+# metrale-bench include_str!s its benchmark prompts from tests/fixtures;
+# without them the release build fails with "couldn't read".
+COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=deepseek-v4-flash

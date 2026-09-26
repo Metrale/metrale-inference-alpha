@@ -40,7 +40,6 @@ What's better, what's worse, what new problems did we create?
 
 ## Index
 
-- [0001 — License: AGPL-3.0 with a CLA](0001-license-agpl-with-cla.md) — superseded by 0017
 - [0002 — Pure-Rust runtime, no PyTorch](0002-pure-rust-no-pytorch.md)
 - [0003 — Hybrid SSM + attention as a first-class layer kind](0003-hybrid-ssm-attention.md)
 - [0004 — NVFP4 + FP8 as the primary quant formats](0004-nvfp4-fp8-quantization.md)

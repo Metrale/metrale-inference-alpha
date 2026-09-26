@@ -16,8 +16,7 @@ description: >-
 # Discussion comments are GraphQL-ONLY. There is no REST `issues/comments`
 # equivalent, so the familiar `gh api -X PATCH .../issues/comments/$id` cannot
 # be reused and every caller would otherwise carry its own hand-written
-# mutation. Two callers already exist (pr-telemetry, intent-eigenvector), which
-# is one more than a copied implementation survives.
+# mutation.
 
 inputs:
   discussion-number:
@@ -80,6 +79,12 @@ runs:
         # replies push our comment past the first page an unpaginated lookup
         # stops finding it and starts posting a NEW one every run — the exact
         # duplication the marker exists to prevent.
+        #
+        # ★ Only a comment THIS token may edit counts as ours. A marker comment
+        # left by another identity (a different token, a human quoting the
+        # body) may not be editable by it, and selecting one would fail the
+        # mutation on every run. Skipping it posts one fresh comment, which
+        # later runs then find and update.
         existing=$(gh api graphql --paginate \
           -F owner="$OWNER" -F name="$REPO" -F number="$DISCUSSION" -f query='
           query($owner:String!,$name:String!,$number:Int!,$endCursor:String){
@@ -87,9 +92,9 @@ runs:
               discussion(number:$number){
                 comments(first:100, after:$endCursor){
                   pageInfo{ hasNextPage endCursor }
-                  nodes{ id body }
+                  nodes{ id body viewerCanUpdate }
                 } } } }' \
-          --jq ".data.repository.discussion.comments.nodes[] | select(.body | contains(\"$MARKER\")) | .id" \
+          --jq ".data.repository.discussion.comments.nodes[] | select(.viewerCanUpdate and (.body | contains(\"$MARKER\"))) | .id" \
           | head -n 1)
 
         if [ -n "$existing" ]; then

@@ -48,7 +48,7 @@ All four are required to pass. Real CUDA build + test cycles require a GB10 host
 
 - **SPDX header on every source file.** `// SPDX-License-Identifier: MIT OR Apache-2.0` on line 1 of every `.rs`, `.cu`, `.cuh`, `.h`, `.hpp`, `.cpp`. Enforced by the `license-headers` CI job.
 - **License is MIT OR Apache-2.0.** Third-party code keeps its own licence and is listed in `THIRD_PARTY_NOTICES.md`. `deny.toml` controls allowed dependency licenses.
-- **Don't regress supported models.** The matrix in [Supported Models](../getting-started/models.md) is the contract; `docs/GB10_DEPLOYMENT_GUIDE.md` §2 is its SSOT, and `kernels/gb10/` carries 22 `(model, quant)` leaves. If your PR might touch a hot path, validate against `tests/run_all_models.py` on a GB10 before opening.
+- **Don't regress supported models.** The matrix in [Supported Models](../getting-started/models.md) is the contract; `docs/GB10_DEPLOYMENT_GUIDE.md` §2 is its SSOT, and `kernels/gb10/` carries one leaf per `(model, quant)` target. If your PR might touch a hot path, validate against `tests/run_all_models.py` on a GB10 before opening.
 - **One logical change per commit.** Don't bundle cleanup with a bug fix.
 - **Commit message format.** `<area>: <imperative summary>` — e.g. `server: preserve template-forced thinking through EP=2`.
 
@@ -67,24 +67,21 @@ These are the classes of bug that have burned days. Know them; avoid introducing
 
 The test matrix has caught many issues that would have looked like "model hallucination" in a lesser codebase. The heuristic is: if the model used to produce coherent output on this input and now doesn't, there's a Metrale Engine bug, not a model bug.
 
-## The CLA
+## License
 
-By contributing, you agree to the [Contributor License Agreement](https://github.com/Metrale/metrale-inference-alpha/blob/main/CLA.md). Your work goes out under MIT OR Apache-2.0, and you grant Metrale Engine the right to relicense for the Enterprise Edition.
-
-The `CLA Assistant` bot automatically comments on every PR. You must explicitly acknowledge and sign before merge.
+Metrale Engine is licensed under MIT OR Apache-2.0, at your option. Unless you state otherwise, any contribution you submit for inclusion is licensed the same way, without additional terms or conditions.
 
 ## Adding a new hardware target
 
-High-level (full walkthrough in the repo README):
+High-level (full walkthrough in [`docs/HARDWARE.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target)):
 
-1. `kernels/<hw>/HARDWARE.toml` with `vendor = "..."`.
-2. `impl ComputeTarget` in `metrale-core/src/compute.rs` (or inline in your crate).
-3. Arm in `metrale-kernels/build.rs` — `resolve_targets()` reads `METRALE_TARGET_HW` (default `gb10`) and the leaf `HARDWARE.toml`'s `vendor` picks the `ComputeTarget`.
-4. `impl GpuBackend` in `crates/gpu-runtime/src/<vendor>_backend.rs` — 27 methods, some optional.
-5. Kernel sources under `kernels/<hw>/common/` (the GB10 baseline is 160 `.cu` files / 318 `__global__` entry points), plus per-model shadows only where a target diverges.
-6. `MODEL.toml` + `KERNEL.toml` for at least one model.
-7. Backend selection branch in `crates/server/src/main.rs`.
-8. Dockerfile for the new hardware.
+1. `kernels/<hw>/HARDWARE.toml` with `vendor = "..."` and `arch`; `[hardware] inherits` to reuse another tree's sources.
+2. `impl ComputeTarget` for the vendor's compiler, registered in `crates/kernels/build_target.rs::resolve_compute_target()` (the build reads `METRALE_TARGET_HW`, default `gb10`, and the tree's `vendor` picks the `ComputeTarget`).
+3. `impl GpuBackend` in `crates/gpu-runtime/src/<vendor>_backend.rs`; some methods have defaults.
+4. Kernel sources under `kernels/<hw>/common/`, plus per-model shadows (declared in `[shadow]`) only where a target diverges.
+5. `MODEL.toml` + `KERNEL.toml` for at least one model.
+6. Backend selection in the server's startup (`crates/server/src/main_modules/serve_phases/`).
+7. Dockerfile for the new hardware.
 
 ## Adding a new model
 
@@ -104,14 +101,13 @@ Existing loaders for patterns: `qwen35.rs`, `minimax.rs`, `nemotron.rs` cover de
 
 1. Fork and create a feature branch.
 2. Atomic commits. Enforced by reviewers; squash only at the reviewer's request.
-3. CI must pass: `ci.yml` runs `fmt`, `clippy`, `license-headers`, `typos`, `kernel-structure`, `cargo test --workspace`, `test-macos-metal` and `release-matrix`; `security.yml` runs `cargo-deny`; `file-size-cap.yml` the 500-LoC cap; `docs.yml` mdBook + `cargo doc`. The `pr-benchmark-gate` job is advisory (`continue-on-error`).
+3. CI must pass: `ci.yml` runs `fmt`, `clippy`, `license-headers`, `typos`, `kernel-structure`, `cargo test --workspace`, `test-macos-metal` and `release-matrix`; `security.yml` runs `cargo-deny`; `file-size-cap.yml` the 500-LoC cap; `docs.yml` mdBook + `cargo doc`. The `pr-benchmark-gate` job ("PR Benchmark Certifications") requires the committed benchmark records for the commit; see [Certification](../operations/certify.md).
 4. PR template asks for:
    - **What** — summary of the change.
    - **Why** — motivation and context.
    - **Benchmarks** — before/after numbers for perf-related changes.
    - **Authorship** — AI / human / mixed; justify human-written sections.
-5. Sign the CLA when the bot asks.
-6. A maintainer (and/or AI reviewer) merges.
+5. A maintainer (and/or AI reviewer) merges.
 
 ## Scope escalation
 
@@ -121,6 +117,5 @@ If a task is ambiguous, ask in the issue/PR before implementing. If scope grows 
 
 - [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CONTRIBUTING.md) — canonical.
 - [`AGENTS.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/AGENTS.md) — practical contributor guide.
-- [`CLA.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CLA.md) — the CLA text.
 - [`SECURITY.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/SECURITY.md) — disclosure (also this book's [Security chapter](./security.md)).
 - [`docs/adr/`](https://github.com/Metrale/metrale-inference-alpha/tree/main/docs/adr) — authoritative architecture decision records.

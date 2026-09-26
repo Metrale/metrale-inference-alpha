@@ -4,13 +4,13 @@
 #   docker build -f docker/gb10/Dockerfile -t metrale-gb10 .
 #
 # Run (auto-selects kernels based on model config):
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-gb10 serve nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
+#     metrale-gb10 serve --bind 0.0.0.0 nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4
 #
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-gb10 serve Kbenkhaled/Qwen3.5-35B-A3B-NVFP4
+#     metrale-gb10 serve --bind 0.0.0.0 Kbenkhaled/Qwen3.5-35B-A3B-NVFP4
 
 # ── Build stage ──────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-devel-ubuntu24.04@sha256:1e8ac7a54c184a1af8ef2167f28fa98281892a835c981ebcddb1fad04bdd452d AS builder
@@ -22,9 +22,8 @@ RUN apt-get update -qq && \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV CUDA_HOME=/usr/local/cuda
-# Override rust-toolchain.toml's 1.85 pin: a transitive dep (libloading 0.9)
-# now requires >= 1.88. Using `stable` defers to the toolchain that rustup
-# installed above (currently 1.93).
+# Build with the stable toolchain rustup installed above rather than the
+# channel rust-toolchain.toml pins.
 ENV RUSTUP_TOOLCHAIN=stable
 
 WORKDIR /build
@@ -34,7 +33,7 @@ COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
 COPY jinja-templates/ jinja-templates/
-# quick-speed-bench (metrale-plugin) include_str!'s its ISL prompt fixtures from
+# quick-speed-bench (metrale-bench) include_str!'s its ISL prompt fixtures from
 # tests/fixtures — without this line the release build fails in-container
 # ("couldn't read ../../tests/fixtures/bench_prompt_128.txt") while every
 # full-tree local build succeeds. Copy just the fixtures, not all of tests/.
@@ -53,7 +52,7 @@ LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 # Stamp the source commit into the image so ":latest" provenance is answerable:
 #   docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' <tag>
-# Passed by scripts/release.sh and the metrale-release skill via --build-arg METRALE_GIT_SHA.
+# Pass it with --build-arg METRALE_GIT_SHA=$(git rev-parse HEAD).
 ARG METRALE_GIT_SHA=unknown
 LABEL org.opencontainers.image.revision="${METRALE_GIT_SHA}"
 

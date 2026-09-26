@@ -1,2 +1,0 @@
-FROM metrale-deepseek-v4:latest
-COPY target/release/met /usr/local/bin/met

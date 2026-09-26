@@ -239,6 +239,12 @@ pub struct MoeLayer {
     // `moe_build_tile_worklist` builds; 0 on targets that do not ship it.
     moe_fp8_grouped_gemm_k: KernelHandle,
     moe_build_tile_worklist_k: KernelHandle,
+    // 2026-09-25: The Hopper short-prefill M16 expert GEMM and bucket builder
+    // (`adaptive_fp8.rs`), and the SM count their grids are sized from; 0 when the
+    // target lacks either module.
+    moe_w8a8_m16_k: KernelHandle,
+    moe_bucket_builder_k: KernelHandle,
+    moe_adaptive_sms: u32,
     // 2026-09-25: W8A8 grouped GEMM with an FP32 epilogue over per-token-quantized
     // activations. The FP8 prefill uses it when `fp8_blockscaled_prefill` is on
     // (the default; `METRALE_FP8_SINGLE_SCALE=1` turns it off) and this handle
@@ -323,6 +329,7 @@ impl MoeLayer {
     }
 }
 
+mod adaptive_fp8;
 mod tables;
 pub(crate) use tables::{Bf16SharedExpert, ExpertPtrTable, Fp8ExpertPtrTable};
 

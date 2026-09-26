@@ -5,8 +5,8 @@
 //! Owner: gpu-runtime.
 //! Invariants:
 //! - Every buffer is allocated at its [`BufferSizes`] size. The gated ones
-//!   (`ssd_scratch`, `gdn_fla_scratch`, `ffn_*`, `q2_*`, `lora_*`,
-//!   `ssm_rowwise_w_bf16`) are `DevicePtr::NULL` when that size is 0.
+//!   (`ssd_scratch`, `gdn_fla_scratch`, `ffn_*`, `moe_fp8_scratch`, `q2_*`,
+//!   `lora_*`, `ssm_rowwise_w_bf16`) are `DevicePtr::NULL` when that size is 0.
 //! - No device memory is allocated after construction, and `release` frees
 //!   every pointer field.
 
@@ -17,6 +17,7 @@ use metrale_config::ModelConfig;
 mod accessors;
 mod debug_checksum;
 pub mod decode_meta;
+mod moe_fp8_scratch;
 mod release;
 mod rowwise_slab;
 mod sizes;
@@ -24,6 +25,7 @@ mod sizes_q12;
 mod sizes_q2;
 mod sizes_rowwise;
 pub use decode_meta::{DECODE_META_MAX_ROWS, DECODE_META_MIN_ROWS, DecodeMetaLayout};
+pub use moe_fp8_scratch::MoeFp8Scratch;
 pub use sizes::{BufferSizes, GATEUP_FUSED_MAX_M};
 pub use sizes_q2::q2_dequant_scratch_bytes;
 pub use sizes_q12::{
@@ -72,6 +74,9 @@ pub struct BufferArena {
     ffn_act_scale_kmajor: DevicePtr,
     ffn_gate_up_fused: DevicePtr,
     fp8_act: DevicePtr,
+    /// 2026-09-25: The grouped FP8 MoE activation, scale and tile-worklist slab that every
+    /// MoE layer reuses in turn; see [`BufferArena::moe_fp8_scratch`].
+    moe_fp8_scratch: DevicePtr,
     fp8_act_scale: DevicePtr,
     fp8_act_scale_kmajor: DevicePtr,
     q2_dequant_scratch: DevicePtr,
@@ -196,6 +201,11 @@ impl BufferArena {
             DevicePtr::NULL
         };
         let fp8_act = gpu.alloc(sizes.fp8_act)?;
+        let moe_fp8_scratch = if sizes.moe_fp8_scratch > 0 {
+            gpu.alloc(sizes.moe_fp8_scratch)?
+        } else {
+            DevicePtr::NULL
+        };
         let fp8_act_scale = gpu.alloc(sizes.fp8_act_scale)?;
         let fp8_act_scale_kmajor = gpu.alloc(sizes.fp8_act_scale_kmajor)?;
         let q2_dequant_scratch = if sizes.q2_dequant_scratch > 0 {
@@ -280,6 +290,7 @@ impl BufferArena {
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
             fp8_act,
+            moe_fp8_scratch,
             fp8_act_scale,
             fp8_act_scale_kmajor,
             q2_dequant_scratch,

@@ -61,34 +61,43 @@ Build takes ~2-3 minutes (Rust compilation + CUDA kernel PTX compilation).
 
 ## Run
 
+`met serve` binds `127.0.0.1` by default. Inside a container on Docker's
+bridge network that address is the container's own loopback, which a
+published port cannot reach, so every example below passes `--bind 0.0.0.0`
+and publishes the port on the host's loopback only (`-p 127.0.0.1:8888:8888`).
+To reach the server from other machines, publish on all interfaces
+(`-p 8888:8888`) and add `--require-auth --auth-tokens-file <path>`; see
+`QUICKSTART.md` § Network exposure. With `--network host` the container
+shares the host's network and the default bind already serves the host.
+
 ### Recommended: `--model-from-path` with local directory
 
 This is the most portable approach — mount the model directory and pass the path directly.
 
 ```bash
 # 80B with speculative decoding (~106 tok/s counting, ~99 tok/s diverse)
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v /models/qwen3-next-80b:/model \
-  metrale-80b serve --model-from-path /model --speculative --num-drafts 1
+  metrale-80b serve --bind 0.0.0.0 --model-from-path /model --speculative --num-drafts 1
 
 # 35B with speculative decoding (~131 tok/s counting, ~127 tok/s diverse)
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v /models/qwen3.5-35b:/model \
-  metrale-35b serve --model-from-path /model --speculative --num-drafts 1
+  metrale-35b serve --bind 0.0.0.0 --model-from-path /model --speculative --num-drafts 1
 ```
 
 ### Non-speculative mode
 
 ```bash
 # 80B (~82 tok/s)
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v /models/qwen3-next-80b:/model \
-  metrale-80b serve --model-from-path /model
+  metrale-80b serve --bind 0.0.0.0 --model-from-path /model
 
 # 35B (~102 tok/s)
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v /models/qwen3.5-35b:/model \
-  metrale-35b serve --model-from-path /model
+  metrale-35b serve --bind 0.0.0.0 --model-from-path /model
 ```
 
 ### Alternative: HuggingFace cache mount
@@ -96,9 +105,9 @@ docker run --gpus all --ipc=host -p 8888:8888 \
 If you use the default HuggingFace cache (`~/.cache/huggingface/`), mount it and pass the model ID:
 
 ```bash
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
-  metrale-80b serve nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 --speculative --num-drafts 1
+  metrale-80b serve --bind 0.0.0.0 nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 --speculative --num-drafts 1
 ```
 
 > **Note:** The 35B model's `extra_weights.safetensors` is a symlink that may break with HF cache mounts. Use `--local-dir` download or `--model-from-path` instead.

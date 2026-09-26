@@ -257,9 +257,9 @@ By rough leverage-per-hour-invested:
    clone this, don't reinvent it. Zero-overhead when env unset (PCND/SSOT compliant).
 3. **HF CPU oracle script** (model + hooks that dump intermediate tensors using
    the same bin format). One per family. Template in
-   `bench/longcode/hang-forensics/hf_gdn_ref2.py`.
+   `bench/longcode/hang-forensics/hf_gdn_ref_a3b.py`.
 4. **Per-head diagnostic comparator** (cosine, relL2, magnitude ratio with
-   std/min/max). Template in `bench/longcode/hang-forensics/gdn_chain_diff2.py`.
+   std/min/max). Template in `bench/longcode/hang-forensics/gdn_chain_diff_a3b.py`.
 5. **CI numerical-divergence guard** — once you've shipped a fix, lock the
    per-layer cosines as a regression test. The next quality bug will be
    detected at PR time, not in production.

@@ -60,7 +60,7 @@ ${withItems.map((p) => `## ${p.name}\n\n${p.items.join('\n')}`).join('\n\n')}
 - [Metrale Engine](https://metrale.ai/engine): the project page — also at https://metrale.ai/llms.txt
 - [Engineering blog](https://blog.metrale.ai): measured notes — also at https://blog.metrale.ai/llms.txt
 - [Source](https://github.com/Metrale/metrale-inference-alpha): pure Rust and CUDA, MIT OR Apache-2.0
-- [Recipes](https://github.com/Metrale/metrale-recipes): the model SSOT
+- [Recipes](https://github.com/Metrale/metralectl/tree/main/recipes): the model SSOT
 - [Discord](https://discord.gg/RQcGakU2jW)
 `;
 

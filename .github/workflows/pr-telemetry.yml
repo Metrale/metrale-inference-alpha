@@ -132,7 +132,7 @@ jobs:
 
       - name: Render the comment body
         env:
-          # metrale-plugin is host-only and CUDA-free, so the runner needs no
+          # metrale-bench is host-only and CUDA-free, so the runner needs no
           # toolchain and no GPU. The skip flag stops metrale-kernels' build
           # script looking for nvcc.
           METRALE_SKIP_BUILD: "1"
@@ -157,17 +157,36 @@ jobs:
     name: Update the tracking comment
     needs: render
     runs-on: ubuntu-latest
-    # The ONLY job with a write scope, and it holds exactly one. Rendering runs
-    # read-only, so a bug in the analysis has nowhere to write even in principle.
+    # Rendering runs read-only, so a bug in the analysis has nowhere to write
+    # even in principle. This job's GITHUB_TOKEN holds no scope at all: the
+    # write goes through the governance App's installation token, minted below
+    # with `discussions: write` and nothing else.
+    #
+    # Why not GITHUB_TOKEN with `discussions: write`: it can create the comment
+    # but GitHub refuses `updateDiscussionComment` from it ("Resource not
+    # accessible by integration"), so every run after the first failed.
     #
     # `discussions`, not `issues`: this report is a standing document that
     # rewrites itself every four hours, and an issue nobody ever closes reads as
-    # a task left unfinished. The thread it maintains is
-    # https://github.com/Metrale/metrale-inference-alpha/discussions/619 — the old
-    # issue #434 carries a pointer to it.
-    permissions:
-      discussions: write
+    # a task left unfinished. The thread it maintains is the Discussion named by
+    # the PR_TELEMETRY_DISCUSSION repository variable (#10,
+    # https://github.com/Metrale/metrale-inference-alpha/discussions/10).
+    permissions: {}
     steps:
+      # PCND: once a Discussion is configured, the App is required. The mint is
+      # skipped only when there is nowhere to post, which the upsert step
+      # reports; a configured Discussion with a missing or under-permissioned
+      # App fails here, loudly, instead of falling back to a token that cannot
+      # write. The App needs "Discussions: read & write" on its installation.
+      - name: Mint the governance App token
+        id: apptoken
+        if: vars.PR_TELEMETRY_DISCUSSION != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.GOVERNANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          permission-discussions: write
+
       # Only the composite action is needed, so only the composite action is
       # fetched — the publish job never reads the tree it is reporting on.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -186,4 +205,4 @@ jobs:
           # Must match telemetry::MARKER_START, which is what the renderer emits.
           marker: "<!-- metrale-pr-telemetry:start -->"
           body-file: body.md
-          token: ${{ github.token }}
+          token: ${{ steps.apptoken.outputs.token }}

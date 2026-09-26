@@ -4,7 +4,7 @@ Metrale Engine's performance claims are measurable. This chapter shows what the 
 
 ## The headline numbers
 
-From the repo README, distilled:
+Single-request decode on GB10:
 
 | Model | Mode | tok/s | Baseline |
 |---|---|---:|---:|
@@ -22,7 +22,7 @@ And the kernel micro-benchmark summary: **Metrale Engine wins 32/32** against Py
 Metrale Engine has two benchmark surfaces:
 
 1. **End-to-end HTTP throughput** — `met benchmark` (the `metrale-bench` crate, `crates/bench`: benchmarks that drive a running server over HTTP). This is what "131 tok/s" means.
-2. **Per-kernel micro-benchmarks** — Criterion benches in each primitive crate, run with `cargo bench`. This is where "4.95× prefill attention" comes from.
+2. **Per-kernel micro-benchmarks** — the GPU `*_microtest` examples in `crates/model-arch/examples/`, plus Criterion benches (`crates/grammar/benches/`) run with `cargo bench`. This is where "4.95× prefill attention" comes from.
 
 Different things; both are meaningful. The E2E number is what an operator sees. The per-kernel number is what tells the kernel engineer where effort is paying back.
 
@@ -47,9 +47,9 @@ Wait for `listening`. Then:
 met benchmark run concurrency-sweep --model <served-model>
 ```
 
-Each run is recorded in the run history (`met benchmark history`, see [Run history](#run-history)). The stable JSON snapshots that the README quotes are pinned under `bench/`.
+Each run is recorded in the run history (`met benchmark history`, see [Run history](#run-history)). Tracked result sets live under `bench/`.
 
-The `scripts/sweep_all_models.sh` helper boots each model in turn, runs the canonical short-prompt bench, and writes the `README.md` throughput table. That's how the table in the README gets regenerated.
+The `scripts/sweep_all_models.sh` helper boots each model in turn across both nodes, runs the canonical short-prompt bench, and writes the results to `/tmp/sweep_results.txt`.
 
 ## Running per-kernel benchmarks
 
@@ -59,7 +59,7 @@ cargo run --release -p metrale-model-arch --features gpu-examples \
   --example attn_prefill_microtest  # one GPU kernel microtest
 ```
 
-Criterion benches live in each crate's `benches/*.rs`; the GPU kernel microtests are the `*_microtest` examples in `crates/model-arch/examples/`. Reference shapes come from Qwen3-Next-80B (hidden=2048, 16 Q-heads, 2 KV-heads, head_dim=256, intermediate=512, num_experts=256, topk=10).
+Criterion benches live in a crate's `benches/` directory; the GPU kernel microtests are the `*_microtest` examples in `crates/model-arch/examples/`. Reference shapes come from Qwen3-Next-80B (hidden=2048, 16 Q-heads, 2 KV-heads, head_dim=256, intermediate=512, num_experts=256, topk=10).
 
 The full kernel numbers table:
 
@@ -120,7 +120,7 @@ Run a request, note the TTFT. Run the same request again — with `--enable-pref
 
 ## Where raw results live
 
-- **Pinned snapshots** (tracked): result files under `bench/`. These feed the book and the README.
+- **Tracked results**: result sets under `bench/` (for example `bench/ladder38/`).
 - **Ephemeral Criterion runs** (gitignored): `target/criterion/`.
 - **Historical benchmark journeys**: `docs/METRALE_JOURNEY.md` — the benchmark retrospective of the engine on GB10.
 
@@ -134,8 +134,6 @@ When comparing Metrale Engine to vLLM or TensorRT-LLM:
 - **Same precision.** Metrale Engine NVFP4 vs vLLM NVFP4; Metrale Engine FP8 vs vLLM FP8. Never compare across quant schemes.
 
 The headline "3.6× faster than NVIDIA's 36 tok/s" is apples-to-apples against NVIDIA's own vLLM numbers on the same `(GB10, Qwen3.5-35B-A3B, NVFP4)` target.
-
-## Files to read
 
 ## From the CLI
 
@@ -151,9 +149,10 @@ met benchmark history
 
 `run` drives an endpoint that is **already serving** — it neither loads a model
 nor touches the GPU. The one exception is `--pull-request-gate`, which *does*
-start a server: it serves the benchmark's own recipe on a free port (900 s boot
-timeout, for a cold NVFP4 load) and tears it down on drop
-(`cli/bench_selfstart.rs`).
+start a server: it serves the benchmark's own recipe on a free port (the boot
+timeout is `boot_timeout_s` in `HARDWARE.toml` `[benchmarks.limits]`, 900 s on
+GB10, for a cold NVFP4 load) and tears it down on drop
+(`crates/server/src/cli/bench_selfstart.rs`).
 
 A benchmark can be defined on more than one **model variant** — one
 `BENCH.toml` entry per checkpoint, each carrying its own serve recipe and its
@@ -246,8 +245,8 @@ group sums each subset's `(hits, n)` integers and applies the hierarchy once.
 #### The number is partition-dependent, and that is the certified regime
 
 The shards are scored **open**: cross-request SSM snapshot reuse stays on, as
-in production, and the serve is not `--hermetic`. The consequence is measured
-(#936): running the golden draw whole and as its four shards at one commit
+in production, and the serve is not `--hermetic`. The consequence is measured:
+running the golden draw whole and as its four shards at one commit
 changes the answer on **12 of 995** samples — ten in `live_irrelevance`, one
 each in `live_multiple` and `live_parallel_multiple` — because a request
 restores from whichever SSM snapshot an earlier request left behind. The twelve
@@ -293,9 +292,10 @@ History pane, and a dashboard run appears in `met benchmark history` marked
 Machine-readable output goes to **stdout**, progress to **stderr**, so
 `--format json > run.json` is a clean file. `METRALE_HOME` relocates the store.
 
-- `crates/bench/src/lib.rs` — E2E harness (`met benchmark`).
-- Each primitive crate's `benches/*.rs` — per-kernel micro.
-- `bench/*.json` — pinned result snapshots.
+## Files to read
+
+- `crates/bench/src/` — the benchmark suite and the certification gate (`met benchmark`).
+- `crates/model-arch/examples/*_microtest.rs`, `crates/grammar/benches/` — per-kernel micro.
+- `bench/` — tracked result sets and harnesses.
 - `scripts/sweep_all_models.sh`, `scripts/run_conc_benchmark.sh` — automation.
 - `docs/METRALE_JOURNEY.md` — benchmark journey and retrospective.
-- README "Benchmark Results" section — the authoritative long-form table.

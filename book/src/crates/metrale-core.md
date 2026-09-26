@@ -1,20 +1,26 @@
 # metrale-core
 
-**Role:** the type + trait vocabulary every other Metrale Engine crate builds on.
-**Key traits:** `ComputeTarget` (build-time compiler abstraction), `Vendor`, `DType`, `KernelTarget`, `TensorRef`, `ModelConfig`.
-**Dependencies:** none from the workspace — this is the bottom of the stack.
+**Path:** `crates/core/`
+**Role:** the shared foundation types and host-side helpers every other Metrale Engine crate builds on.
+**Dependencies:** none from the workspace — this is the bottom of the stack. `cudarc` is optional, behind the `cuda` feature, which gates only `device::MetraleDevice` and the `MetraleError::CudaDriver` variant.
 
 ## Module map
 
 ```text
 crates/core/src/
-├── lib.rs            re-exports every public module
-├── compute.rs        ComputeTarget trait + Vendor enum (Nvidia/Amd/Apple/Intel)
+├── lib.rs            one `pub mod` per module below
+├── arch.rs           whether PTX built for one SM arch runs on a device (the arch preflight)
+├── compute.rs        ComputeTarget trait + Vendor enum (Nvidia/Amd/Apple/Intel) + NvidiaTarget
 ├── target.rs         KernelTarget — the (arch, model, quant) dispatch key
-├── dtype.rs          DType enum: E2M1, FP8E4M3, FP8E5M2, BF16, FP16, FP32
-├── tensor.rs         TensorRef — zero-copy handle (ptr, shape, strides, dtype)
-├── device.rs         Device {ordinal, total/free memory}
-└── error.rs          anyhow re-export + Result alias
+├── dtype.rs          DType enum: E2M1, FP8E4M3, FP8E5M2, BF16, …
+├── tensor.rs         TensorRef — non-owning handle (ptr, shape, strides, dtype)
+├── device.rs         GB10 hardware constants (`sm121`) and the cudarc handle `MetraleDevice`
+├── error.rs          MetraleError + Result alias
+├── fault.rs          process-wide latch for a destroyed CUDA context and its exit status
+├── scope.rs          ordered, fallible model teardown (`Teardown`, `ModelResource`)
+├── numeric.rs        host-side FP8 E4M3 decode table and BF16 conversions
+├── mxfp4_e8m0.rs     host unpack of packed E2M1 nibbles + E8M0 scales
+└── safetensors.rs    the one place a safetensors `data_offsets` pair becomes a byte span
 ```
 
 `ModelConfig` and the capability flags are in [metrale-config](./metrale-config.md) (`crates/config/src/lib.rs`, `crates/config/src/capabilities.rs`). The stream, kernel-descriptor and registry types are in [metrale-gpu-runtime](./metrale-gpu-runtime.md) (`crates/gpu-runtime/src/stream.rs`, `kernel.rs`, `registry.rs`).
@@ -23,84 +29,57 @@ crates/core/src/
 
 ```rust
 pub trait ComputeTarget {
-    fn source_extension(&self) -> &str;       // "cu", "metal", "hip", "cl"
-    fn output_extension(&self) -> &str;       // "ptx", "metallib", "hsaco"
+    fn source_extension(&self) -> &str;       // "cu", "metal", …
+    fn output_extension(&self) -> &str;       // "ptx", "metallib", …
     fn output_is_text(&self) -> bool;         // PTX is text; metallib is binary
-    fn find_compiler(&self) -> Option<PathBuf>; // nvcc, xcrun, hipcc, icpx
-    fn compile(&self, src: &Path, out: &Path, arch: &str, flags: &[String]) -> Result<(), String>;
-    fn vendor(&self) -> Vendor;
+    // … finding the compiler and compiling one source for one arch
 }
 ```
 
-The trait is consumed at **build time** by `metrale-kernels/build.rs`, which reads `kernels/<hw>/HARDWARE.toml`, instantiates the matching `Box<dyn ComputeTarget>`, and calls `compile()` on every source file in every matching `(model, quant)` leaf. Today only `NvidiaTarget { nvcc }` is implemented; `AppleTarget`, `AmdTarget`, `IntelTarget` are the planned impls.
+The trait is consumed at **build time** by the kernels build script, which reads `kernels/<hw>/HARDWARE.toml`, picks the matching `Box<dyn ComputeTarget>` in `crates/kernels/build_target.rs::resolve_compute_target()` and compiles every source of every matching `(model, quant)` target. The build script implements `NvidiaTarget` (nvcc), `AppleTarget` (xcrun), `ScaleTarget` (SCALE, for `amd`) and `HipTarget` (hipcc).
 
-## `Vendor` and the matrix
+## `Vendor`
 
 ```rust
 pub enum Vendor { Nvidia, Amd, Apple, Intel }
 ```
 
-Parsed from `HARDWARE.toml`'s `vendor = "nvidia"` / `"amd"` / `"apple"` / `"intel"` field. `Vendor::from_str` lives here, used by both `build.rs` (to pick `ComputeTarget`) and `metrale-server::main` (to pick the runtime `GpuBackend`).
+Parsed from `HARDWARE.toml`'s `vendor` field; each variant accepts a few spellings (`nvidia`/`cuda`, `amd`/`rocm`/`hip`, `apple`/`metal`, `intel`/`oneapi`/`sycl`).
 
 ## `KernelTarget`: the runtime dispatch key
 
 ```rust
 pub struct KernelTarget {
-    pub arch: &'static str,   // "sm_121", "sm_100a", ...
+    pub arch: &'static str,   // base SM: "sm_121", "sm_90", ...
     pub model: &'static str,  // "qwen3-next-80b-a3b"
     pub quant: &'static str,  // "nvfp4", "fp8", "bf16"
 }
 ```
 
-One `const` per supported target (`KernelTarget::GB10_QWEN3_NVFP4`, `GB10_QWEN35_NVFP4`, `GB10_QWEN35_122B_NVFP4`, …). Equality + hashing work from the three string components; the struct is `Copy`.
-
-The `metrale-kernels` crate's auto-generated `target_ptx.rs` emits one `pub static PTX_<TARGET>: &[PtxModule]` per known `KernelTarget`. Startup dispatch in `metrale-server::main` calls `metrale_kernels::select_target(&ptx_sets, &target)` to pick the right module set.
+For CUDA, `arch` is the base SM: the build strips a `HARDWARE.toml` feature suffix (`sm_90a` → `sm_90`). The `metrale-kernels` crate's generated `target_ptx.rs` emits one `TargetPtxSet` per compiled target, each carrying its `KernelTarget`; at startup `metrale_kernels::ptx_for_config` picks the set that serves the checkpoint (see [Kernel Dispatch](../architecture/dispatch.md)).
 
 ## `DType`: the supported numeric formats
 
-```rust
-pub enum DType {
-    E2M1,        // 4-bit float: {0, 0.5, 1, 1.5, 2, 3, 4, 6} — NVFP4 weights
-    FP8E4M3,     // 8-bit float, 4e/3m — block scales, FP8 weights
-    FP8E5M2,     // 8-bit float, 5e/2m — alternative FP8
-    BF16,        // brain float — activations, residual stream
-    FP16,        // IEEE 754 half — rarely used
-    FP32,        // full precision — accumulation
-}
-```
+`DType` names the element types the engine stores: `E2M1` (NVFP4 weights), `FP8E4M3` (block scales and FP8 weights), `FP8E5M2`, `BF16` and the wider formats. `DType::element_size_bits()` returns the per-element bit count — bits, not bytes, because E2M1 is sub-byte.
 
-`DType::element_size_bits()` returns the per-element bit count (not bytes — E2M1 is sub-byte). Buffer sizing in `metrale-gpu-runtime::buffers` uses this.
-
-## `TensorRef`: the kernel-argument view
+## `TensorRef`
 
 ```rust
 pub struct TensorRef {
-    pub ptr: u64,              // CUdeviceptr / MTLBuffer / ...
+    pub ptr: u64,
     pub shape: Vec<usize>,
     pub strides: Vec<usize>,   // in elements, not bytes
     pub dtype: DType,
 }
 ```
 
-Every kernel argument that points at GPU memory is a `TensorRef`. The layer code in `metrale-model-layers` builds `TensorRef`s from `DevicePtr`s owned by `BufferArena` (in `metrale-gpu-runtime`), passes them to primitive op traits (`Normalize::rms_norm`, `Activation::silu_mul`, `Reduce::topk`), and those impls extract the raw `ptr: u64` to pass to `GpuBackend::launch()`.
-
-`TensorRef` itself does not own memory and is `Clone` — it's always a view.
-
-## `ModelConfig`: the single source of truth for model shape
-
-`ModelConfig::from_hf(&path)` reads `config.json` (plus nested text/vision configs for VLMs) and returns a struct that every downstream buffer/KV-cache size derives from. Fields include `hidden_size`, `num_hidden_layers`, `num_attention_heads`, `num_key_value_heads`, `intermediate_size`, `num_experts`, `num_experts_per_token`, `vocab_size`, MoE-specific `moe_intermediate_size`, SSM-specific `ssm_state_size`, vision tower sub-config, and layer-type arrays for hybrid models.
-
-Per the PCND principle, there are no implicit defaults for fields that materially affect correctness — missing critical fields produce a `bail!` at load time.
-
-## `Capabilities`: hardware feature flags
-
-`HardwareCapabilities` exposes booleans like `tensor_cores`, `async_copy`, `cuda_graphs`, `native_fp4_mma`. `HARDWARE.toml` populates them; kernel-selection code in some layers reads them to pick between code paths (e.g., GB10 has no native FP4 MMA so the NVFP4 kernels fall back to software E2M1 conversion — see the [NVFP4 deep dive](../deep-dives/nvfp4.md)).
+A non-owning view of a device tensor: it neither allocates nor frees, and it is `Clone`.
 
 ## What's explicitly not here
 
-- **No actual compilation.** `ComputeTarget::compile()` is a trait method; the impls live in the callers (or in `metrale-kernels/build.rs` for the bootstrap).
 - **No actual GPU allocation.** That's `metrale-gpu-runtime`.
-- **No weight loader types.** Those are `metrale-model-arch`.
+- **No model config.** That's `metrale-config`.
+- **No weight loader types.** Those are `metrale-model-weights` and `metrale-model-arch`.
 - **No HTTP types.** Those are `metrale-server`.
 
 `metrale-core` is small on purpose. It contains only the vocabulary that *every* crate downstream needs.
@@ -110,6 +89,6 @@ Per the PCND principle, there are no implicit defaults for fields that materiall
 Implementing a new hardware vendor starts here:
 
 1. Extend `Vendor` if needed (all four major ones are already enumerated).
-2. Write your `struct XxxTarget` in your own crate or inline, implement `ComputeTarget`.
-3. Register it in `metrale-kernels/build.rs::resolve_compute_target()`.
+2. Implement `ComputeTarget` for the vendor's compiler.
+3. Register it in `crates/kernels/build_target.rs::resolve_compute_target()`.
 4. Continue to the [metrale-gpu-runtime chapter](./metrale-gpu-runtime.md) for the runtime trait (`GpuBackend`).

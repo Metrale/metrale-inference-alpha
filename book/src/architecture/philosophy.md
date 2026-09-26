@@ -11,57 +11,64 @@ The single design rule that every choice below derives from is:
 ```
 kernels/
   gb10/                               # Hardware
-    HARDWARE.toml                     # vendor, arch, memory specs
+    HARDWARE.toml                     # vendor, arch, memory specs, serving defaults
     common/
       KERNEL.toml
-      *.cu                            # the shared baseline — 160 files today
+      *.cu                            # the shared baseline
     qwen3-next-80b-a3b/               # Model
       MODEL.toml                      # layer counts, sampling defaults
       nvfp4/                          # Quantization
-        KERNEL.toml                   # compiler flags
+        KERNEL.toml                   # compiler flags, module names, [sources], [shadow]
         *.cu                          # only the files this target overrides
+  hopper/
+    HARDWARE.toml                     # [hardware] inherits = "gb10"
+    common/                           # Hopper-only kernels
 ```
 
-Three levels of directory, over a `common/` baseline. The shape is deliberate: a
-leaf directory owns *exactly one* `(H, M_q)` target, and a leaf file **shadows**
-its same-stem namesake in `common/` (`metrale-kernels/build.rs::collect_cu_files`).
-Shadowing is whole-file, not per-symbol.
+Three levels of directory, over a `common/` baseline. A target reads up to four
+directories, each a *layer*: its own leaf (`kernels/<hw>/<model>/<quant>/`), its
+own `common/`, and — when `HARDWARE.toml` names a parent with `[hardware]
+inherits` — the parent's leaf and `common/`. A layer holds the sources in its
+directory plus whatever its `KERNEL.toml` `[sources] use` brings in from another
+directory of the same tree. The resolver is `metrale-closure`'s layout module
+(`crates/closure/src/layout.rs`); the kernels build script compiles what it
+returns.
 
-So a leaf holds *only its divergences*, not a full kernel set — `qwen3.6-27b/nvfp4`
-carries 11 `.cu`, `qwen3.6-35b-a3b/nvfp4` carries 5, `qwen3-next-80b-a3b/nvfp4`
-carries 3, over the 160 in `common/`. Two leaves therefore **do** share source for
-everything neither of them overrides; what is guaranteed is that where a target
-*does* diverge, it diverges in a file nothing else compiles. When we say "Metrale Engine
-ships N targets," we mean N independent leaves — 22 of them on GB10 today.
+A leaf holds *only its divergences*, not a full kernel set: a leaf file whose
+stem matches a `common/` file **shadows** it, whole-file, not per-symbol, and
+the own tier wins over the parent tier. Every such win must be declared in the
+winner's `KERNEL.toml` `[shadow]` table with a reason; an undeclared shadow is a
+build error, and so is a declaration with nothing to shadow. Two leaves
+therefore **do** share source for everything neither of them overrides; what
+is guaranteed is that where a target *does* diverge, it diverges in a file
+nothing else compiles.
 
-The corollary is a real failure class: because shadowing is whole-file, a shadow
-that has quietly become identical to `common/` overrides nothing while masking
-every later `common/` improvement, and two models keeping private byte-identical
-copies of the same shadow will drift apart. CI's `kernel-structure` job
-(`scripts/check_kernel_shadows.py`) rejects both; the sanctioned way to share one
-file between leaves is a relative symlink.
+The corollary is a real failure class: a shadow that has quietly become
+identical to `common/` overrides nothing while masking every later `common/`
+improvement, and two models keeping private byte-identical copies of the same
+file will drift apart. CI's `kernel-structure` job
+(`scripts/check_kernel_shadows.py` and `crates/kernels/tests/kernels_structure.rs`)
+rejects both; the sanctioned way for one leaf to compile another's file is
+`[sources] use`.
 
-The same job enforces the other direction for a target that INHERITS another's
-`common/` wholesale — `kernels/hopper` and `kernels/b200` are symlink mirrors of
-`kernels/gb10`. There, sharing is the default and divergence is the thing that
-has to be said out loud: a real file in the mirror is an override and must be
-listed in that target's `HARDWARE.toml` `[kernels] overrides`. Without the
-declaration an accidental copy and a deliberate tuning are the same bytes on
-disk, and editing what looks like "the Hopper kernel" would edit GB10's.
+Inheritance is how `kernels/hopper` and `kernels/b200` reuse GB10: they inherit
+`gb10`, so every GB10 source is compiled for their arch unless their own tier
+supplies a file of the same name, and their `common/` holds only what is
+specific to them.
 
-The three `.toml` files are the only metadata the build system consumes. `HARDWARE.toml` tells `metrale-kernels/build.rs` which `ComputeTarget` impl to use (nvidia, amd, apple, intel), what arch flag to pass the compiler, and — in `[defaults]` — the SERVING levers this target runs with, baked into the binary as `metrale_kernels::TARGET_DEFAULTS` and read before the environment, so "what does this hardware serve with" is answered by a file in the repository rather than by a launch script outside it. `MODEL.toml` is the per-model behavior SSOT — sampling presets, thinking budgets, tool-call parser defaults. `KERNEL.toml` overrides compiler flags and module names.
+The three `.toml` files are the only metadata the build system consumes. `HARDWARE.toml` tells `crates/kernels/build.rs` which `ComputeTarget` impl to use (`nvidia`, `amd`, `hip`, `apple`), what arch flag to pass the compiler, and — in `[defaults]` — the SERVING levers this target runs with, baked into the binary as `metrale_kernels::TARGET_DEFAULTS` and read before the environment, so "what does this hardware serve with" is answered by a file in the repository rather than by a launch script outside it. `MODEL.toml` is the per-model behavior SSOT — sampling presets, thinking budgets, tool-call parser defaults. `KERNEL.toml` sets compiler flags and module names, and declares `[sources] use` and `[shadow]`.
 
 Adding a model or a hardware target is, at the file-system level, *creating a new directory*. No code elsewhere in the repository needs to move.
 
 ## Consequence 2: the runtime crate structure mirrors the axis split
 
-Read the workspace `Cargo.toml` and you'll see nineteen workspace members. Group them by what axis of variation they insulate:
+Read the workspace `Cargo.toml` and you'll see twenty-one workspace members. Group them by what axis of variation they insulate:
 
 | Axis they insulate | Crates |
 |---|---|
 | *Hardware vendor* | `metrale-core` (`ComputeTarget`, `Vendor` enum, `KernelTarget`), `metrale-gpu-runtime` (`GpuBackend`), `metrale-comm` (`CommBackend`) |
 | *Model architecture* | `metrale-model-arch` (`ModelWeightLoader` trait, per-family loaders), `metrale-model-layers` (`TransformerLayer` trait) |
-| *Quantization format* | `crates/model-layers/src/quant_format/` (per-format modules + runtime dispatch), `metrale-core/src/numeric.rs` (host-side FP8/BF16 conversions) |
+| *Quantization format* | `crates/model-layers/src/quant_format/` (per-format modules + runtime dispatch), `crates/core/src/numeric.rs` (host-side FP8/BF16 conversions) |
 | *Compiled kernels (one artifact per axis combination)* | `metrale-kernels` (embedded PTX modules, auto-generated from the kernel tree) |
 | *Request serving* | `metrale-server` (HTTP, tokenizer, tool parsing) |
 | *Measurement* | `metrale-bench` |
@@ -83,13 +90,13 @@ This is what the user instructions call **SBIO** (Separation of Business logic f
 
 Every general-purpose framework has, somewhere, a codepath that compiles kernels at runtime. PyTorch has `torch.compile`. vLLM has Triton JIT. TensorRT-LLM has TRT engine builds. Each of those is a slow path the first time you hit a new shape, and an ongoing operational surface the ops team has to manage (cache directories, warm-up scripts, cold-start budgets).
 
-Metrale Engine has none of it. `metrale-kernels/build.rs` enumerates every `(H, M_q)` target matching the `METRALE_TARGET_*` env vars, compiles every `.cu` file for every matching target, and emits one auto-generated `target_ptx.rs` that is `include!`'d into the crate. The release binary contains every PTX module we ship. Startup is "mmap the binary, upload PTX to the GPU, capture CUDA graphs for a handful of batch sizes, done".
+Metrale Engine has none of it. `crates/kernels/build.rs` enumerates every `(H, M_q)` target matching the `METRALE_TARGET_*` env vars, compiles every `.cu` file for every matching target, and emits one auto-generated `target_ptx.rs` that is `include!`'d into the crate. The release binary contains every PTX module we ship. Startup is "mmap the binary, upload PTX to the GPU, capture CUDA graphs for a handful of batch sizes, done".
 
 This is what "embedded in the binary" means throughout the book. It is the concrete mechanism by which specialization does not cost operator pain.
 
 ## Consequence 5: one binary per installation, N kernel sets
 
-You deploy one Docker image. It contains one `metrale-server` binary. It contains 22 (today) `(gb10, model, quant)` PTX sets embedded in that binary. At startup, the binary reads the model's `config.json`, computes the canonical `model_type`, looks up the matching `KernelTarget`, and uses that set.
+You deploy one Docker image. It contains one `metrale-server` binary. It contains every `(gb10, model, quant)` PTX set embedded in that binary. At startup, the binary reads the model's `config.json`, computes the canonical `model_type`, looks up the matching `KernelTarget`, and uses that set.
 
 The knobs that let this scale:
 

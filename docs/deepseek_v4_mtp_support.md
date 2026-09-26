@@ -1,7 +1,8 @@
 # DeepSeek-V4-Flash MTP Support — Implementation Plan
 
-**Status:** Design complete & shape-grounded. Loader/forward to be implemented and runtime-verified once
-`nvidia/DeepSeek-V4-Flash-NVFP4` is local on both nodes and the GPU is free.
+**Status:** implemented — the MTP head is `crates/model-arch/src/deepseek_v4_mtp.rs`, loaded by
+`load_mtp_weights` in `crates/model-arch/src/weight_loader/deepseek_v4.rs`. This document is the design
+it was built from.
 
 **Why this model:** the RedHat `DeepSeek-V4-Flash-NVFP4-FP8` re-quant we ran has **zero** MTP weights.
 `nvidia/DeepSeek-V4-Flash-NVFP4` ships a full MTP module (`num_nextn_predict_layers = 1`, 1575 tensors).

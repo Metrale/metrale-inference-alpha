@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//
+
 // Gate self-test fixture for the LEDGER, not for an ISA gap: one translation
 // unit whose ptxas rejection names TWO entry functions.
 //

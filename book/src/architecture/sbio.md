@@ -10,7 +10,7 @@ Four kinds of I/O happen at runtime. Each goes through a dedicated trait:
 
 | I/O surface | Trait | Crate | Real impl | Mock impl |
 |---|---|---|---|---|
-| GPU memory, kernel launch, streams, events, graphs | `GpuBackend` (27 methods) | `metrale-gpu-runtime` | `MetraleCudaBackend` (via `cudarc`) | `MockGpuBackend` — records launches, does not execute |
+| GPU memory, kernel launch, streams, events, graphs | `GpuBackend` | `metrale-gpu-runtime` | `MetraleCudaBackend` (via `cudarc`) | `MockGpuBackend` — records launches, does not execute |
 | Collective comms (all-reduce, broadcast, send/recv) | `CommBackend` | `metrale-comm` | `NcclBackend` | `SingleGpuBackend` — every op is a no-op |
 | Weight-blob loading | `WeightStore` (implicit — wraps safetensors) | `metrale-model-weights::weights` | `fast_weights` (`O_DIRECT` + pipelined) or mmap fallback | `WeightStore` directly against an in-memory map |
 | HTTP | `axum::Router` handlers | `metrale-server` | `axum::serve(...)` over TCP | `axum::Router::into_make_service()` tested via `tower::ServiceExt::oneshot` |
@@ -56,25 +56,17 @@ A layer's forward pass calls `gpu.launch(...)`. It does not know, and cannot kno
 
 ## The mock backend
 
-`MockGpuBackend` is in `crates/gpu-runtime/src/gpu/mock.rs`, alongside the trait. It does not talk to a GPU — it keeps a bump-allocator of fake `DevicePtr` values, records every launch in a `Vec<LaunchRecord>`, and returns `Ok(())` from every op. Typical test:
+`MockGpuBackend` is in `crates/gpu-runtime/src/gpu/mock.rs`, alongside the trait. It does not talk to a GPU — it keeps a bump-allocator of fake `DevicePtr` values backed by host memory, records every launch as a `MockLaunch` (grid, block, shared memory, stream, arguments), counts copies and synchronisations, and can declare a module absent or deny a kernel lookup. A test builds the code under test against `&gpu`, runs it, and asserts on what was recorded:
 
 ```rust
-#[test]
-fn engine_runs_correct_layer_sequence() {
-    let gpu = MockGpuBackend::new();
-    let cfg = ModelConfig::fixture_qwen3_5_small();
-    let engine = InferenceEngine::build_for_test(&cfg, &gpu).unwrap();
-
-    engine.decode_step(&mut ctx).unwrap();
-
-    let launches = gpu.drain_launches();
-    assert_eq!(launches.len(), cfg.num_hidden_layers * KERNELS_PER_LAYER);
-    assert_eq!(launches[0].module, "attention");
-    assert_eq!(launches[0].function, "prefill_attn_v47");
-}
+let gpu = MockGpuBackend::new();
+// build and run the layer or loader under test against `&gpu`
+let launches = gpu.launches_snapshot();
+assert_eq!(launches.len(), expected_launches);
+assert_eq!(launches[0].grid, [num_blocks, 1, 1]);
 ```
 
-No GPU, no `nvcc`, no `cudarc` ever opens the driver. The test verifies a behavioral property of the *business logic* — the number and order of kernel launches — without depending on the kernel actually executing correctly.
+No GPU, no `nvcc`, no `cudarc` ever opens the driver. The test verifies a behavioral property of the *business logic* — the number, shape and order of kernel launches and copies — without depending on the kernel actually executing correctly.
 
 ## The single-GPU CommBackend
 
@@ -101,8 +93,8 @@ Every collective op is a no-op. The single-GPU serving path holds a `Box<dyn Com
 The SBIO pattern makes the following blocks fully testable on CI without any GPU:
 
 - **Scheduler** (`crates/server/src/scheduler/`): SLAI deadline logic, chunked-prefill budget enforcement, KV page allocation and eviction. Tested with a `MockGpuBackend` standing in for the KV cache.
-- **Engine** (`crates/model-engine/src/engine.rs`): layer ordering, speculative-decode verify + accept logic, sampler integration. The layer trait objects hold mock kernel handles.
-- **Tool parsers** (`crates/server/src/tool_parser.rs`): Hermes, Qwen3-coder, Mistral formats. Input is a plain string of model output; tested with fixtures.
+- **Model** (`crates/model-engine/src/model/`): layer ordering, speculative-decode verify + accept logic, SSM state pools. The layer trait objects hold mock kernel handles.
+- **Tool parsers** (`crates/server/src/tool_parser/`): Hermes, Qwen3-coder, Mistral and the other formats. Input is a plain string of model output; tested with fixtures.
 - **Rate limiter** (`crates/server/src/rate_limiter.rs`): token-bucket arithmetic. Pure CPU.
 - **Refusal / citation extraction** (`crates/server/src/refusal.rs`): post-processing regex over plain strings. Pure CPU.
 - **Weight loader** per family: shape/name checks, quantization-scheme dispatch. Tested with fixture safetensor files and `MockGpuBackend`.
@@ -115,7 +107,7 @@ The things that still require a GPU:
 
 ## The `METRALE_SKIP_BUILD` gate
 
-The matching idea at build time: `METRALE_SKIP_BUILD=1` makes `metrale-kernels/build.rs` emit a stub `target_ptx.rs` with empty constants. The workspace compiles, `cargo clippy` and `cargo fmt` both work, unit tests run. `nvcc` is not on the `PATH` of the GHA runner that runs the `ci.yml` workflow, and that is on purpose — CI catches type and lint regressions without needing a GPU CI pool.
+The matching idea at build time: `METRALE_SKIP_BUILD=1` makes `crates/kernels/build.rs` emit a stub `target_ptx.rs` with empty constants. The workspace compiles, `cargo clippy` and `cargo fmt` both work, unit tests run. `nvcc` is not on the `PATH` of the GHA runner that runs the `ci.yml` workflow, and that is on purpose — CI catches type and lint regressions without needing a GPU CI pool.
 
 The only test category that *requires* CUDA is the ones marked `#[ignore]` in the `cargo test` run, which the integration CI (not currently in this repo) would run on a real GB10 host.
 

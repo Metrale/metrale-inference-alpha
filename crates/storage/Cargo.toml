@@ -16,10 +16,7 @@ metal = []
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
 anyhow = { workspace = true }
-getrandom = "0.4"
 half = "2"
-io-uring = "0.7"
-libc = "0.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = "0.1"

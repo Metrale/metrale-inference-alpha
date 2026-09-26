@@ -133,6 +133,11 @@ fn test_buffer_arena_alloc() {
             sizes.ffn_gate_up_fused,
         ),
         ("fp8_act", arena.fp8_act(), sizes.fp8_act),
+        (
+            "moe_fp8_scratch",
+            arena.moe_fp8_scratch,
+            sizes.moe_fp8_scratch,
+        ),
         ("fp8_act_scale", arena.fp8_act_scale(), sizes.fp8_act_scale),
         (
             "fp8_act_scale_kmajor",

@@ -32,7 +32,7 @@ unchanged.
 
 ```sh
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 \
-  cargo test -p metrale-gpu-runtime --no-default-features --lib weights::k3
+  cargo test -p metrale-model-weights --lib weights::k3
 ```
 
 The nine host tests use real temporary safetensors files and a recording GPU

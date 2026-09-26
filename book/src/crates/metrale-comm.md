@@ -1,7 +1,8 @@
 # metrale-comm
 
 **Role:** the multi-GPU collective-ops abstraction. One trait, two impls: NCCL for real distributed runs and a no-op backend for single-GPU.
-**Key file:** `src/lib.rs` (`CommBackend` trait), `crates/gpu-sys/src/nccl.rs` (raw NCCL FFI), `nccl_backend.rs` (the `NcclBackend` impl).
+**Path:** `crates/comm/`
+**Key files:** `src/lib.rs` (`CommBackend` trait, `SingleGpuBackend`), `src/nccl_backend.rs` (the `NcclBackend` impl), `crates/gpu-sys/src/nccl.rs` (raw NCCL FFI).
 
 ## Why this is its own crate
 
@@ -18,20 +19,20 @@ Multi-GPU in Metrale Engine is **Expert Parallelism (EP)** — the MoE experts o
 ```rust
 pub trait CommBackend: Send + Sync {
     fn all_reduce(&self, ptr: u64, bytes: usize) -> Result<()>;
-    fn all_gather(&self, send: u64, recv: u64, bytes: usize) -> Result<()>;
-    fn reduce_scatter(&self, send: u64, recv: u64, bytes: usize) -> Result<()>;
+    fn all_gather(&self, send_ptr: u64, recv_ptr: u64, bytes: usize) -> Result<()>;
+    fn reduce_scatter(&self, send_ptr: u64, recv_ptr: u64, bytes: usize) -> Result<()>;
     fn broadcast(&self, ptr: u64, bytes: usize, root: usize) -> Result<()>;
-    fn send(&self, ptr: u64, bytes: usize, peer: usize) -> Result<()>;
-    fn recv(&self, ptr: u64, bytes: usize, peer: usize) -> Result<()>;
     fn barrier(&self) -> Result<()>;
+    fn send_to(&self, ptr: u64, bytes: usize, dest_rank: usize, stream: u64) -> Result<()>;
+    fn recv_from(&self, ptr: u64, bytes: usize, src_rank: usize, stream: u64) -> Result<()>;
     fn rank(&self) -> usize;
     fn world_size(&self) -> usize;
-    fn stream(&self) -> u64;
-    fn set_stream(&mut self, stream: u64);
+    // default methods: all_reduce_async, group_start/group_end, buffer
+    // registration, symmetric memory, is_healthy/attempt_reconnect, …
 }
 ```
 
-All pointer arguments are `u64` (matching CUDA's `CUdeviceptr`) to avoid coupling the crate to `metrale-gpu-runtime`'s `DevicePtr`. Every op is stream-associated — collectives and kernel launches can be pipelined through CUDA graph capture.
+All pointer arguments are `u64` (matching CUDA's `CUdeviceptr`) to avoid coupling the crate to `metrale-gpu-runtime`'s `DevicePtr`. Point-to-point transfers and `all_reduce_async` take the stream they run on, so collectives and kernel launches can be pipelined.
 
 ## `SingleGpuBackend` — the no-op
 
@@ -53,20 +54,20 @@ This is what runs in single-GPU serving. The expert-parallel code paths in `metr
 
 In `nccl_backend.rs`. Uses the unsafe NCCL FFI in `crates/gpu-sys/src/nccl.rs`. Construction flow:
 
-1. The `master` rank (0) calls `ncclGetUniqueId` and publishes the id to the scheduler's rendezvous port (`--master-addr`, `--master-port`, default 29500).
-2. Every rank (including master) dials the rendezvous, receives the id.
+1. The `master` rank (0) calls `ncclGetUniqueId` and serves the id over a TCP rendezvous on `--master-addr`/`--master-port` (default 29500).
+2. Every other rank connects to the rendezvous and receives the id.
 3. All ranks call `ncclCommInitRank(world_size, id, rank)` in parallel; the call is collective and blocks until every rank has joined.
 
-The NCCL env layer is fussy on GB10 — the scripts in `scripts/start-ep2.sh` + `scripts/start-minimax-ep2.sh` pin the critical vars:
+The NCCL env layer is fussy on GB10 — `scripts/start-ep2.sh` and `scripts/start-minimax-ep2.sh` pin the critical vars (the script's `NCCL_ENV` block is the full list):
 
 | Variable | Value | Reason |
 |---|---|---|
-| `NCCL_SOCKET_IFNAME` | `enp1s0f0np0` | Forces the InfiniBand/RoCE interface, not the mgmt ethernet |
+| `NCCL_SOCKET_IFNAME` | `enp1s0f0np0` (or `enp1s0f1np1`, whichever has an IPv4 address) | Forces the RoCE interface, not the mgmt ethernet |
 | `NCCL_IB_DISABLE` | `0` | IB transport enabled |
-| `NCCL_NET_GDR_LEVEL` | `5` | GPUDirect RDMA — skip the host bounce |
-| `NCCL_NVLS_ENABLE` | `0` | NVLink-SHARP would crash on GB10; force off |
-| `NCCL_IB_HCA` | `mlx5_0` | The RoCE HCA device |
-| `GLOO_SOCKET_IFNAME` | `enp1s0f0np0` | Same ifname for Gloo fallback paths |
+| `NCCL_IB_HCA` | `rocep1s0f0` | The RoCE HCA device |
+| `NCCL_IB_ROCE_VERSION_NUM` / `NCCL_IB_ADDR_FAMILY` | `2` / `AF_INET` | Force RoCEv2 over IPv4 |
+| `NCCL_NET_GDR_LEVEL` / `NCCL_NET_GDR_C2C` / `NCCL_DMABUF_ENABLE` | `0` | GPUDirect RDMA off: `nvidia_peermem` does not work on the GB10 kernel |
+| `NCCL_NVLS_ENABLE` | `0` | NVLink-SHARP crashes on aarch64 Blackwell; force off |
 
 These are worth the paragraph — a mis-set `NCCL_SOCKET_IFNAME` on GB10 will silently fall back to the 1 GbE management interface and drop EP=2 throughput by an order of magnitude.
 
@@ -92,7 +93,7 @@ The unit tests for the expert-parallel layer code do not instantiate `NcclBacken
 
 ## What's explicitly not here
 
-- **No kernel code.** The EP=2 token-dispatch logic lives in Rust at `crates/model-layers/src/layers/moe/forward_ep.rs`, and the routed grouped-GEMM kernel in `kernels/gb10/<model>/<quant>/moe_w4a16_grouped_gemm.cu`.
+- **No kernel code.** The EP=2 token-dispatch logic lives in Rust at `crates/model-layers/src/layers/moe/forward_ep.rs`, and the routed grouped-GEMM kernel in `kernels/gb10/common/moe_w4a16_grouped_gemm.cu`.
 - **No scheduler logic.** That's `metrale-server::scheduler`.
 - **No RDMA-specific code.** Metrale Engine talks through NCCL; NCCL talks through `libibverbs`/`librdmacm`. We do not bypass.
 

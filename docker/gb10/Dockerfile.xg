@@ -1,5 +1,0 @@
-# Pure-Rust-xgrammar build: pre-built met binary over the metrale-gb10:fix
-# runtime layers. Used for the xgrammar-port tool-eval-bench parity gate.
-FROM metrale-gb10:fix
-COPY met-fastbin /usr/local/bin/met
-COPY jinja-templates/ /jinja-templates/

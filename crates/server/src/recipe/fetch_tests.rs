@@ -214,6 +214,13 @@ fn a_no_route_failure_tells_the_user_what_to_do_about_it() {
     let detail = index.offline_detail().expect("a reason");
     assert!(detail.contains("no route"), "{detail}");
     assert!(detail.contains("HTTPS_PROXY"), "names the fix: {detail}");
+    assert!(
+        detail.contains(
+            " or copy the cached index (~/.metrale/metrale-recipes/index.json) from a machine \
+             that can reach it."
+        ),
+        "names the one cache path, rendered whole: {detail}"
+    );
     assert!(index.status_text().len() < 40, "{}", index.status_text());
 }
 

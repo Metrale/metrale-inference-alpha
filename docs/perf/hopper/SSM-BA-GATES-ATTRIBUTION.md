@@ -1,4 +1,4 @@
-# Where `dense_gemm_ba_gates_prefill` goes (#928, H100)
+# Where `dense_gemm_ba_gates_prefill` goes (H100)
 
 **Headline: it is instruction-issue bound, not bandwidth bound**, so round 13's
 "2.6% of HBM → 60% of HBM" target does not apply. The Hopper twin

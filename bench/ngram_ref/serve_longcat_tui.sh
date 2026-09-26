@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Serve LongCat-Flash-Lite with Metrale Engine and bring up the TUI dashboard (the TUI
+# 2026-08-26: Serve LongCat-Flash-Lite with Metrale Engine and bring up the TUI dashboard (the TUI
 # is automatic on an interactive terminal — do NOT pipe this, or it disables
 # itself and you get the plain log stream).
 #
@@ -12,9 +12,9 @@
 # reference at cos 1.0000 and every one of the 14 checkpoint layers holds
 # >= 0.9952 across all 28 sublayers.
 #
-#   ./serve_longcat_tui.sh                  # port 8888, TUI up
-#   PORT=8899 ./serve_longcat_tui.sh        # somewhere else
-#   MAX_SEQ_LEN=65536 ./serve_longcat_tui.sh
+#   bench/ngram_ref/serve_longcat_tui.sh                  # port 8888, TUI up
+#   PORT=8899 bench/ngram_ref/serve_longcat_tui.sh        # somewhere else
+#   MAX_SEQ_LEN=65536 bench/ngram_ref/serve_longcat_tui.sh
 #
 # Port defaults to 8888 because that is what bench/agentic/* expects
 # (METRALE_URL defaults to http://localhost:8888/v1/chat/completions), so the
@@ -58,11 +58,12 @@
 # expensive, because every token reads all of it.
 #
 # Off by default because none of this is free. Pick by what you are doing:
-#   METRALE_LONGCAT_FP8_EXPERTS=1 ./serve_longcat_tui.sh                    # recommended
+#   METRALE_LONGCAT_FP8_EXPERTS=1 bench/ngram_ref/serve_longcat_tui.sh                    # recommended
 #   METRALE_NVFP4_MLA=0 METRALE_LONGCAT_BF16_FFN=1 \
-#     METRALE_LONGCAT_FP8_EXPERTS=1 ./serve_longcat_tui.sh                  # max quality
+#     METRALE_LONGCAT_FP8_EXPERTS=1 bench/ngram_ref/serve_longcat_tui.sh                  # max quality
 set -euo pipefail
-cd "$(dirname "$0")"
+# 2026-09-26: The repository root, where target/release/met is built.
+cd "$(dirname "$0")/../.."
 
 SNAP="${LONGCAT_PATH:-/tank/hf/hub/models--meituan-longcat--LongCat-Flash-Lite/snapshots/b62b68827ead0b7fef3ba98b57f18484acaaec06}"
 if [[ ! -f "$SNAP/config.json" ]]; then
@@ -71,12 +72,12 @@ if [[ ! -f "$SNAP/config.json" ]]; then
   exit 1
 fi
 
-# NCCL lives outside the default loader path on this box.
+# 2026-09-26: NCCL lives outside the default loader path on this box.
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/home/ms/nccl/build/lib"
-# Serve at INFO — warn/error hides the load ledger and the n-gram cache line.
+# 2026-09-26: Serve at INFO — warn/error hides the load ledger and the n-gram cache line.
 export RUST_LOG="${RUST_LOG:-info}"
 
-# Resident rows per n-gram table. The 12 tables are 62.8 GB of BF16 on disk and
+# 2026-09-26: Resident rows per n-gram table. The 12 tables are 62.8 GB of BF16 on disk and
 # are NEVER uploaded: they are served row-by-row off NVMe out of a pinned
 # GPU-addressable arena. 65536 slots x 512 B x 12 tables = 403 MB, and that
 # frees the rest for KV. Raise it if you see cache thrash on long contexts.

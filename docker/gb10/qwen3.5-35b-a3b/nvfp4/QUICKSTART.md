@@ -26,10 +26,10 @@ docker pull metrale/metrale-qwen3.5-35b-a3b-alpha
 ## 3. Run
 
 ```bash
-docker run --gpus all --ipc=host -p 8888:8888 \
+docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   metrale/metrale-qwen3.5-35b-a3b-alpha \
-  serve Kbenkhaled/Qwen3.5-35B-A3B-NVFP4 \
+  serve --bind 0.0.0.0 Kbenkhaled/Qwen3.5-35B-A3B-NVFP4 \
   --speculative --kv-cache-dtype nvfp4 --mtp-quantization nvfp4 \
   --scheduler slai --max-seq-len 131072
 ```
@@ -54,6 +54,7 @@ curl http://localhost:8888/v1/chat/completions \
 | `--scheduler` | `fifo` | Scheduler (`fifo` or `slai` for SLO-aware) |
 | `--max-seq-len` | `32768` | Max context length in tokens; sizes the KV pool |
 | `--port` | `8888` | HTTP port |
+| `--bind` | `127.0.0.1` | Listen address; `0.0.0.0` inside a container so the published port reaches it |
 | `--max-batch-size` | `8` | Max sequences per GPU decode step |
 | `--max-num-seqs` | `128` | Max concurrent sequences in flight |
 | `--max-prefill-tokens` | `8192` | Chunked prefill size (0 = process entire prompt at once) |

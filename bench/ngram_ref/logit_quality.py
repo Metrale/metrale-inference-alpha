@@ -19,7 +19,7 @@ STRING and capped at 20, so two ids that decode alike collide and the tail is
 invisible. The dump is the raw vector.
 
 Usage:
-    METRALE_NEMO_DUMP=<dir> ./serve_longcat_tui.sh          # arm under test
+    METRALE_NEMO_DUMP=<dir> bench/ngram_ref/serve_longcat_tui.sh          # arm under test
     logit_quality.py <port> <dumpdir> [label]
 """
 import json

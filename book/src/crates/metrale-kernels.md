@@ -1,86 +1,57 @@
 # metrale-kernels
 
-**Role:** the bridge between the CUDA source tree and the Rust workspace. Every PTX module every other crate launches is defined here.
-**Key file:** `src/lib.rs` (hand-written glue, ~50 lines) + `build.rs` (auto-generates the heavy file).
+**Path:** `crates/kernels/`
+**Role:** the bridge between the kernel source tree and the Rust workspace. Every PTX module every other crate launches is embedded here.
+**Key files:** `src/lib.rs` (the registry types and the `include!` of the generated file), `src/resolve.rs` (which target serves a checkpoint), `build.rs` and its `build_*.rs` modules (which generate the registry).
 
 ## The trick: auto-generated PTX embedding
 
-`metrale-kernels/src/lib.rs` ends with a single line:
+`crates/kernels/src/lib.rs` includes one generated file:
 
 ```rust
 include!(concat!(env!("OUT_DIR"), "/target_ptx.rs"));
 ```
 
-Everything inside `target_ptx.rs` — per-target PTX byte constants, the `ptx_modules()` lookup function, the `all_ptx_sets()` multi-target registry — is produced by `build.rs` at every Cargo build. You will not find `target_ptx.rs` in the repository; it is generated fresh into `OUT_DIR` each time.
+Everything inside `target_ptx.rs` — the per-target PTX bytes, `ptx_modules()` for the primary target, the `all_ptx_sets()` multi-target registry, `TARGET_DEFAULTS` and `TARGET_SM_COUNT` — is produced by `build.rs` at every Cargo build. You will not find `target_ptx.rs` in the repository; it is generated fresh into `OUT_DIR` each time.
 
-The generated file looks roughly like:
+`all_ptx_sets()` returns one `TargetPtxSet` per compiled target:
 
 ```rust
-pub static PTX_GB10_QWEN3_NVFP4: &[PtxModule] = &[
-    PtxModule { name: "prefill_attn_v47", ptx: include_bytes!("...sm121/prefill_v47.ptx") },
-    PtxModule { name: "decode_attn",       ptx: include_bytes!("...sm121/decode_attn.ptx") },
-    PtxModule { name: "moe_w4a16",         ptx: include_bytes!("...sm121/moe_w4a16.ptx") },
-    // ~35 modules per target
-];
-pub static PTX_GB10_QWEN35_NVFP4: &[PtxModule] = &[ /* ... */ ];
-
-pub fn ptx_modules(target: &KernelTarget) -> Option<&'static [PtxModule]> {
-    match (target.arch, target.model, target.quant) {
-        ("sm_121", "qwen3-next-80b-a3b", "nvfp4") => Some(PTX_GB10_QWEN3_NVFP4),
-        ("sm_121", "qwen3.5-35b-a3b",   "nvfp4") => Some(PTX_GB10_QWEN35_NVFP4),
-        // ...
-        _ => None,
-    }
+pub struct TargetPtxSet {
+    pub target: KernelTarget,               // (arch, model, quant)
+    pub ptx_arch: &'static str,             // HARDWARE.toml arch verbatim: sm_121f, sm_90a, …
+    pub modules: Vec<(&'static str, &'static [u8])>,
+    pub sampling: SamplingPresets,          // from MODEL.toml
+    pub behavior: ModelBehavior,            // from MODEL.toml
+    pub model_type_matches: Vec<ModelTypeMatch>,
+    pub match_names: &'static [&'static str],
+    // …
 }
 ```
 
-At runtime, `metrale-server::main` resolves the current model's `KernelTarget`, calls `ptx_modules(&target)`, and passes the resulting slice to `MetraleCudaBackend::new` which uploads each PTX module to the GPU via `cuModuleLoadData`.
+At startup, `metrale_kernels::ptx_for_config(model_type, hidden_size, model_refs, pinned)` picks the set that serves the checkpoint (`src/resolve.rs`: exact `(model_type, hidden_size)` declarations first, a collision broken by `match_names`, an unbroken tie an error, `--kernel-target` pins one), and the server passes its `modules` to `MetraleCudaBackend::new`, which uploads each PTX module with `cuModuleLoadData`.
 
 ## What `build.rs` actually does
 
-1. **Read `METRALE_TARGET_*`** — three env vars (`HW`, `MODEL`, `QUANT`). Wildcards (`*`) expand to "every matching directory".
-2. **Walk `kernels/<hw>/<model>/<quant>/`** — for each leaf that matches the wildcards, read `HARDWARE.toml`, `MODEL.toml`, `KERNEL.toml`.
-3. **Resolve the compiler** — `resolve_compute_target(vendor)` returns a `Box<dyn ComputeTarget>`. Today always `NvidiaTarget { nvcc }`.
-4. **Compile every source file** — for each `*.cu` in the leaf, call `compute_target.compile(src, out, arch, flags)`. Flags come from `KERNEL.toml`'s `extra_nvcc_flags = [...]` plus the arch-specific ones from `HARDWARE.toml`.
-5. **Apply module-name overrides** — `KERNEL.toml`'s `[modules]` section lets kernels with different file stems (`e2m1_branchless.cu`) expose themselves under shorter module names (`e2m1`). This is cosmetic but keeps `GpuBackend::kernel("e2m1", "convert_f32_to_e2m1")` readable at the call site.
-6. **Parse `MODEL.toml` → `SamplingPresets` + `ModelBehavior`** — non-kernel metadata that the server consumes directly (default `temperature`, `thinking_budget`, etc.). Emitted as Rust constants alongside the PTX.
-7. **Write `target_ptx.rs`** — one `PtxModule` array per target, the dispatch match, and a `const ALL_TARGETS: &[KernelTarget]` listing everything that got compiled.
+1. **Read `METRALE_TARGET_*`** — `HW` (default `gb10`), `MODEL` (default `*`) and `QUANT` (default `nvfp4`); `*` expands to every matching directory.
+2. **Resolve each target's sources** — own leaf, own `common/`, and the parent's pair when `HARDWARE.toml` sets `[hardware] inherits`, plus every `KERNEL.toml` `[sources] use`. The resolver is `metrale-closure`'s layout module; an undeclared shadow or a `[shadow]` entry with nothing to shadow fails the build.
+3. **Stage** each role's sources into `OUT_DIR` (`build_stage.rs`), so a quoted `#include` resolves against the headers of the layer that compiles it.
+4. **Resolve the compiler** — `resolve_compute_target(vendor)` (`build_target.rs`) returns `NvidiaTarget`, `AppleTarget`, `ScaleTarget` or `HipTarget`.
+5. **Compile every source** — flags come from `HARDWARE.toml`, the `common/` and leaf `KERNEL.toml` `[build]` tables, and `METRALE_EXTRA_NVCC_FLAGS`.
+6. **Apply module-name overrides** — `KERNEL.toml`'s `[modules]` section lets a file stem (`e2m1_branchless.cu`) expose itself under a shorter module name (`e2m1`).
+7. **Parse `MODEL.toml`** into `SamplingPresets` and `ModelBehavior`, and `HARDWARE.toml` `[defaults]` into `TARGET_DEFAULTS` — the serving levers the target runs with.
+8. **Write `target_ptx.rs`.**
 
-The whole phase is idempotent — `rerun-if-changed` directives on the kernel tree mean `cargo` only recompiles what changed.
+`rerun-if-changed` and `rerun-if-env-changed` directives on the kernel tree and the `METRALE_TARGET_*` variables mean Cargo re-runs the script only when an input changed.
 
 ## `METRALE_SKIP_BUILD=1` — the escape hatch
 
-On a Linux laptop with no `nvcc`, the crate would fail to build without this. The escape hatch is a single env var. When set, `build.rs`:
-
-- Does not invoke any compiler.
-- Emits a stub `target_ptx.rs` with an empty `ALL_TARGETS` and `ptx_modules` returning `None` for everything.
-- The crate compiles cleanly.
-
-`ci.yml` uses this. So does local `cargo clippy`. The [Kernel Dispatch](../architecture/dispatch.md) chapter covers the broader flow.
-
-## Per-target PTX bytes — sizes and counts
-
-Rough numbers for the default multi-model build at `metrale/metrale-inference-gb10:latest`:
-
-| Target | # kernels | PTX bytes (approx) |
-|---|---:|---:|
-| GB10 / Qwen3.5-35B-A3B / NVFP4 | 35 | ~5.4 MB |
-| GB10 / Qwen3-Next-80B-A3B / NVFP4 | 35 | ~5.5 MB |
-| GB10 / Qwen3.5-122B-A10B / NVFP4 | 35 | ~5.5 MB |
-| GB10 / Nemotron-3-Nano / NVFP4 | 33 | ~4.8 MB |
-| GB10 / Nemotron-3-Super / NVFP4 | 33 | ~4.8 MB |
-| GB10 / Mistral-Small-4 / NVFP4 | 31 | ~4.2 MB |
-| GB10 / MiniMax-M2.7 / NVFP4 | 38 | ~6.1 MB |
-| GB10 / Qwen3.6 / FP8 | 34 | ~5.2 MB |
-| GB10 / Gemma-4 / NVFP4 (×2 flavors) | 29 | ~4.0 MB ea |
-| GB10 / Qwen3-VL / NVFP4 | 40 (incl. ViT) | ~6.6 MB |
-
-Total embedded PTX in the default multi-model binary: ~65 MB. The binary itself lands at ~200 MB in release builds. This is why the Docker image is ~8 GB once you add the CUDA userspace (`libcudart`, `libnvrtc`), tokenizer deps, and Ubuntu base — the actual Metrale Engine footprint is small.
+On a host with no `nvcc`, the crate would fail to build without this. When it is set, `build.rs` invokes no compiler and emits a stub `target_ptx.rs` with no targets, so the crate compiles cleanly. A macOS build without `METRALE_TARGET_HW` takes the same path. CI's lint and test jobs use it; so does a local `cargo clippy`. The [Kernel Dispatch](../architecture/dispatch.md) chapter covers the broader flow.
 
 ## What gets added to this crate when you…
 
-- **…add a new `(hw, model, quant)` leaf?** Nothing in the `metrale-kernels/src/` directory. `build.rs` picks it up automatically on the next `cargo build`. You *do* need to add a matching `KernelTarget` const in `metrale-core::target::KernelTarget` so downstream code can refer to it by name.
-- **…add a new kernel to an existing leaf?** Drop the `.cu` in the leaf directory; `build.rs` picks it up. If you want a non-stem module name, add an entry to the leaf's `KERNEL.toml`.
-- **…add a new hardware vendor?** Extend `resolve_compute_target(vendor)` in `build.rs` to return your new `ComputeTarget` impl. Everything else flows from there.
+- **…add a new `(hw, model, quant)` leaf?** Nothing under `crates/kernels/src/`. `build.rs` picks it up on the next `cargo build`; its `MODEL.toml` declares which `model_type` (and `hidden_size`) it serves.
+- **…add a new kernel to an existing leaf?** Drop the source in the leaf directory; if it replaces a `common/` file, declare the shadow in the leaf's `KERNEL.toml` `[shadow]` with a reason. For a non-stem module name, add a `[modules]` entry.
+- **…add a new hardware vendor?** Extend `resolve_compute_target(vendor)` in `build_target.rs` to return your new `ComputeTarget` impl.
 
 The rest of the kernel-engineering story is in the [CUDA Kernel Engineering](../deep-dives/kernels.md) deep dive.

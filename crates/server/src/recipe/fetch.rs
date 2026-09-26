@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::Recipe;
 use super::fetch_github::{self, try_refresh};
 
-pub(super) const REPO: &str = "Metrale/metrale-recipes";
+pub(super) const REPO: &str = "Metrale/metralectl";
 pub(super) const CACHE: &str = "metrale-recipes";
 pub(super) const INDEX: &str = "index.json";
 pub(super) const AGENT: &str = crate::identity::USER_AGENT;
@@ -86,9 +86,8 @@ impl Index {
         {
             "This machine has no route to github.com. Set HTTPS_PROXY to a host \
              that does — recipes are then fetched through it — or copy the \
-             cached index (~/.metrale/metrale-recipes/index.json, or \
-             ~/.metrale/metrale-recipes/index.json on a box that predates the \
-             rename) from a machine that can reach it."
+             cached index (~/.metrale/metrale-recipes/index.json) from a machine \
+             that can reach it."
         } else if lowered.contains("403") || lowered.contains("rate") {
             "GitHub is rate-limiting this IP. The listing costs one API call per \
              refresh; the cached recipes below are still usable."

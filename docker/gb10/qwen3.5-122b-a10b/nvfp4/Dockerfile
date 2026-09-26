@@ -4,9 +4,9 @@
 #   docker build -f docker/gb10/qwen3.5-122b-a10b/nvfp4/Dockerfile -t metrale-122b .
 #
 # Run (single node):
-#   docker run --gpus all --ipc=host -p 8888:8888 \
+#   docker run --gpus all --ipc=host -p 127.0.0.1:8888:8888 \
 #     -v ~/.cache/huggingface:/root/.cache/huggingface \
-#     metrale-122b serve Sehyo/Qwen3.5-122B-A10B-NVFP4
+#     metrale-122b serve --bind 0.0.0.0 Sehyo/Qwen3.5-122B-A10B-NVFP4
 #
 # Run (EP=2 — see scripts/start-ep2.sh):
 #   docker run --gpus all --ipc=host --network host \
@@ -32,6 +32,9 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
+# metrale-bench include_str!s its benchmark prompts from tests/fixtures;
+# without them the release build fails with "couldn't read".
+COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=qwen3.5-122b-a10b

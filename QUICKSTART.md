@@ -23,9 +23,8 @@ Run state-of-the-art language models on a single NVIDIA DGX Spark (GB10).
 sudo apt-get update && sudo apt-get install -y \
     build-essential pkg-config git cmake clang libclang-dev
 # CUDA 13.0 toolkit must already be installed; `nvcc --version` should report 13.0.
-# Nothing is fetched from the network at build time: `crates/xgrammar` is a
-# pure-Rust in-tree port (ADR 0010) with no build.rs, so the old
-# `XGRAMMAR_SRC_DIR` air-gap escape hatch no longer exists and is not read.
+# Nothing is fetched from the network at build time: `crates/grammar`
+# (metrale-grammar) is a pure-Rust in-tree XGrammar port with no build.rs.
 ```
 
 The first `cargo build --release -p metrale-server` takes ~15-30 minutes (PTX
@@ -178,8 +177,9 @@ curl -s http://localhost:8888/v1/chat/completions \
 >
 > Without the flag, a video part is refused with a 400 naming the flag.
 > With the flag but no `ffmpeg` on `PATH`, the server **warns loudly at
-> startup** and every video request fails naming the binary. The official
-> container image ships `ffmpeg`.
+> startup** and every video request fails naming the binary. The images built
+> from `docker/` do not install `ffmpeg`; add it to the runtime stage to serve
+> video from a container.
 
 Start the server with video decoding enabled:
 

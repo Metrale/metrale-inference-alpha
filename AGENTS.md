@@ -9,20 +9,29 @@ commands, and the invariants that matter.
 Metrale Engine is an MIT OR Apache-2.0 inference stack targeting NVIDIA GB10 / DGX Spark. The
 moving parts:
 
-- **`crates/server/`** — OpenAI-compatible HTTP server, request
-  scheduling, tool-call parsing, streaming.
-- **`crates/model-layers/`** — model assembly (attention, MoE, SSM layers),
-  weight loaders per model family, model-type dispatch in
-  `src/factory.rs`.
-- **`crates/gpu-runtime/`** — GPU backend, KV cache, kernel dispatch,
-  process-group comms.
+- **`crates/server/`** (`metrale-server`, the `met` binary) — OpenAI- and
+  Anthropic-compatible HTTP server, request scheduling, tool-call parsing,
+  streaming, TUI, CLI.
+- **`crates/model-engine/`** — the `Model` trait, the transformer model and
+  the model-type dispatch in `src/factory.rs`.
+- **`crates/model-arch/`** — per-family architectures and their weight
+  loaders (`src/weight_loader/`).
+- **`crates/model-layers/`** — generic layers (attention, SSM, MoE, FFN,
+  vision, MTP heads), LoRA, the weight map and the kernel launch wrappers.
+- **`crates/gpu-runtime/`** — GPU backend (CUDA, Metal), streams, buffers,
+  kernel registry; **`crates/cache/`** the KV and prefix caches;
+  **`crates/comm/`** collective ops.
 - **`crates/kernels/`** — Rust glue over compiled PTX (one artefact
   per `(hw, model, quant)` target).
-- **`kernels/<hw>/<model>/<quant>/`** — CUDA kernels + `MODEL.toml`
-  (sampling, behaviour defaults, kernel target registration).
-- **`crates/metrale-*`** — smaller shared primitives (quant, gemm, ssm, norm,
-  attention, reduce, activation, embed).
-- **`crates/bench/`** — benchmark harness.
+- **`kernels/<hw>/`** — kernel sources: `common/` plus one leaf per
+  `<model>/<quant>/`, with `MODEL.toml` (sampling, behaviour defaults,
+  kernel target registration) beside each model.
+- **`crates/bench/`** (`metrale-bench`) — the benchmark suite and the
+  certification gate.
+- The rest of the 21 workspace members (`core`, `config`, `closure`,
+  `governance`, `gpu-sys`, `telemetry`, `scheduler`, `sampling`, `storage`,
+  `grammar`, `model-weights`, `speculative`) are listed in the root
+  `Cargo.toml`; the book's *Workspace Layout* chapter maps each one.
 
 Architecture decision records live in `docs/adr/`; the benchmark journey in
 `docs/METRALE_JOURNEY.md`; release notes in `docs/releases/`.
@@ -88,15 +97,15 @@ certify` claims the campaign lock itself. Anything you override, quote in the PR
 ★ **A red `stamp status` or `seal status` is not a failure until it is dated.** Those jobs
 freeze their outputs for the life of a CI run, so a mark minted *after* they ran leaves them
 red until a FULL `gh run rerun <id>` — `--failed` cannot work, because they *succeeded* while
-emitting `false`. The oracle's T12 does the dating; do not do it by eye.
+emitting `false`. Compare the mark's time with the run's start before reading the red.
 
-For a `kernels/` change that reaches a second hardware, run
-`/oracle_pre_commit_cross_hardware_check` before pushing: it chooses the remedy (benign,
-parameterize in `kernels/<hw>/HARDWARE.toml` **with a reader added in the same change**, or a
-separate kernel in the intended tree) and writes the `Hardware:` and `CHKI-Verdict:` trailers.
+For a `kernels/` change that reaches a second hardware, choose the remedy before pushing
+(benign, parameterize in `kernels/<hw>/HARDWARE.toml` **with a reader added in the same
+change**, or a separate kernel in the intended tree) and record it in `Hardware:` and
+`CHKI-Verdict:` commit trailers.
 
-The CI job is **advisory** (AMD second-tier), so those trailers are no longer enforced at merge
-— which makes running the oracle a judgement you make rather than one CI makes for you. The
+The CI job is **advisory** (AMD second-tier), so those trailers are not enforced at merge
+— which makes the check a judgement you make rather than one CI makes for you. The
 reach it reports is real either way: a `kernels/gb10/common/` edit is compiled verbatim by
 hipcc through `[sources] use`, and `d584c0c50` was caught only because a release compile leg
 happened to fail.
@@ -108,23 +117,23 @@ High-level walkthrough — the patterns to follow are already in-tree.
 1. **Model-type dispatch.** Add a new arm in
    `crates/model-engine/src/factory.rs` that returns a new
    `ModelWeightLoader` impl. Use `crates/model-arch/src/weight_loader/`
-   for the loader (study `qwen35.rs`, `minimax.rs`, `nemotron_h.rs` for the
+   for the loader (study `qwen35.rs`, `minimax.rs`, `nemotron.rs` for the
    three major shapes: dense, SSM+MoE hybrid, attention+MoE).
-2. **Kernel target.** Create `kernels/<hw>/<model-slug>/<quant>/` with a
-   `MODEL.toml` declaring the model-type matches, sampling presets, and
-   behaviour defaults. The top-level `kernels/<hw>/HARDWARE.toml` picks up
-   the new target automatically if you set
-   `METRALE_TARGET_MODEL=*` at build time (default).
+2. **Kernel target.** Create `kernels/<hw>/<model-slug>/MODEL.toml`
+   declaring the model-type matches, sampling presets and behaviour
+   defaults, and a `<quant>/` leaf with its `KERNEL.toml` and any kernels it
+   overrides. The build picks the new target up automatically under
+   `METRALE_TARGET_MODEL=*` (the default).
 3. **Behavioural knobs.** `MODEL.toml` is the SSOT for per-model
-   sampling/thinking/tool-use policy. `build.rs` in `metrale-kernels` parses
+   sampling/thinking/tool-use policy. The `metrale-kernels` build script parses
    it into `SamplingPresets` + `ModelBehavior` consumed by the server.
 4. **Jinja template.** If the model uses a chat template that's not
-   covered by `jinja-templates/`, add one. Naming convention matches the
-   HF repo.
+   covered by `jinja-templates/`, add one, named after the checkpoint's
+   `config.json` `model_type` (`jinja-templates/<model_type>.jinja`).
 
 Concrete recent examples worth reading:
 
-- Mistral-Small-4 integration — `crates/model-arch/src/mistral_loader.rs`
+- Mistral-Small-4 integration — `crates/model-arch/src/mistral_loader/`
   + `kernels/gb10/mistral-small-4/`.
 - MiniMax M2/M2.7 (attention + 256-expert sigmoid-routed MoE) —
   `crates/model-arch/src/weight_loader/minimax.rs` +
@@ -136,13 +145,15 @@ Concrete recent examples worth reading:
 ## The kernel target system
 
 Three dimensions: **hardware** × **model** × **quantization**. At build
-time, `metrale-kernels/build.rs` enumerates the `METRALE_TARGET_*` env vars
+time, `crates/kernels/build.rs` reads the `METRALE_TARGET_*` env vars
 (with `*` meaning "all matching") and produces one PTX artefact per
-target. Runtime selects the correct target based on the model's
-`model_type` and loaded config.
+target. Runtime selects the correct target from the model's
+`model_type` and `hidden_size` (`metrale_kernels::ptx_for_config`).
 
-- `METRALE_TARGET_HW=gb10` — currently the only implemented hardware.
-- `METRALE_TARGET_MODEL=*` / `METRALE_TARGET_QUANT=*` — wildcard compiles all.
+- `METRALE_TARGET_HW` — one hardware directory under `kernels/` (`gb10`,
+  the default; `hopper`, `b200`, `b300`, `strix`, `strix-hip`, `metal`).
+- `METRALE_TARGET_MODEL` (default `*`) / `METRALE_TARGET_QUANT` (default
+  `nvfp4`) — `*` compiles all.
 - `METRALE_SKIP_BUILD=1` — emits a stub so clippy/fmt can run without nvcc.
 
 ## Writing commits
@@ -159,8 +170,8 @@ target. Runtime selects the correct target based on the model's
 
 These aren't abstract — they're the classes of bug that have burned days:
 
-- **Protocol drift** between OpenAI and Anthropic paths (`api.rs`,
-  `anthropic.rs`). A fix on one surface often needs a matching change on
+- **Protocol drift** between OpenAI and Anthropic paths (`crates/server/src/api/`,
+  `anthropic/`). A fix on one surface often needs a matching change on
   the other.
 - **Template mismatches** that break tool-calling subtly — different
   `<tool_call>` vs `<minimax:tool_call>` tokens, `<think>` seeded by the
@@ -207,6 +218,6 @@ To ensure high code quality, all agents contributing to Metrale Engine must stri
 - **Self-Improvement:** After user corrections, capture the lesson to prevent the same mistake.
 - **Demand Elegance:** For complex fixes, choose the elegant, well-architected solution over a hacky workaround.
 
-See `CONTRIBUTING.md` for coding style and the CLA expectations,
+See `CONTRIBUTING.md` for coding style and licensing,
 `SECURITY.md` for disclosure, and `docs/adr/` for the authoritative
 architecture references.
