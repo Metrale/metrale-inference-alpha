@@ -26,6 +26,9 @@ COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
 COPY jinja-templates/ jinja-templates/
+# metrale-bench include_str!s its benchmark prompts from tests/fixtures;
+# without them the release build fails with "couldn't read".
+COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=nemotron-super-120b-a12b

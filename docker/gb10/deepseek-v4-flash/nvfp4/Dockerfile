@@ -42,6 +42,9 @@ COPY vendor/ vendor/
 # jinja-templates/deepseek_v4.jinja). Without this the runtime finds no
 # override and falls back to ChatML — wrong delimiters/stop for DeepSeek.
 COPY jinja-templates/ jinja-templates/
+# metrale-bench include_str!s its benchmark prompts from tests/fixtures;
+# without them the release build fails with "couldn't read".
+COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=deepseek-v4-flash

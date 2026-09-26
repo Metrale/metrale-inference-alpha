@@ -41,7 +41,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
-# 🪤 REQUIRED, and every other gb10 Dockerfile is missing it. `metrale-plugin` pulls the
+# 🪤 REQUIRED. `metrale-bench` pulls the
 # benchmark prompts in with `include_str!("../../../../tests/fixtures/bench_prompt_*.txt")`,
 # so a build without repo-root `tests/` dies at COMPILE time with four "couldn't read"
 # errors — after the CUDA kernels have already built, which makes it look like a kernel

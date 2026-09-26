@@ -83,7 +83,7 @@ COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
 COPY jinja-templates/ jinja-templates/
-# quick-speed-bench (metrale-plugin) include_str!'s its ISL prompt fixtures from
+# quick-speed-bench (metrale-bench) include_str!'s its ISL prompt fixtures from
 # tests/fixtures — without this line the release build fails in-container while
 # every full-tree local build succeeds. Copy just the fixtures, not all tests/.
 COPY tests/fixtures/ tests/fixtures/

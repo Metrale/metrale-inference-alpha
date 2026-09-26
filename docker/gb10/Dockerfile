@@ -22,9 +22,8 @@ RUN apt-get update -qq && \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV CUDA_HOME=/usr/local/cuda
-# Override rust-toolchain.toml's 1.85 pin: a transitive dep (libloading 0.9)
-# now requires >= 1.88. Using `stable` defers to the toolchain that rustup
-# installed above (currently 1.93).
+# Build with the stable toolchain rustup installed above rather than the
+# channel rust-toolchain.toml pins.
 ENV RUSTUP_TOOLCHAIN=stable
 
 WORKDIR /build
@@ -34,7 +33,7 @@ COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
 COPY jinja-templates/ jinja-templates/
-# quick-speed-bench (metrale-plugin) include_str!'s its ISL prompt fixtures from
+# quick-speed-bench (metrale-bench) include_str!'s its ISL prompt fixtures from
 # tests/fixtures — without this line the release build fails in-container
 # ("couldn't read ../../tests/fixtures/bench_prompt_128.txt") while every
 # full-tree local build succeeds. Copy just the fixtures, not all of tests/.
@@ -53,7 +52,7 @@ LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 # Stamp the source commit into the image so ":latest" provenance is answerable:
 #   docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' <tag>
-# Passed by scripts/release.sh and the metrale-release skill via --build-arg METRALE_GIT_SHA.
+# Pass it with --build-arg METRALE_GIT_SHA=$(git rev-parse HEAD).
 ARG METRALE_GIT_SHA=unknown
 LABEL org.opencontainers.image.revision="${METRALE_GIT_SHA}"
 

@@ -12,7 +12,7 @@
 #   1. As a BUILD SANDBOX (mount the repo, run any cargo cmd — all env preset):
 #        docker build -f docker/gb10/Dockerfile.builder --target builder -t metrale-gb10:build .
 #        docker run --rm --gpus all -v "$PWD":/build -w /build metrale-gb10:build \
-#          cargo build --release -p metrale-model-arch --example nvfp4_gemm_bench \
+#          cargo build --release -p metrale-model-arch --example fp8gemm_microtest \
 #            --no-default-features --features "cuda gpu-examples"
 #   2. As a full SERVE image (compiles metrale-server):
 #        docker build -f docker/gb10/Dockerfile.builder -t metrale-gb10:cuda13.2-fp4 .
@@ -34,7 +34,7 @@ RUN apt-get update -qq && \
       python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-# Rust (stable — overrides rust-toolchain.toml's 1.85 pin; libloading 0.9 needs >=1.88).
+# Rust: stable, which overrides the channel rust-toolchain.toml pins.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV RUSTUP_TOOLCHAIN=stable
@@ -63,6 +63,9 @@ COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
 COPY jinja-templates/ jinja-templates/
+# metrale-bench include_str!s its benchmark prompts from tests/fixtures;
+# without them the release build fails with "couldn't read".
+COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=*

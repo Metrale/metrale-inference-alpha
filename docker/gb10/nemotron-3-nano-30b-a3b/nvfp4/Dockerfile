@@ -25,6 +25,9 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
+# metrale-bench include_str!s its benchmark prompts from tests/fixtures;
+# without them the release build fails with "couldn't read".
+COPY tests/fixtures/ tests/fixtures/
 
 ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=nemotron-3-nano-30b-a3b
