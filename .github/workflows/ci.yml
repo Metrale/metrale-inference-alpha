@@ -451,6 +451,12 @@ jobs:
         if: runner.os == 'macOS'
         run: rustup target add x86_64-unknown-linux-gnu
       - run: cargo clippy --workspace --tests ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
+      # 2026-09-26: The Metal build compiles metrale-storage without its `cuda`
+      # feature. Checking that combination here, on Linux, catches a module
+      # gated on `cuda` that an always-built module imports, in seconds and
+      # without the Mac leg.
+      - name: metrale-storage builds without the cuda feature
+        run: cargo check --locked -p metrale-storage --no-default-features ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
 
   license-headers:
     name: SPDX license headers
