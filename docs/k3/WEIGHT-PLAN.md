@@ -8,9 +8,9 @@ a second projection-name table. Device allocation and serving are separate PRs.
 ## Memory estimates
 
 ```sh
-METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo run -p metrale-core --example k3_rank_memory -- 4
+METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo run -p metrale-model-weights --example k3_rank_memory -- 4
 python3 scripts/k3/audit_headers.py --output /data/k3-header-audit
-METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo run -p metrale-core --example k3_rank_memory -- 4 /data/k3-header-audit/headers /data/k3-header-audit/a-log
+METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo run -p metrale-model-weights --example k3_rank_memory -- 4 /data/k3-header-audit/headers /data/k3-header-audit/a-log
 ```
 
 The header reader performs bounded HTTP Range requests against one pinned

@@ -269,7 +269,7 @@ Failure modes:
 
 Topology quick pick: **EP=2** (`--ep-size 2 --tp-size 1`) for MoE expert sharding
 across two nodes — this is what the 122B and MiniMax-M2.7 recipes use. **TP+EP**
-(`--tp-size 2 --ep-size 2`, a 4-rank layout) is only for a model that must shard
+(`--tp-size 2 --ep-size 2`, both groups on the same two ranks) is only for a model that must shard
 *both* attention and experts; none of the current 2-node recipes need it. Pure TP=2
 is rare and OOM-prone for these models. The 397B needs **EP=4** (4 nodes).
 

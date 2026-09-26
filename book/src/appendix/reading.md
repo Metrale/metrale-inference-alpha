@@ -62,6 +62,6 @@ Inside the repo, the canonical long-form references are the architecture decisio
 - `docs/adr/0004-nvfp4-fp8-quantization.md` — NVFP4/FP8 quantization, including why `--kv-high-precision-layers` exists.
 - `docs/adr/0003-hybrid-ssm-attention.md` — hybrid SSM/attention design and chunked SSM prefill.
 - `docs/adr/0007-tp-ep-composition.md`, `docs/adr/0011-ep-batched-decode-optimization.md` — EP=2 MoE dispatch and batched decode.
-- `docs/adr/0010-vendor-xgrammar.md` — constrained decoding via vendored XGrammar.
+- `docs/adr/0010-vendor-xgrammar.md` — the constrained-decoding decision record (since superseded by the pure-Rust `crates/grammar` port).
 - `docs/turboquant-plus.md` — TurboQuant KV.
 - `docs/ARCHITECTURE.md`, `docs/METRALE_KERNELS.md`, `docs/HARDWARE.md` — the system, kernel, and hardware overviews.

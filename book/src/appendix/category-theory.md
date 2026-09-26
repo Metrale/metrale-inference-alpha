@@ -12,7 +12,7 @@ Standard references for the underlying mathematics: Saunders Mac Lane, *Categori
 
 A **category** is a collection of objects together with arrows (morphisms) between them, closed under composition and equipped with an identity arrow on every object. In symbols: `ob(𝒯)` is a class, and for every ordered pair `A, B ∈ ob(𝒯)` there is a set `𝒯(A, B)` of arrows.
 
-Metrale Engine's target category `𝒯` has one object per supported `(H, M, q)` triple. In code, these objects are `metrale_core::target::KernelTarget` values — `GB10_QWEN35_NVFP4`, `GB10_QWEN3_NVFP4`, `GB10_QWEN35_122B_NVFP4`, and nine siblings. The `const` declarations in `crates/core/src/target.rs` are a literal list of `ob(𝒯)`.
+Metrale Engine's target category `𝒯` has one object per supported `(H, M, q)` triple. In code, these objects are `metrale_core::target::KernelTarget` values, one per compiled `TargetPtxSet`; the leaf directories under `kernels/<hw>/` are a literal list of `ob(𝒯)`.
 
 The non-obvious choice is the morphism set: **for every distinct pair `A ≠ B`, `𝒯(A, B) = ∅`**. The only arrows are identities. `𝒯` is a *discrete* category.
 
@@ -29,7 +29,7 @@ A **functor** is a structure-preserving map between categories: it sends objects
 The product decomposition is visible in three places in the repo:
 
 - The **directory tree**: `kernels/<hw>/<model>/<quant>/` mirrors the three-factor product exactly. A leaf is an object of `𝒯`.
-- The **build-time wildcards**: `METRALE_TARGET_HW`, `METRALE_TARGET_MODEL`, `METRALE_TARGET_QUANT` in `metrale-kernels/build.rs` select subsets of each factor independently.
+- The **build-time wildcards**: `METRALE_TARGET_HW`, `METRALE_TARGET_MODEL`, `METRALE_TARGET_QUANT` in `crates/kernels/build.rs` select subsets of each factor independently.
 - The **workspace crate split**: `metrale-gpu-runtime`/`metrale-comm` insulate the Hw axis, `metrale-model-arch` insulates the Mod axis, `crates/model-layers/src/quant_format/` + `metrale-kernels` insulate the Quant axis.
 
 Orthogonality of axes is not a lucky accident — it is the defining property of a categorical product. Adding an object to `Hw` does not touch `Mod × Quant`; the projection `π_{Mod×Quant}` is unchanged. This is exactly the empirical fact that "adding a new hardware vendor is two trait impls and a directory".
@@ -42,7 +42,7 @@ The primary structure over `𝒯` is the kernel assignment:
 Kernels : 𝒯 → 𝐒𝐞𝐭
 ```
 
-`𝐒𝐞𝐭` is the category of sets. `Kernels` sends each target to its set of compiled PTX modules. The auto-generated file `metrale-kernels/src/target_ptx.rs` is this functor materialised in code. `ptx_modules(target: &KernelTarget) -> Option<&'static [PtxModule]>` is the functor applied to an object.
+`𝐒𝐞𝐭` is the category of sets. `Kernels` sends each target to its set of compiled PTX modules. The auto-generated `target_ptx.rs` (in the kernels crate's `OUT_DIR`) is this functor materialised in code; each `TargetPtxSet`'s `modules` is the functor applied to an object.
 
 Because `𝒯` is discrete, there are no naturality squares to draw — `Kernels` has complete freedom per object, which is the whole point. The image `Kernels(H, M, q)` in the default multi-model image has ~30–40 elements; no two targets share an element by construction.
 
@@ -64,7 +64,7 @@ This is the categorical reading of "the abstractions sit above the kernel layer,
 
 An **algebraic theory** is a signature (operation symbols with arities) plus equations that any implementation must satisfy. A **model** of the theory is a set together with operations that satisfy the equations. Different sets can be different models of the same theory — this is the mathematical name for "multiple implementations of the same trait".
 
-The `GpuBackend` trait in `crates/gpu-runtime/src/gpu.rs` is such a theory. Its operations are `alloc`, `free`, `kernel`, `launch`, `synchronize`, `copy_h2d`, and so on (27 methods). The (unwritten, but real) equations include "`free` after `alloc` returns memory to the pool", "`synchronize` serialises previously-launched work on the given stream", and "`launch` of a kernel with pointer arguments passes the addresses unchanged to the kernel".
+The `GpuBackend` trait in `crates/gpu-runtime/src/gpu.rs` is such a theory. Its operations are `alloc`, `free`, `kernel`, `launch`, `synchronize`, `copy_h2d`, and so on. The (unwritten, but real) equations include "`free` after `alloc` returns memory to the pool", "`synchronize` serialises previously-launched work on the given stream", and "`launch` of a kernel with pointer arguments passes the addresses unchanged to the kernel".
 
 Two models ship:
 
@@ -83,7 +83,7 @@ A **coproduct** (or disjoint union) in `𝐒𝐞𝐭` is the set-theoretic union
 all_ptx  ≅  ∐_{(H,M,q) ∈ 𝒯}  Kernels(H, M, q)
 ```
 
-In code, `all_ptx_sets()` in `metrale-kernels/src/lib.rs` returns this coproduct. Each `(H, M, q)` contributes a summand; the summands share no elements by construction, because different leaf directories produce different PTX blobs with different module names.
+In code, `metrale_kernels::all_ptx_sets()` returns this coproduct. Each `(H, M, q)` contributes a summand; the summands share no elements by construction, because different leaf directories produce different PTX blobs with different module names.
 
 The coproduct has a universal property that is worth stating because it matches the design discipline: for any set `S` and family of functions `f_{H,M,q} : Kernels(H, M, q) → S`, there is a unique function `f : all_ptx → S` that restricts to each `f_{H,M,q}`. The registry dispatch at runtime — "given a target, return the right PTX set" — is the inverse construction: a function out of `all_ptx` that *factors through* the target index.
 

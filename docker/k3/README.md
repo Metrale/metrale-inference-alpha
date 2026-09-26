@@ -35,11 +35,10 @@ Do not copy dual-DGX-Spark RoCE overrides onto a single-node NVSwitch rental.
 A container build or `serve --help` is not a GPU inference receipt. Start with
 a bounded small-fixture canary before attempting official TP8 weights.
 
-## Extraction status
+## Status
 
-The recipe is extracted unchanged from #1150. The GB10 build/inference receipts
-there apply to that integration revision. No Docker image was rebuilt on this
-extracted head. B300 hardware registration and K3 serving integration must land
-before claiming that the B300 command or K3 inference works from a release.
-This recipe currently rejects B200 explicitly; the rental used native builds.
-Keep that limitation visible rather than treating the host whitelist as support.
+The GB10 build and inference receipts in #1150 apply to that revision. B300
+hardware registration and K3 serving integration must land before claiming
+that the B300 command or K3 inference works from a release. The Dockerfile
+rejects B200 explicitly; keep that limitation visible rather than treating the
+host whitelist as support.

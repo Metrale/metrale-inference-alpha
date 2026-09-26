@@ -76,7 +76,6 @@ and published alongside it.
 
 ## Appendix
 
-- [Paper Summary](https://book.dev.metrale.ai/appendix/paper.html)
 - [A Category-Theoretic Perspective](https://book.dev.metrale.ai/appendix/category-theory.html)
 - [Glossary](https://book.dev.metrale.ai/appendix/glossary.html)
 - [Further Reading](https://book.dev.metrale.ai/appendix/reading.html)

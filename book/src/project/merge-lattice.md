@@ -222,10 +222,10 @@ compile-visible event instead.
 ## Below the path floor: what a target actually compiles
 
 The floor above answers at the granularity of a path list, and for `kernels/`
-that is very coarse. `kernels/gb10/common/` holds 160 shared kernels; each model
-directory shadows only 5–18 of them, and nothing shadows
+that is very coarse. `kernels/gb10/common/` holds the shared kernels; each model
+directory shadows only a handful of them, and nothing shadows
 `paged_decode_attn_fp8.cu` at all. Under the path rule, editing one shared kernel
-re-opens every gate for all 28 targets. At roughly three and a half GPU-hours per
+re-opens every gate for every target. At roughly three and a half GPU-hours per
 accuracy leg, that is a cost people route around, and a gate people route around
 is worse than a slower one.
 
@@ -254,15 +254,15 @@ found by reading the tree rather than reasoning about it.
 
 **A shadow file may `#include` the very file it shadows.**
 `kernels/gb10/qwen3.6-27b/nvfp4/attn_prefill_paged_indirect.cu` contains
-`#include "../../common/attn_prefill_paged_indirect.cu"`, and eight files
-do this. A set hash reports "this model shadows that stem, so the common copy
+`#include "../../common/attn_prefill_paged_indirect.cu"`, and other leaf files
+do the same. A set hash reports "this model shadows that stem, so the common copy
 cannot reach it" — while the edited bytes are compiled straight into the model's
 kernel. Silent, and it fails *open*, on exactly the change class the scheme
 exists to scope.
 
-**Headers are in no set at all.** The resolver matches `*.cu` non-recursively, so
-the nine `common/*.cuh` files — including the one carrying `BR64` — are invisible.
-Editing a header would invalidate nothing.
+**Headers are in no set of sources.** A source set lists the `.cu` files that
+are compiled, so the `common/*.cuh` headers — including the one carrying `BR64`
+— are in none of them, and editing a header would invalidate nothing.
 
 Following includes dissolves both, because an included file's bytes are inside
 the hash wherever it lives.
@@ -281,13 +281,14 @@ arch, compiler and flags, so the only thing that can move the hash is a source
 change. Substituting the checker's environment would let whichever machine ran
 CI invalidate every record.
 
-Two implementations of "what are this target's sources" now exist — `build.rs`
-uses `collect_cu_files`, the gate uses `taxon::sources` — and if they ever drift,
-the hashes never match, every record stays invalidated, and it looks *exactly*
-like "the kernels changed". `crates/server/tests/closure_attestation.rs` is the
-only place they are compared; it recomputes every baked hash from the tree and
-prints the count it checked, because "3 passed" reads identically at 21 targets
-and at 22.
+The build script and the gate answer "what are this target's sources" through
+the same resolver, `metrale-closure`'s layout module (`crates/closure/src/layout.rs`:
+the build compiles what it returns, `taxon::sources` reads it). If the two
+sides ever disagreed on sources or config files, the hashes would never match,
+every record would stay invalidated, and it would look *exactly* like "the
+kernels changed". `crates/server/tests/closure_attestation.rs` recomputes every
+baked hash from the tree and prints the count it checked, because "3 passed"
+reads identically at 21 targets and at 22.
 
 ### What it does not cover
 
