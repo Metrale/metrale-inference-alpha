@@ -11,17 +11,23 @@ use std::sync::Mutex;
 use super::*;
 use spark_runtime::kernel_args::KernelLaunch;
 
-struct SideJoin<'a> {
+pub(super) struct SideJoin<'a> {
     gpu: &'a dyn GpuBackend,
     main: u64,
     side: u64,
     done: u64,
 }
 
+impl SideJoin<'_> {
+    pub(super) fn side(&self) -> u64 {
+        self.side
+    }
+}
+
 impl Drop for SideJoin<'_> {
     fn drop(&mut self) {
-        // The caller launches SiLU on `main` after this returns. If the GPU
-        // wait cannot be queued, block until the side stream is idle instead.
+        // Queue the wait on `main` so the next launch there sees side-stream
+        // writes. If the GPU wait cannot be queued, block on the side stream.
         if self.gpu.record_event(self.done, self.side).is_err()
             || self.gpu.stream_wait_event(self.main, self.done).is_err()
         {
@@ -32,6 +38,24 @@ impl Drop for SideJoin<'_> {
 
 fn overlap_k2048(k: u32) -> bool {
     k == 2048
+}
+
+/// Short C1-shape prefill only. Shared W8A8 and the router read the same
+/// hidden state and write different buffers; other shapes stay serial.
+pub(super) fn overlap_shared_router(rows: usize, experts: u32, topk: u32) -> bool {
+    (65..=128).contains(&rows) && experts == 256 && topk == 8
+}
+
+pub(super) fn begin_shared_side<'a>(gpu: &'a dyn GpuBackend, main: u64) -> Result<SideJoin<'a>> {
+    let (side, ready, done) = k2048_side(gpu)?;
+    gpu.record_event(ready, main)?;
+    gpu.stream_wait_event(side, ready)?;
+    Ok(SideJoin {
+        gpu,
+        main,
+        side,
+        done,
+    })
 }
 
 fn k2048_side(gpu: &dyn GpuBackend) -> Result<(u64, u64, u64)> {
@@ -265,13 +289,23 @@ impl MoeLayer {
 
 #[cfg(test)]
 mod tests {
-    use super::{overlap_k2048, plan, select_large_handle};
+    use super::{overlap_k2048, overlap_shared_router, plan, select_large_handle};
 
     #[test]
     fn k2048_gate_up_overlaps_and_down_does_not() {
         assert!(overlap_k2048(2048));
         assert!(!overlap_k2048(512));
         assert!(!overlap_k2048(0));
+    }
+
+    #[test]
+    fn shared_router_overlap_is_the_short_c1_shape_only() {
+        assert!(overlap_shared_router(128, 256, 8));
+        assert!(overlap_shared_router(65, 256, 8));
+        assert!(!overlap_shared_router(64, 256, 8));
+        assert!(!overlap_shared_router(129, 256, 8));
+        assert!(!overlap_shared_router(128, 257, 8));
+        assert!(!overlap_shared_router(128, 256, 4));
     }
 
     #[test]
