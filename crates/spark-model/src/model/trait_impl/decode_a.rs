@@ -331,6 +331,14 @@ impl TransformerModel {
             return self.decode_profiled(token, hidden, residual, seq, &mut kv_cache, &ctx, stream);
         }
 
+        // Outside the capture. `normalize_ssm_states` H2D-copies a temporary
+        // host pointer table; recording that memcpy replays a freed host
+        // address (CUDA 716) whenever the capture step's seq_len is a
+        // multiple of 64. Eager still normalizes inside the forward body.
+        if use_graphs {
+            self.normalize_ssm_outside_graph(seq, stream);
+        }
+
         // ── Phase 2: Try CUDA graph replay ──
 
         let mut graph_cache = if use_graphs {
