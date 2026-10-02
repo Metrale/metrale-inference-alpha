@@ -1,31 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: MTP drafter knobs read from the environment: the draft
-//! confidence floor, shadow top-k, multi-sequence mode, the catch-up and
+//! 2026-09-25: MTP drafter knobs read from the environment: shadow top-k, multi-sequence mode, the catch-up and
 //! refeed switches, debug taps, and the EP propose command.
 //!
 //! Owner: model-layers (speculative).
 //! Invariants: none beyond the types.
 
 use super::*;
-
-/// 2026-09-25: `METRALE_MTP_DRAFT_CONF`: the chain-confidence floor below
-/// which a propose's drafts are discarded and the step decodes serially. 0.0,
-/// the value when unset, disables it.
-pub fn draft_conf_tau() -> f32 {
-    parse_draft_conf_tau(std::env::var("METRALE_MTP_DRAFT_CONF").ok().as_deref())
-}
-
-/// 2026-09-25: Parse a `METRALE_MTP_DRAFT_CONF` value: clamped to
-/// `[0.0, 0.99]`, so a floor above any reachable confidence cannot discard
-/// every draft; 0.0 when absent or unparseable. Pure, so tests need not set
-/// the process environment.
-pub fn parse_draft_conf_tau(value: Option<&str>) -> f32 {
-    value
-        .and_then(|v| v.parse::<f32>().ok())
-        .map(|t| t.clamp(0.0, 0.99))
-        .unwrap_or(0.0)
-}
 
 /// 2026-09-25: `METRALE_MTP_SHADOW_TOPK=k`: log the drafter's top-k
 /// candidates at each draft position, and the verify steps' target tokens,

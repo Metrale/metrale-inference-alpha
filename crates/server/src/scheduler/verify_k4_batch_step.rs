@@ -302,7 +302,8 @@ pub(super) fn step_verify_k4_batched(
     let mut groups_batched = 0usize;
     // 2026-09-25: draft confidences (the D-Cut ranking key) are requested
     // only when D-Cut is on.
-    let want_conf = sched.levers.dcut_enabled;
+    let want_conf = sched.levers.dcut_enabled
+        || metrale_model_layers::speculative::draft_stop::draft_stop_logprob().is_some();
     let mut conf: Vec<Vec<f32>> = Vec::new();
     let group_cap = model.mtp_propose_batch_max().max(1);
     if pending.len() >= 2 && group_cap >= 2 && sched.levers.mtp_batch_propose {

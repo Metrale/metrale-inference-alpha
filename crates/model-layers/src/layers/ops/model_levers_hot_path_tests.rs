@@ -155,40 +155,6 @@ fn the_moe_forward_and_mtp_levers_are_strict_opt_ins() {
     assert!(!resolve(&[("METRALE_FP32_GATE", "1")]).fp32_routing);
 }
 
-/// 2026-09-25: The draft-confidence clamp, through the pure `parse_draft_conf_tau`, and the
-/// carried lever when `from_values` is given no floor.
-#[test]
-fn the_draft_confidence_clamp_holds_at_both_ends() {
-    use crate::speculative::parse_draft_conf_tau as tau;
-    assert_eq!(
-        tau(None),
-        0.0,
-        "unset means OFF — three sites gate on `> 0.0`"
-    );
-    assert_eq!(tau(Some("")), 0.0);
-    assert_eq!(tau(Some("junk")), 0.0);
-    assert_eq!(tau(Some("0.7")), 0.7);
-    assert_eq!(
-        tau(Some("5.0")),
-        0.99,
-        "the upper clamp is load-bearing: an unclamped 5.0 puts the floor \
-         above any achievable confidence and discards EVERY draft, turning \
-         speculation off with nothing logged"
-    );
-    assert_eq!(
-        tau(Some("-1")),
-        0.0,
-        "and the lower clamp cannot go negative"
-    );
-    // 2026-09-25: `from_values` carries the floor it is given (0.0 in `resolve`).
-    assert_eq!(
-        resolve(&[]).draft_conf_tau,
-        0.0,
-        "`from_values` takes the resolved tau as an INPUT; if it read the \
-         environment itself this would depend on the ambient process"
-    );
-}
-
 /// 2026-09-25: `ModelLevers::dflash_debug_dump_full` and metrale-model-arch's
 /// `DFlashLevers::debug_dump_full` resolve the same variable. `TransformerModel` holds the drafter
 /// as a `dyn DraftProposer` and cannot read its levers, so each struct carries its own copy. The

@@ -43,7 +43,7 @@ for leg in control cand; do
   # shellcheck disable=SC2086
   sudo docker run -d --name metrale-acc --network host --gpus all --ipc=host \
     -e METRALE_NO_FFN_NVFP4_MMQ=1 -e METRALE_SSM_TAIL_MIDCHUNK=0 -e METRALE_MTP_CATCHUP=0 \
-    -e METRALE_MTP_DRAFT_CONF=0.0 -e METRALE_MTP_GATE_FORCE=1 \
+    -e METRALE_MTP_GATE_FORCE=1 \
     -e METRALE_SSM_TAIL_LEASE_TTL=128 -e METRALE_BF16_TC_PREFILL=1 $EXTRA \
     -v "$HOME/.cache/huggingface:/root/.cache/huggingface:ro" \
     -v "$BIN:/usr/local/bin/met:ro" \

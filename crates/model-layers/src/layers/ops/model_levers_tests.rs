@@ -20,7 +20,6 @@ fn resolve(values: &[(&str, &str)]) -> ModelLevers {
         |name| values.contains_key(name),
         0,
         crate::drafter_context::DrafterContext::BOTH,
-        0.0,
         // 2026-09-25: The compiled target's `[defaults] decode_split_silu`, fixed on here;
         // `target_defaults_tests` checks the declarations.
         true,
@@ -194,15 +193,8 @@ fn externally_resolved_shadow_and_drafter_values_are_carried() {
         |_| false,
         7,
         crate::drafter_context::DrafterContext::OFF,
-        0.42,
         true,
     );
     assert_eq!(d.shadow_topk, 7);
-    assert_eq!(
-        d.draft_conf_tau, 0.42,
-        "the confidence clamp is resolved OUTSIDE `from_values` and carried \
-         in, like shadow_topk and drafter — reading it inside broke the \
-         function's purity and made a sibling test fail under parallelism"
-    );
     assert_eq!(d.drafter, crate::drafter_context::DrafterContext::OFF);
 }

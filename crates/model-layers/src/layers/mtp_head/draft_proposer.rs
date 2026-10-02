@@ -54,10 +54,9 @@ impl DraftProposer for MtpHead {
             .downcast_mut::<MtpProposerState>()
             .ok_or_else(|| anyhow::anyhow!("Invalid MTP proposer state"))?;
 
-        // 2026-09-25: Reset the chain confidence, which `forward_one` lowers per
-        // draft when `draft_conf_tau > 0`.
-        self.last_conf_bits
-            .store(1.0f32.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        // 2026-10-02: `--draft-confidence-stop`: the chain stops after the first
+        // draft whose top-1 probability is below tau (`speculative::draft_stop`).
+        let stop_lp = crate::speculative::draft_stop::draft_stop_logprob();
         let mut drafts = Vec::with_capacity(num_drafts);
         let mut current_token = last_token;
         let mut current_hidden = target_hidden;
@@ -97,6 +96,17 @@ impl DraftProposer for MtpHead {
             current_token = draft;
             // 2026-09-25: Later drafts read the drafter's own hidden (`chain_hidden`).
             current_hidden = Self::chain_hidden(ctx);
+            // 2026-10-02: The last draft's log-probability is NaN when it was not
+            // measured (a masked or deferred draft), which never stops the chain.
+            if let Some(ln_tau) = stop_lp {
+                let lp = f32::from_bits(
+                    self.last_conf_bits
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                );
+                if !lp.is_nan() && !crate::speculative::draft_stop::chain_continues(lp, ln_tau) {
+                    break;
+                }
+            }
         }
 
         mtp_state.last_num_drafted = drafts.len();
@@ -263,19 +273,6 @@ impl DraftProposer for MtpHead {
 
     fn read_deferred_draft_token(&self, gpu: &dyn GpuBackend) -> Result<u32> {
         self.read_deferred_draft_token(gpu)
-    }
-
-    /// 2026-09-25: The last propose's chain confidence (minimum top-1 probability), or
-    /// `None` when `draft_conf_tau()` is not positive. It reads the env through
-    /// `draft_conf_tau()` because the trait method carries no `ModelLevers`.
-    fn last_confidence(&self) -> Option<f32> {
-        if crate::speculative::draft_conf_tau() <= 0.0 {
-            return None;
-        }
-        Some(f32::from_bits(
-            self.last_conf_bits
-                .load(std::sync::atomic::Ordering::Relaxed),
-        ))
     }
 
     fn catchup_batch(

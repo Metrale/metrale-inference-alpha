@@ -297,6 +297,27 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
         ));
     }
 
+    // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
+    // DFlash drafts a whole block in one pass and has no chain to stop.
+    if let Some(tau) = args.draft_confidence_stop {
+        if !(tau > 0.0 && tau < 1.0) {
+            v.push(Violation::new(
+                format!("--draft-confidence-stop {tau} is outside (0, 1)."),
+                "TAU is a probability threshold: 0 would never stop a chain and 1 would \
+                 stop every chain after its first draft.",
+                "pass a value strictly between 0 and 1, or drop the flag.",
+            ));
+        }
+        if !args.speculative || args.dflash {
+            v.push(Violation::new(
+                "--draft-confidence-stop needs --speculative (MTP) and is not used with --dflash.",
+                "the stop ends MTP draft chains early; without MTP there is no chain, and a \
+                 DFlash drafter proposes its whole block in one pass.",
+                "add --speculative, or drop --draft-confidence-stop.",
+            ));
+        }
+    }
+
     // 2026-09-26: Only an explicit --num-drafts is checked: an omitted one
     // resolves against MODEL.toml later, and a model default without a
     // speculative method is not a user error.

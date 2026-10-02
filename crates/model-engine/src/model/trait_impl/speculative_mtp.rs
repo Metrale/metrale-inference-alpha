@@ -104,9 +104,6 @@ impl TransformerModel {
             Some(p) => p.as_ref(),
             None => return Ok(None),
         };
-        if self.levers.draft_conf_tau > 0.0 {
-            return Ok(None);
-        }
         if self.verify_hidden_stash.is_null() {
             return Ok(None);
         }

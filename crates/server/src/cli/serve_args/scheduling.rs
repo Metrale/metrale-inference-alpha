@@ -167,6 +167,16 @@ pub struct ServeSchedulingArgs {
     #[arg(long)]
     pub num_drafts: Option<usize>,
 
+    /// Per-position confidence stop for MTP draft chains (default: off). The
+    /// drafter extends a chain past a draft only while that draft's top-1
+    /// probability is at least TAU, so a chain of up to `--num-drafts` ends
+    /// with its first draft below TAU (still verified). Unconfident chains
+    /// cost fewer drafter steps and fewer verify rows; confident ones run to
+    /// full depth. It changes which drafts are verified, never the emitted
+    /// tokens. 0 < TAU < 1. Requires `--speculative`; not with `--dflash`.
+    #[arg(long, value_name = "TAU")]
+    pub draft_confidence_stop: Option<f32>,
+
     /// Widest batch that speculates (the multi-sequence MTP dispatch cap): above
     /// this many active sequences a step plain-decodes. Precedence (highest wins):
     /// this flag → MODEL.toml `[behavior].mtp_max_seqs` → 32 (4 under

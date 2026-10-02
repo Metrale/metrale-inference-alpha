@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-26: Host-side reads of the drafter logits in `MtpHead::forward_one`: the draft
-//! confidence fold, the shadow top-k log and the grammar-masked argmax.
+//! 2026-09-26: Host-side reads of the drafter logits in `MtpHead::forward_one`: the shadow
+//! top-k log and the grammar-masked argmax.
 //!
 //! Owner: model-layers (MTP head).
 //! Invariants: none beyond the types.
@@ -14,36 +14,6 @@ use crate::layer::ForwardContext;
 use crate::layers::ops;
 
 impl MtpHead {
-    pub(super) fn fold_draft_conf(&self, ctx: &ForwardContext, logits: DevicePtr, v: u32) {
-        let vocab = v as usize;
-        let mut bf16_buf = vec![0u8; vocab * 2];
-        if ctx.gpu.copy_d2h(logits, &mut bf16_buf).is_ok() {
-            let mut max = f32::NEG_INFINITY;
-            for i in 0..vocab {
-                let hi = u16::from_le_bytes([bf16_buf[2 * i], bf16_buf[2 * i + 1]]);
-                let x = f32::from_bits((hi as u32) << 16);
-                if x > max {
-                    max = x;
-                }
-            }
-            let mut denom = 0.0f64;
-            for i in 0..vocab {
-                let hi = u16::from_le_bytes([bf16_buf[2 * i], bf16_buf[2 * i + 1]]);
-                let x = f32::from_bits((hi as u32) << 16);
-                denom += ((x - max) as f64).exp();
-            }
-            let top1 = (1.0 / denom.max(1.0)) as f32;
-            let cur = f32::from_bits(
-                self.last_conf_bits
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            );
-            if top1 < cur {
-                self.last_conf_bits
-                    .store(top1.to_bits(), std::sync::atomic::Ordering::Relaxed);
-            }
-        }
-    }
-
     pub(super) fn grammar_masked_argmax(
         &self,
         ctx: &ForwardContext,

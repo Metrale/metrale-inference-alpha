@@ -260,7 +260,8 @@ pub(super) fn step_mtp_bootstrap_batched(
         let mut done = vec![false; proposing.len()];
         // 2026-09-25: Draft confidences (D-Cut's ranking key) are requested only
         // when `dcut_enabled`.
-        let want_conf = sched.levers.dcut_enabled;
+        let want_conf = sched.levers.dcut_enabled
+            || metrale_model_layers::speculative::draft_stop::draft_stop_logprob().is_some();
         let mut conf: Vec<Vec<f32>> = Vec::new();
         if group_cap >= 2 && ladder_nd >= 1 {
             for group in batchable.chunks(group_cap) {

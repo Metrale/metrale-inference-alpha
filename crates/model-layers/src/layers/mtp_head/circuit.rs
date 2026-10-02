@@ -54,8 +54,8 @@ impl MtpHead {
                 "the target post-norm (METRALE_MTP_TARGET_POSTNORM)",
             ),
             (
-                levers.draft_conf_tau > 0.0,
-                "draft confidence (METRALE_MTP_DRAFT_CONF)",
+                crate::speculative::draft_stop::draft_stop_logprob().is_some(),
+                "the draft confidence stop (--draft-confidence-stop)",
             ),
             (
                 levers.shadow_topk > 0,

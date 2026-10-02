@@ -58,15 +58,7 @@ const GUARDED: [(&str, &[&str]); 49] = [
     ("layers/mtp_head/forward.rs", &[]),
     ("layers/mtp_head/forward/attend.rs", &[]),
     ("layers/mtp_head/forward/host_logits.rs", &[]),
-    (
-        "layers/mtp_head/draft_proposer.rs",
-        &[
-            // 2026-09-25: Reads `METRALE_MTP_DRAFT_CONF` through `draft_conf_tau`. Its only caller,
-            // `run_mtp_propose_inner` (model-engine impl_b3.rs), calls it only when the resolved
-            // `draft_conf_tau` lever is above 0.
-            "last_confidence",
-        ],
-    ),
+    ("layers/mtp_head/draft_proposer.rs", &[]),
     ("../../model-engine/src/model/impl_b3.rs", &[]),
     (
         "../../model-engine/src/model/trait_impl/decode_a2.rs",

@@ -230,7 +230,7 @@ impl TransformerModel {
                 }
             }
         }
-        let drafts = proposer.propose(
+        proposer.propose(
             token,
             self.mtp_hidden_save,
             position,
@@ -241,26 +241,7 @@ impl TransformerModel {
             draft_embed_target,
             grammar_bitmask,
             self.dflash_hidden_save,
-        )?;
-        // 2026-09-25: Confidence clamp (METRALE_MTP_DRAFT_CONF, 0 = off when
-        // unset): when the drafter's chain confidence is below tau, discard
-        // the drafts so the next step decodes serially. The drafter rows this
-        // propose wrote are trimmed with `after_verify(0)`, as a full
-        // rejection would trim them.
-        let tau = self.levers.draft_conf_tau;
-        if tau > 0.0
-            && !drafts.is_empty()
-            && let Some(conf) = proposer.last_confidence()
-            && conf < tau
-        {
-            tracing::debug!(
-                "MTP draft skipped: chain confidence {conf:.3} < tau {tau:.3}                  (pos {position}, {} drafts trimmed)",
-                drafts.len(),
-            );
-            proposer.after_verify(0, prop_state.as_mut(), stream)?;
-            return Ok(Vec::new());
-        }
-        Ok(drafts)
+        )
     }
 
     /// 2026-09-25: DFlash prefill capture: copy `proc_count` BF16 rows of

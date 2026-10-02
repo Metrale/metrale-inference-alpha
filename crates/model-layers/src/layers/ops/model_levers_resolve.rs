@@ -18,9 +18,6 @@ pub(super) fn from_values(
     mut present: impl FnMut(&str) -> bool,
     shadow_topk: usize,
     drafter: crate::drafter_context::DrafterContext,
-    // 2026-09-25: Passed in, like `shadow_topk` and `drafter`, because
-    // `speculative::draft_conf_tau()` reads the process environment and this function must not.
-    draft_conf_tau: f32,
     // 2026-09-25: The compiled target's `[defaults] decode_split_silu`
     // (`target_defaults::declared()` in `from_env`), passed in so a test can choose it.
     default_split_silu: bool,
@@ -68,7 +65,6 @@ pub(super) fn from_values(
         mtp_kv_exact: opt_in(value("METRALE_MTP_KV_EXACT").as_deref()),
         moe_fp8_grouped_decode_target: opt_in(value("METRALE_FP8_MOE_GROUPED_DECODE").as_deref()),
         fp8_attn_m32: opt_in(value("METRALE_FP8_ATTN_M32").as_deref()),
-        draft_conf_tau,
         // 2026-09-25: The target's declaration (`kernels/<hw>/HARDWARE.toml` `[defaults]
         // decode_split_silu`; undeclared is on, `crates/kernels/build_defaults.rs`) arrives as
         // `default_split_silu`. The presence of `METRALE_NO_DECODE_SPLIT_SILU`, any value,
@@ -152,13 +148,12 @@ impl ModelLevers {
             |var| metrale_config::levers::var_os(var).is_some(),
             crate::speculative::shadow_topk(),
             crate::drafter_context::resolve_from_env(),
-            crate::speculative::draft_conf_tau(),
             crate::layers::ops::target_defaults::declared().decode_split_silu,
         )
     }
 
     /// 2026-09-25: What `from_values` returns with no variable set, a target that declares
-    /// `decode_split_silu` on, `DrafterContext::BOTH`, no draft-confidence floor and no shadow
+    /// `decode_split_silu` on, `DrafterContext::BOTH` and no shadow
     /// top-k: every opt-in off, every opt-out on. Tests build a context with this instead of
     /// mutating the environment.
     pub fn defaults() -> Self {
