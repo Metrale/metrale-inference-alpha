@@ -22,18 +22,25 @@ use metrale_model_layers::layers::qwen3_ssm::Qwen3SsmLayer;
 /// 2026-09-28: Adopt W8A8 on every layer that holds block-scaled FP8 attention or GDN weights and
 /// whose first projection the declared-precision policy wants run W8A8
 /// (`WeightQuantPolicy::fp8_block_scaled_decode_act(module) == Some(Fp8)`). While
-/// `kernel_caps().w8a8_block_scaled_decode` is off, nothing is adopted, and the log says once
-/// that the declared FP8 activations run W8A16. Returns `(attention layers, GDN layers)`
+/// `kernel_caps().w8a8_block_scaled_decode` is off and the experts decode W8A8, nothing is
+/// adopted, and the log says once that the declared FP8 activations run W8A16. Returns `(attention layers, GDN layers)`
 /// adopted.
 pub(super) fn adopt_declared(
     layers: &mut [Box<dyn TransformerLayer>],
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
 ) -> Result<(usize, usize)> {
+    // 2026-10-02: The block-scaled W8A8 cap is off because, stacked with the expert W8A8 on
+    // Qwen3.6-35B-A3B-FP8, it flipped a greedy tie in the ssm-state-poisoning gate; either family
+    // alone passed (`layers::kernel_caps`). A model whose experts do not decode W8A8 (the NVFP4
+    // checkpoint's W4A16 experts) has no such stack, so its declared FP8 attention and GDN
+    // activations run W8A8 as declared.
+    let mut caps = metrale_model_layers::layers::kernel_caps();
+    caps.w8a8_block_scaled_decode |= !metrale_model_layers::layers::moe_expert_fp8_act();
     let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
         metrale_model_layers::layers::weight_quantization(),
         config.quantization_config.as_ref(),
-        metrale_model_layers::layers::kernel_caps(),
+        caps,
     );
     if !policy.follows_plan() || config.tp_world_size > 1 {
         return Ok((0, 0));

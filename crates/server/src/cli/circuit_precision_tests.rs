@@ -2,8 +2,9 @@
 
 //! 2026-10-02: `met circuit precision` on the checked-out tree: one MoE layer of each
 //! Qwen3.6-35B-A3B checkpoint lists the pipeline each node needs and what runs it (the NVFP4
-//! experts and shared expert as gb10 gaps, the FP8 recipe's fused expert kernels), and a glob
-//! that matches no node is an error.
+//! experts and shared expert on the grouped tensor-core NVFP4 point, the FP8 recipe's fused
+//! expert kernels), the NVFP4 recipe's plans have no gap at any planned width, and a glob that
+//! matches no node is an error.
 //!
 //! Owner: server CLI tests.
 //! Invariants: the tests read the repository at the workspace root and write nothing.
@@ -53,7 +54,7 @@ const W4A16: &str =
 const BF16: &str = "act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none";
 
 #[test]
-fn the_nvfp4_35b_moe_layer_lists_its_w4a16_experts_as_gb10_gaps() {
+fn the_nvfp4_35b_moe_layer_runs_its_w4a16_experts_on_the_grouped_tensor_core_point() {
     let a = args(
         fixture("nvidia--Qwen3.6-35B-A3B-NVFP4"),
         CircuitPrecision::Declared,
@@ -68,21 +69,60 @@ fn the_nvfp4_35b_moe_layer_lists_its_w4a16_experts_as_gb10_gaps() {
             "l3.moe_ffn.experts_gate_up expert_gate_up: bf16,i32 -> [gather bf16 | {W4A16}] -> bf16"
         ),
         "l3.moe_ffn.experts_act silu_mul: bf16 -> [compute f32] -> bf16".into(),
-        format!("l3.moe_ffn.experts_down expert_down: bf16,i32 -> [{W4A16}] -> bf16"),
         format!("l3.moe_ffn.shared_gate_up linear:shared_gate_up: bf16 -> [{W4A16}] -> bf16"),
         "l3.moe_ffn.shared_act silu_mul: bf16 -> [compute f32] -> bf16".into(),
+        format!("l3.moe_ffn.experts_down expert_down: bf16,i32 -> [{W4A16}] -> bf16"),
         format!("l3.moe_ffn.shared_down linear:shared_down: bf16 -> [{W4A16}] -> bf16"),
         format!("l3.moe_ffn.shared_gate linear:shared_gate: bf16 -> [{BF16}] -> f32 (rule)"),
         "l3.moe_ffn.blend blend: bf16,f32,bf16,f32 (rule) -> [scatter f32 | combine f32] -> bf16"
             .into(),
         "l3.moe_ffn.add residual_add: bf16,bf16 -> [compute f32] -> bf16".into(),
     ];
+    // 2026-10-02: Plan order: the gate+up launch group (routed and shared, with both SiLUs),
+    // then the down group.
     assert_eq!(nodes(&text), want);
-    assert_eq!(
-        text.matches("<- gap: no kernel of gb10 covers it").count(),
-        6,
-        "{text}"
-    );
+    assert_eq!(text.matches("<- gap:").count(), 0, "{text}");
+    for kernel in [
+        "<- moe_gate_up_act_grouped_nvfp4_tc: moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc",
+        "<- moe_down_act_grouped_nvfp4_tc: moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc",
+    ] {
+        assert!(text.contains(kernel), "{kernel} missing:\n{text}");
+    }
+}
+
+/// 2026-10-02: Every node of the NVFP4 35B recipe (`qwen3.6-35b-a3b-nvfp4-declared`) has a kernel
+/// whose declared pipeline is the required one, at every mode and a spread of the instance's
+/// planned widths: the listing errors on a refused pipeline, and a gap prints a `gap:` line.
+#[test]
+fn the_nvfp4_35b_recipe_plans_have_no_gap() {
+    let cases = [
+        (CircuitMode::Decode, 1),
+        (CircuitMode::Draft, 1),
+        (CircuitMode::Verify, 2),
+        (CircuitMode::Verify, 4),
+        (CircuitMode::MultiSeq, 2),
+        (CircuitMode::MultiSeq, 64),
+        (CircuitMode::MultiSeq, 128),
+    ];
+    for (mode, rows) in cases {
+        let mut a = args(
+            "nvidia/Qwen3.6-35B-A3B-NVFP4".into(),
+            CircuitPrecision::Recipe,
+            "*",
+        );
+        a.mode = mode;
+        a.rows = Some(rows);
+        let text = listing(&root(), &a).unwrap_or_else(|e| panic!("{mode:?} {rows}: {e:#}"));
+        assert!(
+            text.contains("lm_head_dtype=nvfp4"),
+            "{mode:?} {rows}: not the recipe"
+        );
+        assert_eq!(
+            text.matches("<- gap:").count(),
+            0,
+            "{mode:?} {rows}:\n{text}"
+        );
+    }
 }
 
 #[test]

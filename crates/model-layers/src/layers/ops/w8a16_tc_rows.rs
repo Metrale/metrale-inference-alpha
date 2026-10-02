@@ -148,6 +148,7 @@ mod tests {
     use super::*;
 
     const CU: &str = include_str!("../../../../../kernels/gb10/common/w8a16_tc_rows.cu");
+    const ROWS: &str = include_str!("../../../../../kernels/gb10/common/tc_rows.cuh");
 
     /// 2026-09-28: The grid covers `n / W8A16_TC_ROWS_COLS` CTAs of 128 threads and the widest
     /// entry point takes 64 rows: both must match the kernel (`TR_WARPS` warps of 16 columns,
@@ -155,15 +156,18 @@ mod tests {
     #[test]
     fn launch_matches_the_kernel() {
         assert!(
-            CU.contains("#define TR_WARPS 4\n") && CU.contains("#define TR_COLS (TR_WARPS * 16)\n")
+            ROWS.contains("#define TR_WARPS 4\n")
+                && ROWS.contains("#define TR_COLS (TR_WARPS * 16)\n")
         );
         assert_eq!(W8A16_TC_ROWS_COLS, 4 * 16);
-        assert!(
-            CU.contains("tr_block<8, 2>(A, B, block_scale, C, M, N, K, lda, ldc, blockIdx.x);")
-        );
+        assert!(CU.contains(
+            "tr_block<Fp8Block128, 8, 2>(A, {B, block_scale}, C, M, N, K, lda, ldc, blockIdx.x);"
+        ));
         // 2026-09-30: The chunked entry runs the 64-row body per chunk of `W8A16_TC_ROWS_MAX_M`.
         assert!(CU.contains("const unsigned int chunks = (M + 63) / 64;"));
-        assert!(CU.contains("tr_block<8, 2>(A + (unsigned long long)chunk * 64 * lda"));
+        assert!(
+            CU.contains("tr_block<Fp8Block128, 8, 2>(A + (unsigned long long)chunk * 64 * lda")
+        );
         assert_eq!(W8A16_TC_ROWS_MAX_M, 8 * 8);
         for entry in [
             "w8a16_tc_rows_16(",

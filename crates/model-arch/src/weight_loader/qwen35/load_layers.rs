@@ -8,6 +8,7 @@
 //! Invariants: none beyond the types.
 
 pub(crate) mod attention_arms;
+mod declared;
 mod expert_plan;
 mod fp8_attention_arms;
 pub(crate) mod linear_attn_arms;
@@ -151,6 +152,8 @@ pub(super) fn load_layers(
         variant,
         quant_format,
     );
+    // 2026-10-02: The `--weight-quantization declared` answers (`declared.rs`).
+    let declared = declared::Declared::new(config, store, native_fp8, modelopt_mixed_precision);
 
     // 2026-09-25: Bytes of the transposed MoE prefill tables: gate, up and down (packed FP4
     // plus one scale byte per 16 values) for every expert of every layer. When they exceed
@@ -268,7 +271,9 @@ pub(super) fn load_layers(
         // coarse for the router. Measured 2026-05-25: at late layers the top-8 routing weights
         // sit within [0.105, 0.168], a range narrower than one NVFP4 step. Every other variant
         // quantizes the gate to NVFP4.
-        let gate_nvfp4 = if native_fp8 {
+        // 2026-10-02: Under `declared`, a router the checkpoint leaves unquantized stays BF16
+        // for every variant.
+        let gate_nvfp4 = if native_fp8 || declared.router_bf16(&lp) {
             None
         } else {
             Some(quantize_to_nvfp4(
@@ -288,6 +293,8 @@ pub(super) fn load_layers(
         // `METRALE_FRANKENSTEIN_DECODE_VIA_PREFILL=1` runs MoE decode through `forward_prefill`
         // (`moe/forward.rs`).
         moe_layer.is_dflash_capture_layer = config.dflash_capture_layers.contains(&i);
+        // 2026-10-02: The checkpoint's own NVFP4 experts under `declared`.
+        declared.mark_nvfp4_experts(&mut moe_layer, &lp, i, variant, plan.fp8_experts)?;
         if i == 0 && (holo_moe_gateup_fp4() || holo_moe_down_fp4()) && holo_fast_moe_mode.is_none()
         {
             tracing::warn!(
@@ -395,7 +402,11 @@ pub(super) fn load_layers(
             LayerType::FullAttention
                 if ((native_fp8
                     && proj_is_native_fp8(store, &format!("{lp}.self_attn.q_proj")))
-                    || native_modelopt_attn)
+                    || native_modelopt_attn
+                    || declared.fp8(
+                        &format!("{lp}.self_attn"),
+                        &["q_proj", "k_proj", "v_proj", "o_proj"],
+                    ))
                     && !(force_nvfp4_all || fp4_proj_decode) =>
             {
                 let parts = LayerIn {
@@ -435,12 +446,17 @@ pub(super) fn load_layers(
                     post_attn_norm,
                     ffn,
                 };
+                let declared_fp8_ssm = declared.fp8(
+                    &format!("{lp}.linear_attn"),
+                    &["in_proj_qkv", "in_proj_z", "out_proj"],
+                );
                 let layer = linear_attn_route::build_linear_attention(
                     &cx,
                     &lp,
                     i,
                     force_nvfp4_all,
                     fp4_proj_decode,
+                    declared_fp8_ssm,
                     parts,
                 )?;
                 layers.push(layer);

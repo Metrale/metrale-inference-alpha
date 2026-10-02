@@ -13,6 +13,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::weight_map::{Fp8Weight, QuantizedWeight, WeightQuantFormat};
 
+use super::legs::{Leg, hi_lo_rows};
 use super::{H, INTER, TOP_K};
 
 pub(crate) struct Rng(pub(crate) u64);
@@ -234,33 +235,11 @@ pub(crate) fn close(got: &[f64], want: &[f64], what: &str) -> Result<()> {
     Ok(())
 }
 
-/// 2026-09-27: The configurations `forward_nvfp4_grouped_decode` launches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Leg {
-    AllNvfp4,
-    Nvfp4,
-    Nvfp4GateUp,
-}
-
-impl Leg {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::AllNvfp4 => "all-nvfp4",
-            Self::Nvfp4 => "nvfp4",
-            Self::Nvfp4GateUp => "nvfp4-gate-up",
-        }
-    }
-    pub(crate) fn fp8_shared(self) -> bool {
-        self != Self::AllNvfp4
-    }
-    pub(crate) fn fp8_down(self) -> bool {
-        self == Self::Nvfp4GateUp
-    }
-}
-
 pub(crate) struct Kernels {
     pub(crate) gate_up: KernelHandle,
     pub(crate) down: KernelHandle,
+    pub(crate) gate_up_tc: KernelHandle,
+    pub(crate) down_tc: KernelHandle,
     pub(crate) fp8_gate_up: KernelHandle,
     pub(crate) fp8_down: KernelHandle,
     pub(crate) sort: KernelHandle,
@@ -342,9 +321,25 @@ fn experts(
         )?;
     }
     let nv_shared = if leg.fp8_shared() { 0 } else { n };
+    let (gu, gu_geo, dn, dn_geo) = if leg.tc() {
+        (
+            k.gate_up_tc,
+            ops::NVFP4_GROUPED_GATE_UP_TC,
+            k.down_tc,
+            ops::NVFP4_GROUPED_DOWN_TC,
+        )
+    } else {
+        (
+            k.gate_up,
+            ops::NVFP4_GROUPED_GATE_UP_SCALAR,
+            k.down,
+            ops::NVFP4_GROUPED_DOWN_SCALAR,
+        )
+    };
     ops::moe_expert_gate_up_act_nvfp4_grouped(
         g,
-        k.gate_up,
+        gu,
+        gu_geo,
         b.input,
         w.gate_t,
         w.up_t,
@@ -408,7 +403,8 @@ fn experts(
     }
     ops::moe_expert_down_act_nvfp4_grouped(
         g,
-        k.down,
+        dn,
+        dn_geo,
         b.act,
         w.down_t,
         b.down_out,
@@ -481,7 +477,11 @@ pub(crate) fn run(
     };
     Ok((
         read(g, b.output, m * H * 2)?,
-        f32s(&read(g, b.act, te * INTER * 4)?),
+        if leg.tc() {
+            hi_lo_rows(&read(g, b.act, te * INTER * 4)?, INTER)
+        } else {
+            f32s(&read(g, b.act, te * INTER * 4)?)
+        },
         read(g, b.down_out, te * H * 2)?,
         read(g, b.sh_out, m * H * 2)?,
         u32s(read(g, b.sort.sorted_token_ids, te * 4)?),

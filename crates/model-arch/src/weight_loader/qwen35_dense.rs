@@ -78,7 +78,7 @@ fn proj_is_native_fp8(store: &WeightStore, prefix: &str) -> bool {
 /// A per-row `[N, 1]` scale returns false: read as a grid, row `n` would take the scale
 /// in cell `n/128`. Such a projection is dequantized instead
 /// (`dequant_fp8_blockscaled_to_bf16` infers `[1, K]` blocks from the scale's shape).
-fn proj_is_fp8_any_scale(store: &WeightStore, prefix: &str) -> bool {
+pub(super) fn proj_is_fp8_any_scale(store: &WeightStore, prefix: &str) -> bool {
     let Ok(w) = store.get(&format!("{prefix}.weight")) else {
         return false;
     };

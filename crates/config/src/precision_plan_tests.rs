@@ -118,6 +118,38 @@ fn modelopt_quantized_layers_outrank_config_groups() {
     );
 }
 
+/// 2026-10-02: What the qwen35 loader reads from nvidia/Qwen3.6-35B-A3B-NVFP4 under
+/// `declared`: FP8 attention and GDN projections (per-tensor, static activations), NVFP4 W4A16
+/// routed and shared experts, and an unquantized router, shared-expert gate and GDN `a`/`b`.
+#[test]
+fn nvidia35_declares_fp8_projections_nvfp4_experts_bf16_router() {
+    let p = plan("nvidia35");
+    for m in [
+        format!("{L}.3.self_attn.q_proj"),
+        format!("{L}.3.self_attn.o_proj"),
+        format!("{L}.0.linear_attn.in_proj_qkv"),
+        format!("{L}.0.linear_attn.in_proj_z"),
+        format!("{L}.0.linear_attn.out_proj"),
+    ] {
+        let got = p.resolve(&m);
+        assert_eq!(got.label(), "W8A8", "{m}");
+        assert!(got.weight.expect("w").is_fp8(), "{m}");
+    }
+    for m in [
+        format!("{L}.0.mlp.experts"),
+        format!("{L}.0.mlp.shared_expert.down_proj"),
+    ] {
+        assert_eq!(p.resolve(&m).label(), "W4A16", "{m}");
+    }
+    for m in [
+        format!("{L}.0.mlp.gate"),
+        format!("{L}.0.mlp.shared_expert_gate"),
+        format!("{L}.0.linear_attn.in_proj_a"),
+    ] {
+        assert_eq!(p.resolve(&m), LayerPrecision::UNQUANTIZED, "{m}");
+    }
+}
+
 /// 2026-09-28: Qwen/Qwen3.6-35B-A3B-FP8: block-scaled E4M3 weights, dynamic E4M3
 /// activations per token group of 128; `modules_to_not_convert` stays BF16.
 #[test]

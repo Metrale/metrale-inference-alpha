@@ -319,17 +319,39 @@ pub(super) fn check_kernel_target(
 /// 2026-09-30: A fixed `--activation-quantization` for any family publishes canonical: its
 /// single-order kernels are that mode's W8A16 and NVFP4-head paths (`--no-canonical-tiers` is
 /// refused beside it by `validate_serve_args`).
+/// 2026-10-02: A MoE checkpoint whose attention or GDN projections the `--weight-quantization`
+/// policy serves at declared FP8 weights (nvidia/Qwen3.6-35B-A3B-NVFP4 under `declared`) counts
+/// as FP8 here: its W8A16 projections take the tile order the FP8 MoE validated, and its NVFP4
+/// experts are row-invariant on the grouped decode either way.
 pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
     use metrale_model_layers::layers::{RowTiers, publish_row_tiers, resolve_row_tiers};
     if metrale_model_layers::layers::any_fixed() {
         publish_row_tiers(RowTiers::Canonical);
         return;
     }
+    let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
+        metrale_model_layers::layers::weight_quantization(),
+        config.quantization_config.as_ref(),
+        metrale_model_layers::layers::kernel_caps(),
+    );
+    // 2026-10-02: `weight_prefix` is set when the weights are opened, after this runs, so a
+    // Qwen3.5/3.6 checkpoint's `model.language_model` names are tried beside the default ones.
+    let fp8_projections = (0..config.num_hidden_layers).any(|i| {
+        [
+            config.layer_prefix(i),
+            format!("model.language_model.layers.{i}"),
+        ]
+        .iter()
+        .any(|lp| {
+            policy.wants_fp8_weights(&format!("{lp}.self_attn.q_proj"))
+                || policy.wants_fp8_weights(&format!("{lp}.linear_attn.in_proj_qkv"))
+        })
+    });
     publish_row_tiers(resolve_row_tiers(
         args.no_canonical_tiers,
         std::env::var_os("METRALE_ROW_EXACT_TIERS").is_some(),
         std::env::var_os("METRALE_CANONICAL_TIERS").is_some(),
-        config.num_experts > 0 && canonicalize_model_quant(config) == "fp8",
+        config.num_experts > 0 && (canonicalize_model_quant(config) == "fp8" || fp8_projections),
     ));
 }
 

@@ -356,7 +356,7 @@ impl TransformerModel {
             lm_head_nvfp4_t,
             lm_head_fp8,
             lm_head_q6k: None,
-            lm_head_fp8_rows: super::lm_head_fp8_rows::LmHeadFp8Rows::resolve(gpu.as_ref()),
+            lm_head_rows: super::lm_head_fp8_rows::LmHeadRows::resolve(gpu.as_ref()),
             // 2026-09-25: Computed before `layers` moves into the struct, since
             // the veto is a fold over the layers.
             decode_graph_veto: layers.iter().any(|l| l.decode_graph_unsupported()),

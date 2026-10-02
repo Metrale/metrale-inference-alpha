@@ -427,5 +427,5 @@ fn both_gdn_arms_plan_and_the_route_arm_is_the_off_plan() {
         );
         checked += 1;
     }
-    assert_eq!(checked, 3, "golden instances checked");
+    assert_eq!(checked, 4, "golden instances checked");
 }

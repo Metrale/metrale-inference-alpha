@@ -157,17 +157,19 @@ pub struct MtpHead {
     k_norm: DenseWeight,
 
     // 2026-09-25: FFN storage. An NVFP4 MoE head uses `moe_nvfp4`; an FP8/BF16 MoE
-    // head uses `moe_fp8` when the checkpoint ships FP8 experts, else the
-    // per-expert `*_generic` weights. A dense-FFN head leaves all of them `None`.
+    // head uses `moe_grouped` when the checkpoint ships FP8 experts (2026-10-02: or a BF16
+    // head BF16 experts), else the per-expert `*_generic` weights. A dense-FFN head leaves
+    // all of them `None`.
     moe_nvfp4: Option<MoeLayer>,
     moe_experts_generic: Option<Vec<(ProjectionWeight, ProjectionWeight, ProjectionWeight)>>,
     moe_shared_generic: Option<(ProjectionWeight, ProjectionWeight, ProjectionWeight)>,
     /// 2026-09-25: The checkpoint's FP8 block-scaled routed and shared experts as a
     /// [`MoeLayer`] with FP8 pointer tables, built for an FP8/BF16 head when
-    /// `MtpWeights::fp8_experts` is present. `forward_one` runs it through
-    /// `MoeLayer::forward`, and the batched propose through
-    /// `forward_fp8_grouped_decode`. `None` means `moe_forward_generic` runs.
-    moe_fp8: Option<MoeLayer>,
+    /// `MtpWeights::fp8_experts` is present (2026-10-02: or, for a BF16 head, its BF16
+    /// experts with BF16 tables). `forward_one` runs it through `MoeLayer::forward`, and the
+    /// batched propose through `forward_grouped_decode`. `None` means `moe_forward_generic`
+    /// runs.
+    moe_grouped: Option<MoeLayer>,
     moe_gate: DenseWeight,
     shared_expert_gate: DenseWeight,
 
@@ -386,6 +388,8 @@ pub(crate) use forward_batch::{LmHeadRowsArm, lm_head_rows_arm, tc_lm_head};
 mod forward_batch_ffn;
 mod moe_forward;
 mod new;
+mod new_bf16_moe;
+pub use new_bf16_moe::{mtp_experts_nvfp4, set_mtp_experts_nvfp4_from_cli};
 mod new_native_fp8_moe;
 mod prefill;
 pub(crate) mod row_dispatch;

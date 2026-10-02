@@ -83,6 +83,16 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             args.nemotron_shared_expert_e4m3
         );
     }
+    // 2026-10-02: `--mtp-experts-nvfp4` is always published: `MtpHead::new` reads it.
+    let draft_nvfp4 =
+        metrale_model_layers::layers::set_mtp_experts_nvfp4_from_cli(args.mtp_experts_nvfp4);
+    if draft_nvfp4 != args.mtp_experts_nvfp4 {
+        tracing::warn!(
+            "mtp-experts-nvfp4 was already resolved ({draft_nvfp4}); the command line's ({}) \
+             did NOT take effect",
+            args.mtp_experts_nvfp4
+        );
+    }
     if args.w4a4_downcast_wide && !args.w4a4_downcast {
         tracing::warn!("--w4a4-downcast-wide needs --w4a4-downcast; it did NOT take effect");
     }

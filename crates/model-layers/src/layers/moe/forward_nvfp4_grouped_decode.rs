@@ -22,15 +22,33 @@
 
 use super::*;
 
-/// 2026-09-27: Widest row count this path admits, the grouped FP8 decode's.
+/// 2026-09-27: Widest row count this path admits on the CUDA-core expert kernels, the grouped
+/// FP8 decode's.
 pub const NVFP4_GROUPED_DECODE_MAX_ROWS: usize =
     super::forward_fp8_grouped_decode::FP8_GROUPED_DECODE_MAX_ROWS;
 
+/// 2026-10-02: Widest row count on the tensor-core expert kernels, the grouped FP8 tensor-core
+/// decode's: one verify of 128 sequences at one draft.
+pub const NVFP4_GROUPED_DECODE_TC_MAX_ROWS: usize =
+    super::forward_fp8_grouped_decode::FP8_GROUPED_DECODE_TC_MAX_ROWS;
+
 /// 2026-09-27: The two expert kernels of this path, looked up with `try_kernel`; a zero handle
 /// declines it. The sort, router and blend are the grouped FP8 decode's.
+/// 2026-10-02: `gate_up_tc` / `down_tc` are the tensor-core twins (`moe_nvfp4_grouped_tc.cu`),
+/// taken when both resolved unless `METRALE_NO_MOE_NVFP4_TC` is present. `declared_experts`: the
+/// layer's routed and shared experts are the checkpoint's own NVFP4 (declared W4A16, not a
+/// requantized copy), so decode takes this path at every width whatever the
+/// `--expert-quantization` tier (which governs FP8 checkpoints only); set by the qwen35 loader
+/// under `--weight-quantization declared` ([`MoeLayer::set_declared_nvfp4_experts`]).
 pub(super) struct Nvfp4GroupedKernels {
     pub gate_up: KernelHandle,
     pub down: KernelHandle,
+    pub gate_up_tc: KernelHandle,
+    pub down_tc: KernelHandle,
+    pub declared_experts: bool,
+    /// 2026-10-02: The BF16 point's pair (`moe_bf16_grouped_tc.cu`, `forward_bf16_grouped_decode.rs`).
+    pub bf16_gate_up_tc: KernelHandle,
+    pub bf16_down_tc: KernelHandle,
 }
 
 impl Nvfp4GroupedKernels {
@@ -38,24 +56,86 @@ impl Nvfp4GroupedKernels {
     pub(super) fn resolve(gpu: &dyn GpuBackend) -> Self {
         use super::super::try_kernel;
         const MODULE: &str = "moe_nvfp4_grouped";
+        const TC: &str = "moe_nvfp4_grouped_tc";
         Self {
             gate_up: try_kernel(gpu, MODULE, "moe_expert_gate_up_act_nvfp4_grouped"),
             down: try_kernel(gpu, MODULE, "moe_expert_down_act_nvfp4_grouped"),
+            gate_up_tc: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc"),
+            down_tc: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc"),
+            declared_experts: false,
+            bf16_gate_up_tc: try_kernel(
+                gpu,
+                "moe_bf16_grouped_tc",
+                "moe_expert_gate_up_act_bf16_grouped_tc",
+            ),
+            bf16_down_tc: try_kernel(
+                gpu,
+                "moe_bf16_grouped_tc",
+                "moe_expert_down_act_bf16_grouped_tc",
+            ),
+        }
+    }
+
+    /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
+    /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
+    fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
+        if nvfp4_grouped_tc_enabled()
+            && self.gate_up_tc.0 != 0
+            && self.down_tc.0 != 0
+            && ops::nvfp4_grouped_tc_shape_ok(inter, hidden, ops::NVFP4_GROUPED_GATE_UP_TC)
+            && ops::nvfp4_grouped_tc_shape_ok(hidden, inter, ops::NVFP4_GROUPED_DOWN_TC)
+        {
+            Nvfp4GroupedLaunch {
+                gate_up: self.gate_up_tc,
+                gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC,
+                down: self.down_tc,
+                down_geometry: ops::NVFP4_GROUPED_DOWN_TC,
+                max_rows: NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
+            }
+        } else {
+            Nvfp4GroupedLaunch {
+                gate_up: self.gate_up,
+                gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_SCALAR,
+                down: self.down,
+                down_geometry: ops::NVFP4_GROUPED_DOWN_SCALAR,
+                max_rows: NVFP4_GROUPED_DECODE_MAX_ROWS,
+            }
         }
     }
 }
 
-/// 2026-09-27: Shape admission without a GPU: `m` in `1..=NVFP4_GROUPED_DECODE_MAX_ROWS`,
+/// 2026-10-02: The expert kernels one grouped NVFP4 decode launches, and the widest row count
+/// they admit.
+struct Nvfp4GroupedLaunch {
+    gate_up: KernelHandle,
+    gate_up_geometry: ops::Fp8GroupedGeometry,
+    down: KernelHandle,
+    down_geometry: ops::Fp8GroupedGeometry,
+    max_rows: usize,
+}
+
+/// 2026-10-02: The grouped NVFP4 decode takes the tensor-core expert kernels unless
+/// `METRALE_NO_MOE_NVFP4_TC` is present (a debugging kill switch: the CUDA-core kernels). Read
+/// once per process. The two pairs differ in summation order, and in the SiLU product's
+/// carrier (FP32 against BF16 hi + lo), so their bits differ; each is row-invariant.
+fn nvfp4_grouped_tc_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_NVFP4_TC").is_none())
+}
+
+/// 2026-09-27: Shape admission without a GPU: `m` in `1..=max_rows` (2026-10-02: the selected
+/// expert kernels' widest, `NVFP4_GROUPED_DECODE_MAX_ROWS` or `NVFP4_GROUPED_DECODE_TC_MAX_ROWS`),
 /// `hidden % 32 == 0` (gate+up reads 32-element chunks) and `inter % 16 == 0` (down reads
 /// 16-element blocks), and a shared expert as wide as a routed one (the shared SiLU product
 /// shares the routed layout).
 pub fn nvfp4_grouped_decode_shape_ok(
     m: usize,
+    max_rows: usize,
     hidden: usize,
     inter: usize,
     shared_inter: usize,
 ) -> bool {
-    (1..=NVFP4_GROUPED_DECODE_MAX_ROWS).contains(&m)
+    (1..=max_rows).contains(&m)
         && hidden >= 32
         && hidden.is_multiple_of(32)
         && inter >= 16
@@ -65,7 +145,8 @@ pub fn nvfp4_grouped_decode_shape_ok(
 
 impl MoeLayer {
     /// 2026-09-27: Whether `forward_nvfp4_grouped_decode` serves `m` rows on this layer: an
-    /// NVFP4 `--expert-quantization` tier is in force, the routed projections that tier decodes
+    /// NVFP4 `--expert-quantization` tier is in force or (2026-10-02) the experts are the
+    /// checkpoint's declared NVFP4 (`set_declared_nvfp4_experts`), the routed projections that tier decodes
     /// as NVFP4 are present in the row-major decode layout, the shared expert (and, under
     /// `nvfp4-gate-up`, the routed down projections) are there in FP8 or NVFP4 as the tier
     /// reads them, the per-row router applies (BF16 softmax gate, no correction bias,
@@ -97,16 +178,24 @@ impl MoeLayer {
         let routed = self.weights.experts.first();
         let gate_up_ok =
             routed.is_some_and(|e| !e.gate_proj.weight.is_null() && !e.up_proj.weight.is_null());
-        let down_ok = if tier.nvfp4_down() {
-            self.nvfp4_grouped.down.0 != 0
-                && !self.down_ptrs.packed_ptrs.is_null()
+        let native = self.nvfp4_grouped.declared_experts;
+        let launch = self.nvfp4_grouped.select(h as u32, inter as u32);
+        let down_ok = if tier.nvfp4_down() || native {
+            !self.down_ptrs.packed_ptrs.is_null()
                 && routed.is_some_and(|e| !e.down_proj.weight.is_null())
         } else {
             fp8_shared_ok && self.fp8_down_weight_ptrs.is_some()
         };
-        tier.nvfp4_decode()
-            && nvfp4_grouped_decode_shape_ok(m, h, inter, cfg.shared_expert_intermediate_size)
-            && self.nvfp4_grouped.gate_up.0 != 0
+        (tier.nvfp4_decode() || native)
+            && nvfp4_grouped_decode_shape_ok(
+                m,
+                launch.max_rows,
+                h,
+                inter,
+                cfg.shared_expert_intermediate_size,
+            )
+            && launch.gate_up.0 != 0
+            && launch.down.0 != 0
             && gate_up_ok
             && down_ok
             && (fp8_shared_ok || nvfp4_shared_ok)
@@ -141,6 +230,24 @@ impl MoeLayer {
             && b.logits_bytes() >= need.shared_act
             && b.attn_output_bytes() >= need.row_hidden
             && b.moe_output_bytes() >= need.row_hidden
+    }
+
+    /// 2026-10-02: Mark this layer's routed and shared experts as the checkpoint's declared
+    /// NVFP4, so `nvfp4_grouped_decode_ok` admits it under every `--expert-quantization` tier.
+    /// Refused for a layer that also holds FP8 experts: the tier decides between those.
+    pub fn set_declared_nvfp4_experts(&mut self) -> Result<()> {
+        self.set_draft_nvfp4_experts()
+    }
+
+    /// 2026-10-02: The same mark for a drafter whose experts were requantized to NVFP4 for drafting
+    /// (`MtpHead::new_nvfp4_draft_moe`): the grouped NVFP4 decode serves them at every width.
+    pub fn set_draft_nvfp4_experts(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            self.fp8_shared_expert.is_none() && self.fp8_down_weight_ptrs.is_none(),
+            "set_declared_nvfp4_experts: the layer holds FP8 experts"
+        );
+        self.nvfp4_grouped.declared_experts = true;
+        Ok(())
     }
 
     /// 2026-09-27: The FP8 shared expert this path runs instead of the NVFP4 one, when the
@@ -287,9 +394,11 @@ impl MoeLayer {
             )?;
         }
         let nvfp4_shared_rows = if fp8_shared.is_some() { 0 } else { n };
+        let launch = self.nvfp4_grouped.select(h, inter);
         ops::moe_expert_gate_up_act_nvfp4_grouped(
             ctx.gpu,
-            self.nvfp4_grouped.gate_up,
+            launch.gate_up,
+            launch.gate_up_geometry,
             input,
             tables(&self.gate_ptrs),
             tables(&self.up_ptrs),
@@ -331,7 +440,8 @@ impl MoeLayer {
         } else {
             ops::moe_expert_down_act_nvfp4_grouped(
                 ctx.gpu,
-                self.nvfp4_grouped.down,
+                launch.down,
+                launch.down_geometry,
                 act,
                 tables(&self.down_ptrs),
                 expert_down_out,
@@ -368,28 +478,5 @@ impl MoeLayer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 2026-09-27: The admitted widths and the shape terms, each refused alone.
-    #[test]
-    fn shape_admission() {
-        assert!(nvfp4_grouped_decode_shape_ok(1, 2048, 512, 512));
-        assert!(nvfp4_grouped_decode_shape_ok(
-            NVFP4_GROUPED_DECODE_MAX_ROWS,
-            2048,
-            512,
-            512
-        ));
-        assert!(!nvfp4_grouped_decode_shape_ok(0, 2048, 512, 512));
-        assert!(!nvfp4_grouped_decode_shape_ok(
-            NVFP4_GROUPED_DECODE_MAX_ROWS + 1,
-            2048,
-            512,
-            512
-        ));
-        assert!(!nvfp4_grouped_decode_shape_ok(4, 2048 + 16, 512, 512));
-        assert!(!nvfp4_grouped_decode_shape_ok(4, 2048, 512 + 8, 512 + 8));
-        assert!(!nvfp4_grouped_decode_shape_ok(4, 2048, 512, 1024));
-    }
-}
+#[path = "forward_nvfp4_grouped_decode_tests.rs"]
+mod tests;

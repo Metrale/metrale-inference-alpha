@@ -77,7 +77,10 @@ defaults:
   # margin, rather than a separate live run.
   max_model_len: 262144
   kv_cache_dtype: fp8
-  gpu_memory_utilization: 0.88
+  # 0.85, GB10's ceiling (0.90 froze a box). The 0.88 budget this recipe had is 3.7 GB larger
+  # (107.1 vs 103.4 GB); the fp8-mtp flagship's measured ~105 GB steady state at 256K less the
+  # ~14 GB weight and ~18.7 GB KV-pool savings above is ~72 GB, inside 103.4 GB.
+  gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
   # Measured optimum for this checkpoint (see description): K=1 = 116.5

@@ -86,8 +86,21 @@ impl MtpHead {
 
         // 2026-09-25: MoE: an NVFP4 head gets a fused `MoeLayer`; an FP8 or
         // BF16 head gets a `MoeLayer` on the checkpoint's FP8 tables when the
-        // weights carry them (`moe_fp8`), else per-expert weights.
+        // weights carry them (`moe_grouped`), else per-expert weights.
         let mut weights = weights;
+        // 2026-10-02: `--mtp-experts-nvfp4` applies to one head form only: a BF16 MoE head on
+        // BF16 experts. Asked for on any other head, the serve refuses rather than ignore it.
+        let draft_nvfp4 = super::mtp_experts_nvfp4();
+        anyhow::ensure!(
+            !draft_nvfp4
+                || (dense_ffn_generic.is_none()
+                    && quant == MtpQuantization::Bf16
+                    && weights.fp8_experts.is_none()),
+            "--mtp-experts-nvfp4 needs a BF16 MoE MTP head on BF16 experts (this head: \
+             {quant:?}, dense FFN {}, FP8 experts {})",
+            dense_ffn_generic.is_some(),
+            weights.fp8_experts.is_some()
+        );
         let moe_parts = if dense_ffn_generic.is_some() {
             (None, None, None, None)
         } else {
@@ -196,7 +209,17 @@ impl MtpHead {
                     let moe = Self::new_native_fp8_moe(&mut weights, config, gpu)?;
                     (None, None, None, Some(moe))
                 }
-                MtpQuantization::Fp8 | MtpQuantization::Bf16 => {
+                // 2026-10-02: A BF16 head on BF16 experts: the grouped BF16 MoE layer.
+                MtpQuantization::Bf16 => {
+                    let moe = if draft_nvfp4 {
+                        Self::new_nvfp4_draft_moe(&weights, config, gpu, absmax_k, nvfp4_k, stream)?
+                    } else {
+                        Self::new_bf16_moe(&weights, config, gpu)?
+                    };
+                    (None, None, None, Some(moe))
+                }
+                // 2026-10-02: An FP8 head on BF16 experts: per-expert FP8 projections.
+                MtpQuantization::Fp8 => {
                     let mut experts_g = Vec::with_capacity(weights.experts.len());
                     for (i, de) in weights.experts.iter().enumerate() {
                         let gate_proj = q(&de.gate_proj, inter, h)?;
@@ -220,7 +243,7 @@ impl MtpHead {
                 }
             }
         };
-        let (moe_nvfp4, moe_experts_generic, moe_shared_generic, moe_fp8) = moe_parts;
+        let (moe_nvfp4, moe_experts_generic, moe_shared_generic, moe_grouped) = moe_parts;
 
         // 2026-09-25: One attention layer. BF16 KV for BF16 and FP8 heads, FP8
         // KV for NVFP4 heads; the FP8 KV forward passes unit K/V scales
@@ -294,7 +317,7 @@ impl MtpHead {
             "dense FFN"
         } else if moe_nvfp4.is_some() {
             "MoE (NVFP4 fused)"
-        } else if moe_fp8.is_some() {
+        } else if moe_grouped.is_some() {
             "MoE (native FP8 tables; batched propose grouped)"
         } else {
             "MoE (per-expert)"
@@ -362,7 +385,7 @@ impl MtpHead {
             moe_nvfp4,
             moe_experts_generic,
             moe_shared_generic,
-            moe_fp8,
+            moe_grouped,
             moe_gate: weights.moe_gate,
             shared_expert_gate: weights.shared_expert_gate,
             dense_ffn_generic,

@@ -20,6 +20,7 @@ pub(super) fn build_linear_attention(
     i: usize,
     force_nvfp4_all: bool,
     fp4_proj_decode: bool,
+    declared_fp8_ssm: bool,
     parts: LayerIn,
 ) -> Result<Box<dyn TransformerLayer>> {
     let LoadCx {
@@ -57,19 +58,23 @@ pub(super) fn build_linear_attention(
         variant
     };
     let layer = match variant {
-        _ if native_modelopt_ssm => super::linear_attn_arms::build_linear_attention_fp8(
-            i,
-            store,
-            lp,
-            gpu,
-            variant,
-            config,
-            h,
-            stream,
-            input_norm,
-            post_attn_norm,
-            ffn,
-        )?,
+        // 2026-10-02: `declared_fp8_ssm`: the checkpoint declares FP8 for the GDN projections
+        // under `--weight-quantization declared` (`load_layers`).
+        _ if native_modelopt_ssm || (declared_fp8_ssm && !(force_nvfp4_all || fp4_proj_decode)) => {
+            super::linear_attn_arms::build_linear_attention_fp8(
+                i,
+                store,
+                lp,
+                gpu,
+                variant,
+                config,
+                h,
+                stream,
+                input_norm,
+                post_attn_norm,
+                ffn,
+            )?
+        }
         // 2026-09-25: `METRALE_HOLO_FP4_PROJ_DECODE=1` sends the Holo ModelOpt SSM to
         // the NVFP4 builder instead.
         _ if modelopt_mixed_precision && !fp4_proj_decode => {

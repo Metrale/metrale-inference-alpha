@@ -133,6 +133,8 @@ class and exact citation.
 | `w8a16_full_gdn_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:101-167,257-323; ml/ops/w8a16_gemm_pipelined_m32.rs:318-371 (w8a16_gemm_pipelined_by_m above 64 rows) |
 | `moe_router_gemv` | reference | ml/moe/forward/route.rs:36 |
 | `moe_topk_softmax` | reference | ml/moe/forward/route.rs:117-128 (ties go to the lower expert index) |
+| `moe_gate_up_shared_bf16` | reference | ml/moe/forward.rs:182-215 (BF16 experts, set_bf16_experts); ml/mtp_head/new_bf16_moe.rs:23-56 |
+| `moe_silu_down_shared_bf16` | reference | ml/moe/forward.rs:216-234 |
 | `moe_gate_up_shared_fp8` | reference | ml/moe/forward.rs:235-262 (grid y 0..7 routed experts, y = 8 the shared expert); ml/moe/init.rs:431-434 |
 | `moe_silu_down_shared_fp8` | reference | ml/moe/forward.rs:263-304; ml/moe/init.rs:435-438 |
 | `moe_weighted_sum_blend` | reference | ml/moe/forward.rs:446-476 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP, ml/moe/forward/ep_reduce.rs:12-50 |
@@ -141,6 +143,10 @@ class and exact citation.
 | `moe_gate_up_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:300-321; k/moe_shared_expert_fused_fp8_grouped.cu:17-22 (writes the FP32 SiLU product; per row equal to moe_shared_expert_fused_fp8.cu bit for bit) |
 | `moe_down_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:322-340 |
 | `moe_blend_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:364-380 |
+| `moe_gate_up_act_grouped_nvfp4_tc` | reference | ml/moe/forward_nvfp4_grouped_decode.rs:143-220 (admits m = 1..=256 when declared_experts), :379-397; ml/moe/forward.rs:33-37 (one row); ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:106-123, ml/qwen3_ssm/trait_decode_multi_seq.rs:144-146, ml/qwen3_ssm/trait_decode_batched.rs:308-312 (many rows); k/tc_weight_formats.cuh:101-140 (Nvfp4G16: BF16(E2M1 x E4M3) exact, s2 once) |
+| `moe_down_act_grouped_nvfp4_tc` | reference | ml/moe/forward_nvfp4_grouped_decode.rs:422-440 (the shared expert's rows in the same launch) |
+| `moe_grouped_nvfp4_tc_wide` | reference | ml/moe/forward_nvfp4_grouped_decode.rs:270-310 (per-row router and moe_fp8_grouped_sort), :379-440 (the two expert launches), :442-458 (the grouped blend); NVFP4_GROUPED_DECODE_TC_MAX_ROWS, :32 |
+| `lm_head_nvfp4_w4a16_rows` | reference | mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode) |
 | `moe_prefill_fp8_w8a8_wide` | reference | ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 and ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (forward_prefill above the grouped cap); ml/moe/forward_prefill_fp8.rs:113-165 (shared W8A8 first, input quantized once), :166-265 (router: dense_gemm_router below MOE_ROUTER_RT_MIN_ROWS = 1024, ml/moe/helpers_c.rs:246-283), :313-395; ml/moe/forward_prefill_fp8/gate_up.rs:57-160 and down.rs:40-140 (ctx.decode_step declines the adaptive and E4M3 arms, ml/moe/adaptive_fp8.rs:105-116); ml/moe/forward_prefill_fp8/combine.rs:40-60 (W8A8 activations: not row-invariant with paths A and B) |
 | `lm_head_bf16_gemv` | reference | mm/impl_a3_lm_head.rs:392-402 (use_fp32_logits is false, mm/impl_a1/kernels.rs:200) |
 | `lm_head_bf16_batchm` | reference | me/lm_head_batched.rs:133-162 (m <= lm_head_batchm_max = 8, kernels/gb10/HARDWARE.toml:115); mm/impl_a3_lm_head.rs:150-202 (verify); per row bit-identical to dense_gemv_bf16, k/dense_gemv_bf16_batchm.cu:16 |
@@ -170,6 +176,12 @@ class and exact citation.
 | `rms_norm_quant_nvfp4` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs) |
 | `w8a8_act_quant_row` | reference | ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV) |
 | `w8a8_act_quant_silu_row` | reference | ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch) |
+| `w8a8_act_quant_g128` | reference | ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant, Block128 at :308: one scale per row and 128-K group) |
+| `w8a8_gemv_blk128_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb2` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb4` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb16` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
 | `w8a8_gemv_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
 | `w8a8_gemv_gate_up_mb1_ku8` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
 | `w8a8_gemv_mb2` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |

@@ -326,7 +326,7 @@ impl MtpHead {
                     .as_ref()
                     .unwrap()
                     .forward(normed2, ctx, stream)?,
-                MtpQuantization::Fp8 | MtpQuantization::Bf16 => match self.moe_fp8.as_ref() {
+                MtpQuantization::Fp8 | MtpQuantization::Bf16 => match self.moe_grouped.as_ref() {
                     // 2026-09-25: The same `MoeLayer` the batched propose runs
                     // grouped, here for one row.
                     Some(moe) => moe.forward(normed2, ctx, stream)?,

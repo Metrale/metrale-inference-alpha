@@ -260,6 +260,8 @@ impl TransformerModel {
         let v = self.config.vocab_size;
         if self.lm_head_fp8_run(normed, padded_n, logits, stream)? {
             // 2026-09-28: FP8 E4M3 head, one weight pass per launch (`lm_head_fp8_rows.rs`).
+        } else if self.lm_head_nvfp4_rows_run(normed, padded_n, logits, stream)? {
+            // 2026-10-02: Declared W4A16 NVFP4 head (`lm_head_nvfp4_rows.rs`).
         } else if let Some(ref nvfp4) = self.lm_head_nvfp4 {
             // 2026-09-25: At `padded_n >= 5` a tile GEMM over the padded transposed twin
             // (`lm_head_nvfp4_t`) serves the head; below that, or without it, the batched GEMV

@@ -4,8 +4,8 @@
 //! `forward_batch_position`) and the decision that names which FFN a head
 //! can batch. The dense arm (`dense_ffn_generic`) runs gate/up/down as n-row
 //! projections through `proj_rows` with SiLU over the `[n, inter]` block;
-//! the native-FP8 MoE arm (`moe_fp8`) runs one
-//! `MoeLayer::forward_fp8_grouped_decode` for the n rows.
+//! the grouped MoE arm (`moe_grouped`, FP8 or BF16 experts) runs one
+//! `MoeLayer::forward_any_grouped_decode` for the n rows.
 //!
 //! Owner: model-layers (MTP head).
 //! Invariants:
@@ -30,7 +30,7 @@ use crate::layers::ops;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProposeFfnArm {
     Dense,
-    MoeFp8Grouped,
+    MoeGrouped,
 }
 
 impl ProposeFfnArm {
@@ -38,7 +38,7 @@ impl ProposeFfnArm {
     fn name(self) -> &'static str {
         match self {
             Self::Dense => "DENSE",
-            Self::MoeFp8Grouped => "MOE-FP8-GROUPED",
+            Self::MoeGrouped => "MOE-GROUPED",
         }
     }
 }
@@ -49,11 +49,11 @@ impl ProposeFfnArm {
 pub(super) fn propose_ffn_arm(
     dense_rows: bool,
     silu_mul_k: bool,
-    moe_fp8: bool,
+    moe_grouped: bool,
 ) -> Option<ProposeFfnArm> {
-    match (dense_rows && silu_mul_k, moe_fp8) {
+    match (dense_rows && silu_mul_k, moe_grouped) {
         (true, false) => Some(ProposeFfnArm::Dense),
-        (false, true) => Some(ProposeFfnArm::MoeFp8Grouped),
+        (false, true) => Some(ProposeFfnArm::MoeGrouped),
         _ => None,
     }
 }
@@ -72,7 +72,7 @@ impl MtpHead {
         propose_ffn_arm(
             dense_rows_ok(self.dense_ffn_generic.as_ref()),
             self.moe_silu_mul_k.is_some(),
-            self.moe_fp8.is_some(),
+            self.moe_grouped.is_some(),
         )
     }
 
@@ -123,13 +123,14 @@ impl MtpHead {
                 self.proj_rows(gpu, gate_out, down_w, ffn_out, n, h as u32, inter, stream)?;
                 ffn_out
             }
-            Some(ProposeFfnArm::MoeFp8Grouped) => {
-                let Some(moe) = self.moe_fp8.as_ref() else {
+            Some(ProposeFfnArm::MoeGrouped) => {
+                let Some(moe) = self.moe_grouped.as_ref() else {
                     anyhow::bail!("propose_batch: no FP8 MoE layer (propose_ffn_arm lied)");
                 };
-                // 2026-09-25: Errors unless `fp8_grouped_decode_ok` holds
-                // (`propose_batch` checks it first); writes `moe_output`.
-                moe.forward_fp8_grouped_decode(normed2, n, ctx, stream)?;
+                // 2026-09-25: Errors unless `any_grouped_decode_ok` holds
+                // (`propose_batch` checks it first); writes `moe_output`. 2026-10-02: FP8 or
+                // BF16 experts (`MoeLayer::forward_any_grouped_decode`).
+                moe.forward_any_grouped_decode(normed2, n, ctx, stream)?;
                 ctx.buffers.moe_output()
             }
             None => anyhow::bail!("propose_batch: no batchable FFN (can_propose_batch lied)"),
@@ -161,12 +162,12 @@ mod tests {
     fn native_fp8_moe_head_batches_through_the_grouped_arm() {
         assert_eq!(
             propose_ffn_arm(false, false, true),
-            Some(ProposeFfnArm::MoeFp8Grouped)
+            Some(ProposeFfnArm::MoeGrouped)
         );
         // 2026-09-25: The dense SiLU kernel does not affect the MoE arm.
         assert_eq!(
             propose_ffn_arm(false, true, true),
-            Some(ProposeFfnArm::MoeFp8Grouped)
+            Some(ProposeFfnArm::MoeGrouped)
         );
     }
 
@@ -194,7 +195,7 @@ mod tests {
     fn arm_names_are_distinct_for_the_log_line() {
         assert_ne!(
             ProposeFfnArm::Dense.name(),
-            ProposeFfnArm::MoeFp8Grouped.name()
+            ProposeFfnArm::MoeGrouped.name()
         );
     }
 }

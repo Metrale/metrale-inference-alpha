@@ -55,7 +55,9 @@ pub use glm_vit::{GlmVit, GlmVitBlock, GlmVitMerger};
 pub use moe::MoeLayer;
 // 2026-09-28: The MoE experts' decode activation cell (`moe/fp8_grouped_tc_w8a8.rs`).
 pub use moe::{moe_expert_fp8_act, set_moe_expert_fp8_act};
-pub use mtp_head::{MtpHead, MtpQuantization, mtp_drafter_prefill_enabled};
+pub use mtp_head::{
+    MtpHead, MtpQuantization, mtp_drafter_prefill_enabled, set_mtp_experts_nvfp4_from_cli,
+};
 
 pub use qwen3_attention::Qwen3AttentionLayer;
 pub use qwen3_ssm::Qwen3SsmLayer;

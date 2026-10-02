@@ -59,15 +59,28 @@ fn lightning_bf16_projections_at_many_rows_are_a_wxay_w16a16_policy_variant() {
 fn lightning_fp8_per_tensor_scales_are_wxay_policy_variants() {
     let r = report();
     for site in ["mamba.in_proj", "mamba.out_proj"] {
-        let f = row(&r, Mode::Decode, 1, site)
+        // 2026-10-02: The tensor-core row tiles (`tc_rows`, W8A16 on a block-128 grid) are now the
+        // primary match: a per-tensor scale is their weight-scale policy (the loader repeats it
+        // over the grid). The W8A8 family remains the activation-policy match.
+        let p = row(&r, Mode::Decode, 1, site)
             .primary
             .as_ref()
             .expect("classified");
         assert_eq!(
-            (f.family.as_str(), f.class),
-            ("wxay", Class::PolicyVariant),
+            (p.family.as_str(), p.class),
+            ("tc_rows", Class::PolicyVariant),
             "{site}"
         );
+        assert_eq!(
+            diff(p, "weight"),
+            (
+                "fp8/tensor".into(),
+                "fp8/block128x128".into(),
+                ParamKind::Policy
+            )
+        );
+        let f = finding(row(&r, Mode::Decode, 1, site), "wxay");
+        assert_eq!(f.class, Class::PolicyVariant, "{site}");
         assert_eq!(
             diff(f, "weight"),
             ("fp8/tensor".into(), "fp8/channel".into(), ParamKind::Policy)
@@ -96,22 +109,21 @@ fn lightning_experts_are_a_format_and_activation_policy_of_the_tc_grouped_kernel
         } else {
             Mode::MultiSeq
         };
+        // 2026-10-02: The family now has an NVFP4 g16 point (moe_nvfp4_grouped_tc.cu), so the
+        // weight format no longer differs; only the epilogue (ReLU² against SiLU·mul) does.
         let f = finding(row(&r, mode, rows, "moe.experts_up"), "moe_grouped_tc");
         assert_eq!(f.class, Class::PolicyVariant);
-        assert_eq!(
-            diff(f, "weight"),
-            (
-                "nvfp4/g16".into(),
-                "fp8/block128x128".into(),
-                ParamKind::Policy
-            )
-        );
+        assert!(f.diffs.iter().all(|d| d.param != "weight"), "{:?}", f.diffs);
         assert_eq!(
             diff(f, "epilogue"),
             ("relu2".into(), "silu_mul".into(), ParamKind::Policy)
         );
         let down = finding(row(&r, mode, rows, "moe.experts_down"), "moe_grouped_tc");
-        assert_eq!(diff(down, "weight").0, "nvfp4/g16");
+        assert!(
+            down.diffs.iter().all(|d| d.param != "weight"),
+            "{:?}",
+            down.diffs
+        );
     }
 }
 

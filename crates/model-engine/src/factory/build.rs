@@ -408,6 +408,8 @@ pub fn build_model(
     }
     // 2026-09-28: Declared-W8A8 FP8 head (model/lm_head_fp8_rows.rs).
     model.install_declared_lm_head_w8a8()?;
+    // 2026-10-02: Declared-W4A16 NVFP4 head on the row tiles (model/lm_head_nvfp4_rows.rs).
+    model.install_declared_lm_head_w4a16_rows()?;
 
     // 2026-09-25: Step 6b: the DeepSeek-V4 MTP proposer, built after `new()`
     // because it needs the model's GPU backend. `--dflash` conflicts with

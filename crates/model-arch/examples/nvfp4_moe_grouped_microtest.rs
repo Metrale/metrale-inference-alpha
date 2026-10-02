@@ -23,7 +23,7 @@
 //! times of the expert kernels over 20 launches are printed per M.
 //!
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
-//!     --example nvfp4_moe_grouped_microtest -- [experts] [zipf_alpha]
+//!     --example nvfp4_moe_grouped_microtest -- [experts] [zipf_alpha] [iters]
 //!
 //! Arguments: routed experts (default 32, so rows share experts; 256 is the model's) and a
 //! Zipf exponent for the routing (default 0.9).
@@ -36,13 +36,18 @@ use metrale_model_layers::layers::ops;
 
 #[path = "common/nvfp4_moe_fixture.rs"]
 mod fixture;
+#[path = "common/nvfp4_moe_legs.rs"]
+mod legs;
 use fixture::*;
+use legs::*;
 
 const H: usize = 2048;
 const INTER: usize = 512;
 const TOP_K: usize = 8;
-const MAX_M: usize = 64;
-const WIDTHS: [usize; 10] = [1, 2, 3, 4, 5, 8, 13, 16, 32, 63];
+// 2026-10-02: The buffers' width: the tensor-core leg's envelope. Each leg checks its own
+// envelope (`Leg::max_m`), at the widths of WIDTHS it admits.
+const MAX_M: usize = 256;
+const WIDTHS: [usize; 15] = [1, 2, 3, 4, 5, 8, 13, 16, 32, 63, 64, 96, 128, 200, 255];
 
 /// 2026-09-27: The f64 host reference at M = 4: routed SiLU products and down outputs per
 /// sorted position, and each token's shared-expert output.
@@ -90,6 +95,9 @@ fn host_reference(
 fn main() -> Result<()> {
     let num_experts: usize = arg(1, 32);
     let alpha: f64 = arg(2, 0.9);
+    // 2026-10-02: Launches per timed width (third argument; default 20). A large count makes each
+    // width's window long enough for an NVML energy integral, printed as `window` lines.
+    let iters: usize = arg(3, 20);
     let set = metrale_kernels::ptx_for_exact_target("qwen3.6-35b-a3b", "nvfp4")
         .context("no compiled qwen3.6-35b-a3b/nvfp4 kernel set")?;
     let backend = MetraleCudaBackend::new(0, &set.modules)?;
@@ -98,6 +106,14 @@ fn main() -> Result<()> {
     let k = Kernels {
         gate_up: g.kernel("moe_nvfp4_grouped", "moe_expert_gate_up_act_nvfp4_grouped")?,
         down: g.kernel("moe_nvfp4_grouped", "moe_expert_down_act_nvfp4_grouped")?,
+        gate_up_tc: g.kernel(
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_gate_up_act_nvfp4_grouped_tc",
+        )?,
+        down_tc: g.kernel(
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_down_act_nvfp4_grouped_tc",
+        )?,
         fp8_gate_up: g.kernel(FP8, "moe_expert_gate_up_act_fp8_grouped")?,
         fp8_down: g.kernel(FP8, "moe_expert_down_act_fp8_grouped")?,
         sort: g.kernel("moe_fp8_grouped_sort", "moe_fp8_grouped_sort")?,
@@ -204,25 +220,51 @@ fn main() -> Result<()> {
 
     let mut failures = 0usize;
     let row = H * 2;
-    for leg in [Leg::AllNvfp4, Leg::Nvfp4, Leg::Nvfp4GateUp] {
-        let full = run(g, &k, &w, &b, leg, MAX_M, num_experts, 0)?.0;
+    // 2026-10-02: Expert weight bytes one call streams for the first m rows: every distinct
+    // routed expert's gate, up and down plus the shared expert, NVFP4 (packed + scales).
+    let expert_bytes = (3 * INTER * H) as f64 * (0.5 + 1.0 / 16.0);
+    let streamed = |m: usize| {
+        let mut seen = vec![false; num_experts];
+        for &e in &routing[..m * TOP_K] {
+            seen[e as usize] = true;
+        }
+        (seen.iter().filter(|s| **s).count() + 1) as f64 * expert_bytes
+    };
+    let mut blended: Vec<(Leg, Vec<u8>)> = Vec::new();
+    for leg in [Leg::AllNvfp4, Leg::Nvfp4, Leg::Nvfp4GateUp, Leg::AllNvfp4Tc] {
+        let max_m = leg.max_m();
+        let full = run(g, &k, &w, &b, leg, max_m, num_experts, 0)?.0;
         let mut bad_widths = Vec::new();
         let mut times = Vec::new();
-        for &m in &WIDTHS {
-            let r = run(g, &k, &w, &b, leg, m, num_experts, 20)?;
+        for &m in WIDTHS.iter().filter(|&&m| m <= max_m) {
+            let t0 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64());
+            let r = run(g, &k, &w, &b, leg, m, num_experts, iters)?;
+            if iters > 20 {
+                // 2026-10-02: The window an NVML energy log is cut on (`ITERS` microbench mode).
+                println!("window {} M{m} {t0:.4}", leg.name());
+            }
             if (0..m).any(|t| r.0[t * row..(t + 1) * row] != full[t * row..(t + 1) * row]) {
                 bad_widths.push(m);
             }
-            times.push(format!("M{m}:{:.0}us", r.6));
+            times.push(format!(
+                "M{m}:{:.0}us/{:.0}GB/s",
+                r.6,
+                streamed(m) / r.6 / 1e3
+            ));
         }
-        let live = (0..MAX_M - 1)
+        if matches!(leg, Leg::AllNvfp4 | Leg::AllNvfp4Tc) {
+            blended.push((leg, full[..ops_rows::SCALAR_MAX * row].to_vec()));
+        }
+        let live = (0..max_m - 1)
             .filter(|t| full[t * row..(t + 1) * row] != full[(t + 1) * row..(t + 2) * row])
             .count();
         let r4 = run(g, &k, &w, &b, leg, 4, num_experts, 0)?;
         let reference = host_reference(&w, leg, &input_f, &r4, 4, num_experts);
         let ok = bad_widths.is_empty() && live > 0 && reference.is_ok();
         println!(
-            "{:<14} rows equal to M={MAX_M} at every M: {}  oracle live: {live}/{}  host reference \
+            "{:<14} rows equal to M={max_m} at every M: {}  oracle live: {live}/{}  host reference \
              at M=4: {}  {}",
             leg.name(),
             if bad_widths.is_empty() {
@@ -230,7 +272,7 @@ fn main() -> Result<()> {
             } else {
                 format!("NO at {bad_widths:?}")
             },
-            MAX_M - 1,
+            max_m - 1,
             match &reference {
                 Ok(()) => "PASS".to_string(),
                 Err(e) => format!("FAIL {e:#}"),
@@ -238,6 +280,25 @@ fn main() -> Result<()> {
             times.join(" ")
         );
         failures += usize::from(!ok);
+    }
+    // 2026-10-02: Informative: how far the tensor-core leg's blended rows sit from the CUDA-core
+    // leg's (different summation order and SiLU carrier), relative to each row's largest value.
+    if let [(_, a), (_, c)] = &blended[..] {
+        let (fa, fc) = (bf16_to_f64(a), bf16_to_f64(c));
+        let worst = fa
+            .chunks_exact(H)
+            .zip(fc.chunks_exact(H))
+            .map(|(x, y)| {
+                let scale = x.iter().fold(1e-30f64, |m, v| m.max(v.abs()));
+                x.iter()
+                    .zip(y)
+                    .fold(0f64, |m, (p, q)| m.max((p - q).abs() / scale))
+            })
+            .fold(0f64, f64::max);
+        println!(
+            "all-nvfp4 vs all-nvfp4-tc blended, rows 0..{}: worst |diff| / row max = {worst:.2e}",
+            ops_rows::SCALAR_MAX
+        );
     }
     println!(
         "nvfp4_moe_grouped_microtest experts={num_experts} alpha={alpha}: {}",

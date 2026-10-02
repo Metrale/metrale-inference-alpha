@@ -22,20 +22,24 @@ use metrale_model_layers::weight_map::{Fp8Weight, WeightQuantFormat};
 
 use super::types::TransformerModel;
 
-/// 2026-09-28: The multi-row FP8 head kernels, and the W8A8 head when installed.
-pub(crate) struct LmHeadFp8Rows {
+/// 2026-09-28: The multi-row FP8 head kernels, and the W8A8 head when installed. 2026-10-02:
+/// `nvfp4_rows`, set when the NVFP4 head runs the declared W4A16 row tiles
+/// (`lm_head_nvfp4_rows.rs`).
+pub(crate) struct LmHeadRows {
     rt8: KernelHandle,
     rt16: KernelHandle,
     w8a8: Option<(W8a8Ctx, W8a8Weight)>,
+    pub(super) nvfp4_rows: bool,
 }
 
-impl LmHeadFp8Rows {
+impl LmHeadRows {
     pub(crate) fn resolve(gpu: &dyn GpuBackend) -> Self {
         let rt = |f| metrale_model_layers::layers::try_kernel(gpu, "fp8_gemv_rt", f);
         Self {
             rt8: rt("fp8_gemv_rowscale_batch8_rt2"),
             rt16: rt("fp8_gemv_rowscale_batch16_rt2"),
             w8a8: None,
+            nvfp4_rows: false,
         }
     }
 }
@@ -78,7 +82,7 @@ impl TransformerModel {
             ctx.available(&w, 1),
             "W8A8 lm_head kernels or scratch unavailable"
         );
-        self.lm_head_fp8_rows.w8a8 = Some((ctx, w));
+        self.lm_head_rows.w8a8 = Some((ctx, w));
         Ok(())
     }
 
@@ -96,7 +100,7 @@ impl TransformerModel {
         };
         let gpu = self.gpu.as_ref();
         let (h, v) = (self.config.hidden_size, self.config.vocab_size);
-        if let Some((ref ctx, ref w)) = self.lm_head_fp8_rows.w8a8 {
+        if let Some((ref ctx, ref w)) = self.lm_head_rows.w8a8 {
             // 2026-09-28: Any row count: `W8A8_MAX_ROWS`-row calls (the scratch's capacity); the
             // quantization is per row, so chunking does not change any row's bits.
             let mut done = 0;
@@ -111,7 +115,7 @@ impl TransformerModel {
             }
             return Ok(true);
         }
-        let k = &self.lm_head_fp8_rows;
+        let k = &self.lm_head_rows;
         let mut done = 0;
         while done < rows {
             let (x, out, left) = (

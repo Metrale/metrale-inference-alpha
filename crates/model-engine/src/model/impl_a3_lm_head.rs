@@ -133,7 +133,9 @@ impl TransformerModel {
         // 2026-09-25: The caller picks the destination, so co-dispatched
         // prefill streams can each write their own logits rows.
         let logits = logits_dst;
-        if self.lm_head_q6k_run(hidden, num_tokens, logits, stream)? {
+        if self.lm_head_q6k_run(hidden, num_tokens, logits, stream)?
+            || self.lm_head_nvfp4_rows_run(hidden, num_tokens as usize, logits, stream)?
+        {
             return Ok(logits);
         }
         // 2026-09-27: Under a row-invariant tier policy an NVFP4 head takes the
@@ -343,6 +345,9 @@ impl TransformerModel {
             && self.lmhead_vocab_shard(v).is_none()
         {
             self.lm_head_project_batched(hidden, 1, h as usize, 2, stream)?;
+        } else if !fp32 && self.lm_head_nvfp4_rows_run(hidden, 1, logits, stream)? {
+            // 2026-10-02: Declared W4A16 NVFP4 head (`lm_head_nvfp4_rows.rs`).
+            return Ok(logits);
         } else if self.lm_head_fp8.is_some() {
             // 2026-09-25: FP8 E4M3 head (`--lm-head-dtype fp8`). It has no
             // FP32-output variant; with `use_fp32_logits` false, `logits` is the

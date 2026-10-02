@@ -1,0 +1,46 @@
+recipe_version: "2"
+model: nvidia/Qwen3.6-35B-A3B-NVFP4
+runtime: metrale
+container: metrale/metrale-inference-gb10:latest
+max_nodes: 1
+
+metadata:
+  description: |
+    Qwen3.6-35B-A3B (nvidia ModelOpt NVFP4) at the checkpoint's DECLARED formats:
+    NVFP4 W4A16 routed and shared experts and lm_head, FP8 attention and GDN
+    projections (served at their FP8 weights, BF16 activations), BF16 router and
+    MTP head. The experts decode through the grouped NVFP4 tensor-core kernels at
+    every width (one summation order per row, 1..256 rows).
+
+    The same checkpoint vLLM 0.27.1 serves with its Marlin NVFP4 MoE backend, so
+    the two engines compare on identical weights.
+  maintainer: metrale
+  category: agent
+  model_params: 35B
+  model_dtype: nvfp4
+  quantization: nvfp4
+  kv_dtype: bf16
+
+defaults:
+  # The --activation-quantization routing this recipe was measured under: the engine default,
+  # each projection picking its activation precision by row count (the row-invariant modes are
+  # opt-in until evaluated).
+  activation_quantization: adaptive
+  # The checkpoint's own precision per layer (no requantization).
+  weight_quantization: declared
+  port: 8888
+  host: 0.0.0.0
+  max_model_len: 32768
+  kv_cache_dtype: bf16
+  gpu_memory_utilization: 0.85
+  scheduler: slai
+  speculative: true
+  num_drafts: 1
+  mtp_quantization: bf16
+  mtp_gate: force
+  enable_prefix_caching: true
+  # The checkpoint declares an NVFP4 (W4A16) head.
+  lm_head_dtype: nvfp4
+  kv_high_precision_layers: auto
+  tool_call_parser: qwen3_coder
+  tool_grammar: off

@@ -53,12 +53,16 @@ mod fp8_moe_grouped;
 mod fp8_moe_grouped_tc_w8a8;
 // 2026-09-27: The grouped NVFP4 MoE decode kernels (`moe/forward_nvfp4_grouped_decode.rs`).
 mod nvfp4_moe_grouped;
+// 2026-10-02: The BF16 point of the tensor-core grouped MoE decode.
+mod bf16_moe_grouped;
 // 2026-09-25: The 32-row M-tile twin of `w8a16_gemm_pipelined` and its by-M selector.
 mod w8a16_gemm_pipelined_m32;
 #[path = "ops/w8a8_decode.rs"]
 mod w8a8_decode;
 // 2026-09-28: The tensor-core row-tile W8A16 projection (`w8a16_tc_rows.cu`).
 mod w8a16_tc_rows;
+// 2026-10-02: Its NVFP4 W4A16 point (`w4a16_tc_rows.cu`).
+mod w4a16_tc_rows;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -217,6 +221,7 @@ mod w8a16_gemv_hopper_tests;
 mod wide_prefill;
 
 pub use activations::*;
+pub use bf16_moe_grouped::*;
 pub use dense_gemm_m16_bf16::*;
 pub use derived_weights::{Derivation, DerivedWeights};
 pub use dispatch_config::{CublasScope, GemmDispatch, parse_cublas_scope};
@@ -300,6 +305,7 @@ pub use ssm_gdn_wyn::*;
 pub use ssm_mamba::*;
 pub use ssm_preproc::*;
 pub use ssm_ssd::*;
+pub use w4a16_tc_rows::*;
 pub use w8a8_decode::*;
 pub use w8a16_gemm_m16::*;
 pub use w8a16_gemm_pipelined_m32::*;

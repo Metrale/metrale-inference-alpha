@@ -132,8 +132,8 @@ impl DraftProposer for MtpHead {
         // grouped FP8 decode's context terms (kill switch, FP32 routing, EP) are
         // checked here: a refusal falls back per sequence instead of failing
         // mid-chain, and is logged once per process.
-        if let Some(moe) = self.moe_fp8.as_ref()
-            && !moe.fp8_grouped_decode_ok(last_tokens.len(), ctx)
+        if let Some(moe) = self.moe_grouped.as_ref()
+            && !moe.any_grouped_decode_ok(last_tokens.len(), ctx)
         {
             static LOGGED: std::sync::Once = std::sync::Once::new();
             LOGGED.call_once(|| {

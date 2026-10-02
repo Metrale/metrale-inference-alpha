@@ -186,6 +186,19 @@ pub struct ServeSchedulingArgs {
     #[arg(long, default_value = "bf16")]
     pub mtp_quantization: String,
 
+    /// Draft on NVFP4 copies of a BF16 MoE MTP head's experts (default: false).
+    ///
+    /// The head's routed and shared experts are requantized from BF16 to NVFP4 at load and
+    /// run the grouped NVFP4 tensor-core decode; the router, attention, fc and draft LM head
+    /// keep the head's precision. Draft-only: the target model verifies every drafted token,
+    /// so only how many drafts are accepted moves. Under --exact-verify greedy output is
+    /// byte-identical with it on or off (measured on nvidia/Qwen3.6-35B-A3B-NVFP4); under the
+    /// default chunkwise verify, like any change in acceptance (--num-drafts included), it can
+    /// move greedy text. Refused on any other head (dense FFN, FP8 experts, or
+    /// --mtp-quantization other than bf16).
+    #[arg(long, default_value_t = false)]
+    pub mtp_experts_nvfp4: bool,
+
     /// Run the Nemotron-H shared expert's prefill projections on the E4M3 tile GEMM
     /// (default: false).
     ///

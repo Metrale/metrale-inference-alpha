@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-02: The formats each linear module of nvidia/Qwen3.6-35B-A3B-NVFP4 runs at under
+# `--weight-quantization declared` (recipe qwen3.6/qwen3.6-35b-a3b-nvfp4-declared).
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - The checkpoint (ModelOpt MIXED_PRECISION, hf_quant_config.json `quantized_layers`) declares
+#   W4A16_NVFP4 (group 16) for every routed expert, the shared expert and lm_head, and FP8
+#   (per-tensor weight scale, static per-tensor input scale) for q/k/v/o and linear_attn
+#   in_proj_qkv/in_proj_z/out_proj. The router, shared_expert_gate, in_proj_a/b and the whole
+#   MTP head (`exclude_modules` mtp*) are BF16.
+# - The FP8 projections are served at their FP8 weights through the native FP8 arms: the loader
+#   repeats the per-tensor scale over the 128x128 grid the kernels index
+#   (crates/model-layers/src/weight_map/loaders_fp8.rs `load_fp8_block_scaled_as_fp8weight`), and
+#   decode runs them W8A8 (FP8 activations, one scale per row and 128-K group: finer than the
+#   declared static per-tensor input scale), since the experts do not decode W8A8
+#   (qwen35/load_layers/w8a8_adopt.rs).
+# - The experts' down projections read the declared 16-bit activation (W4A16). The tensor-core
+#   kernel stages the SiLU product as BF16 hi + lo and runs one MMA on each
+#   (kernels/gb10/common/moe_nvfp4_grouped_tc.cu), so its MMAs read BF16 operands carrying about
+#   16 significant bits: at or above the declared activation, stated as bf16 as the FP8 point's
+#   identical epilogue is (KERNEL_FAMILIES.toml moe_grouped_tc).
+
+schema = 1
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "*.linear_attn.in_proj_b"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.linear_attn.in_proj_a"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.shared_expert_gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "mtp.lm_head"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+# 2026-10-02: The one-row drafter (the draft plan) runs the CUDA-core fused BF16 expert kernels
+# (moe_shared_expert_fused_bf16.cu, rules moe_*_shared_bf16), whose down projections read the
+# FP32 SiLU product: above the head's declared BF16. The batched propose (two or more rows, not a
+# plan of this instance) runs the BF16 point of moe_grouped_tc, whose down MMAs read the BF16
+# hi + lo pair.
+[[linear]]
+match = "mtp.layers.0.mlp.experts.*.down_proj"
+weight = "bf16"
+activation = "f32"
+
+[[linear]]
+match = "mtp.layers.0.mlp.shared_expert.down_proj"
+weight = "bf16"
+activation = "f32"
+
+[[linear]]
+match = "mtp.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.experts.*.down_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.shared_expert.down_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.experts.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.shared_expert.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*"
+weight = "fp8/block128x128"
+activation = "fp8/g128"

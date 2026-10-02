@@ -33,7 +33,8 @@ pub const KERNEL_QUANT: &str = "nvfp4";
 pub const POLICY_SOURCES: [(&str, &str); 11] = [
     (
         "row_tiers",
-        "canonical for FP8 routed experts, else by_rows (ml/row_tiers.rs:64-78)",
+        "canonical for FP8 routed experts or a MoE with FP8 projections, else by_rows \
+         (ml/row_tiers.rs:64-78)",
     ),
     (
         "kv_cache_dtype",
@@ -173,6 +174,13 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         .nodes
         .iter()
         .any(|n| n.op == OpKind::ExpertGateUp && matches!(n.weight, Some(Format::Fp8E4m3 { .. })));
+    // 2026-10-02: A MoE whose other projections are FP8 (nvidia/Qwen3.6-35B-A3B-NVFP4) is
+    // canonical too (crates/server/src/main_modules/serve_load/model_setup.rs `publish_row_tiers`).
+    let moe = c.nodes.iter().any(|n| n.op == OpKind::ExpertGateUp);
+    let fp8_projections = c.nodes.iter().any(|n| {
+        matches!(n.op, OpKind::Linear(_)) && matches!(n.weight, Some(Format::Fp8E4m3 { .. }))
+    });
+    let canonical = fp8_experts || (moe && fp8_projections);
     let head = c
         .nodes
         .iter()
@@ -186,10 +194,7 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
     // 2026-09-30: The two class settings are re-read from the device's class before any plan;
     // "class" never reaches a rule (policy_on_class refuses a class that does not state them).
     let settings: BTreeMap<String, String> = [
-        (
-            "row_tiers",
-            if fp8_experts { "canonical" } else { "by_rows" },
-        ),
+        ("row_tiers", if canonical { "canonical" } else { "by_rows" }),
         ("kv_cache_dtype", kv),
         ("lm_head_dtype", dtype_name(head)?),
         ("ssm_h_dtype", "f32"),

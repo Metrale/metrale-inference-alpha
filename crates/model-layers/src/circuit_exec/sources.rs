@@ -32,10 +32,14 @@ pub const CIRCUITS: [(&str, &str); 3] = [
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 2] = [
+pub const PRECISION: [(&str, &str); 3] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
+    ),
+    (
+        "qwen3.6-35b-a3b-nvfp4-declared",
+        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-nvfp4-declared.toml"),
     ),
     (
         "nemotron-3.5-lightning-30b-a3b-nvfp4",

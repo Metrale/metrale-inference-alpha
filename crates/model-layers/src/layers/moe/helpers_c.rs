@@ -29,8 +29,12 @@ impl MoeLayer {
         }
 
         // 2026-09-25: An installed BF16 shared expert is used as is; no FP8 copy is
-        // made of the NVFP4 placeholder beside it.
+        // made of the NVFP4 placeholder beside it. 2026-10-02: Nor of a checkpoint's own NVFP4
+        // shared expert under `--weight-quantization declared` (`set_declared_nvfp4_experts`):
+        // `fp8_gemm_n128` casts the activations to E4M3 unscaled, below the declared W4A16, so
+        // its prefill runs `w4a16_gemm_n128` on the transposed copies instead.
         if self.bf16_shared_expert.is_none()
+            && !self.nvfp4_grouped.declared_experts
             && !self.weights.shared_expert.gate_proj.is_null()
             && shared_inter > 0
         {

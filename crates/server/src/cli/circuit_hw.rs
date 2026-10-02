@@ -45,7 +45,7 @@ pub(crate) const MATRIX_CONFIGS: &str = "crates/circuit/tests/fixtures/checkpoin
 
 /// 2026-09-30: The models of the roadmap matrix. `recipe` where a golden recipe pins the formats
 /// (its gb10 cell is the golden plan); `declared` plans the checkpoint's own formats.
-pub(crate) const MATRIX_MODELS: [MatrixModel; 9] = [
+pub(crate) const MATRIX_MODELS: [MatrixModel; 10] = [
     MatrixModel {
         slug: "qwen3.8-27b-nvfp4",
         checkpoint: "unsloth/Qwen3.8-27B-NVFP4",
@@ -64,6 +64,13 @@ pub(crate) const MATRIX_MODELS: [MatrixModel; 9] = [
     MatrixModel {
         slug: "qwen3.6-35b-a3b-fp8-declared",
         checkpoint: "Qwen/Qwen3.6-35B-A3B-FP8",
+        precision: CircuitPrecision::Declared,
+    },
+    // 2026-10-02: NVIDIA's NVFP4 35B-A3B at its declared formats (NVFP4 W4A16 experts and head,
+    // FP8 attention and GDN).
+    MatrixModel {
+        slug: "qwen3.6-35b-a3b-nvfp4-declared",
+        checkpoint: "nvidia/Qwen3.6-35B-A3B-NVFP4",
         precision: CircuitPrecision::Declared,
     },
     MatrixModel {
