@@ -1,44 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-26: The MoE steps of `load_layers`: the free-memory check that decides whether the
-//! MoE prefill tables are transposed, the FP8-to-BF16 expert dequant, and the native-FP8
-//! expert install.
+//! 2026-09-26: The MoE steps of `load_layers`: the FP8-to-BF16 expert dequant and the native-FP8
+//! expert install. (2026-10-02: Whether the prefill tables are transposed is the serve's memory
+//! plan's decision, `MoeExpertTables`, no longer a free-memory check here.)
 //!
 //! Owner: model-arch weight loader (Qwen3.5).
 //! Invariants: none beyond the types.
 
-use metrale_config::ModelConfig;
-use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_layers::layers::MoeLayer;
 use metrale_model_layers::weight_map::{
     load_fp8_block_scaled_as_fp8weight, load_moe_qwen35_fp8_experts,
 };
 
 use super::load_cx::LoadCx;
-
-/// 2026-09-26: Whether the transposed MoE prefill tables exceed free memory less 2 GiB;
-/// warns when they do.
-pub(super) fn moe_transpose_skipped(config: &ModelConfig, gpu: &dyn GpuBackend, h: usize) -> bool {
-    let inter = config.moe_intermediate_size;
-    let group_size = 16usize;
-    let gu_bytes = inter * h / 2 + inter * h / group_size;
-    let d_bytes = h * inter / 2 + h * inter / group_size;
-    let per_layer = config.num_experts * (2 * gu_bytes + d_bytes);
-    let total = per_layer * config.num_hidden_layers;
-    let available = gpu.free_memory().unwrap_or(0);
-    let headroom = 2 * 1024 * 1024 * 1024;
-    let skip = total > available.saturating_sub(headroom);
-    if skip {
-        tracing::warn!(
-            target: "metrale_model_arch::weight_loader::qwen35::load_layers",
-            "Skipping MoE weight transposition ({:.1} GB needed, {:.1} GB available). \
-             Prefill will use fallback grouped GEMM.",
-            total as f64 / (1024.0 * 1024.0 * 1024.0),
-            available as f64 / (1024.0 * 1024.0 * 1024.0),
-        );
-    }
-    skip
-}
 
 /// 2026-09-26: `METRALE_FP8_DEQUANT_MOE_TO_BF16`: dequantizes layer `i`'s FP8 experts to BF16 and
 /// installs them on `moe_layer`. A failure is logged, and the layer keeps its native-FP8 MoE.

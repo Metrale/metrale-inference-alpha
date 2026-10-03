@@ -182,9 +182,11 @@ mod moe_grouped_decode;
 pub use moe_grouped_decode::*;
 
 mod expert_quantization;
+mod moe_expert_tables;
 pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };
+pub use moe_expert_tables::{MoeExpertTables, moe_expert_tables, set_moe_expert_tables_from_plan};
 
 mod activation_quantization;
 pub use activation_quantization::{

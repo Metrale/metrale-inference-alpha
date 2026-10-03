@@ -53,6 +53,12 @@ fn vision_tensor_dense_auto(
 }
 
 impl ModelWeightLoader for Qwen35WeightLoader {
+    /// 2026-10-02: Its MoE layers build the transposed NVFP4 prefill tables only when the
+    /// serve's memory plan says they fit (`load_layers.rs`).
+    fn reads_expert_table_plan(&self) -> bool {
+        true
+    }
+
     fn supports_tp(&self) -> bool {
         // 2026-09-25: The native-FP8 and NVFP4 attention arms shard Q/K/V/O, and the BF16
         // dense and NVFP4 linear-attention builders shard by head. The BF16-dequant attention

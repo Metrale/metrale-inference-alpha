@@ -1,0 +1,23 @@
+[package]
+name = "metrale-kernel-tree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The repository's kernels/ manifests and sources, embedded at build time."
+
+# 2026-10-02: `met serve` plans its memory with `met circuit memory`'s own model, which reads
+# kernels/ (DEVICES.toml, the circuits, COPIES.toml, a class's HARDWARE.toml, KERNEL.toml,
+# MODEL.toml, FUSIONS.toml, KERNEL_FAMILIES.toml and kernel sources). A deployed binary has no
+# repository, so the build embeds those files here, compressed, and the serve unpacks them once
+# per content hash. A crate of its own, so an edit under kernels/ recompiles only this one.
+
+[dependencies]
+anyhow.workspace = true
+flate2 = "1.1"
+
+[build-dependencies]
+flate2 = "1.1"
+sha2 = "0.11"
+
+[lints]
+workspace = true

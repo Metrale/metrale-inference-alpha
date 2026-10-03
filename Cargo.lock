@@ -1675,6 +1675,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-kernel-tree"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "sha2",
+]
+
+[[package]]
 name = "metrale-kernels"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -1826,6 +1835,7 @@ dependencies = [
  "metrale-core",
  "metrale-gpu-runtime",
  "metrale-grammar",
+ "metrale-kernel-tree",
  "metrale-kernels",
  "metrale-model-arch",
  "metrale-model-engine",

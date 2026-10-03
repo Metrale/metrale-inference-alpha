@@ -9,6 +9,7 @@
 mod build;
 pub(crate) mod config;
 mod dflash_gamma;
+pub(crate) mod expert_tables;
 mod forward;
 pub(crate) mod fp8_kv_scale_source;
 mod kernel_gate;

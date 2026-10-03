@@ -34,6 +34,7 @@ metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
 metrale-grammar = { path = "../grammar" }
 metrale-kernels = { path = "../kernels" }
 metrale-model-arch = { path = "../model-arch", default-features = false }
+metrale-kernel-tree = { path = "../kernel-tree" }
 metrale-model-engine = { path = "../model-engine", default-features = false }
 metrale-model-layers = { path = "../model-layers", default-features = false }
 metrale-model-weights = { path = "../model-weights", default-features = false }

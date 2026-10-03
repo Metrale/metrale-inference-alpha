@@ -122,13 +122,15 @@ pub struct CopyError(pub String);
 
 /// 2026-10-02: The settings a rule's `when` may read: the serve facts the loader branches on.
 /// `latent_moe` is `on` when the checkpoint's MoE runs through a latent projection
-/// (`moe_latent_size > 0`, Nemotron-3-Super), `off` otherwise.
-pub const COPY_SETTINGS: [&str; 5] = [
+/// (`moe_latent_size > 0`, Nemotron-3-Super), `off` otherwise. `moe_expert_tables` is the serve's
+/// plan-based decision on the MoE's transposed prefill tables (`build` or `skip`).
+pub const COPY_SETTINGS: [&str; 6] = [
     "speculative",
     "weight_quantization",
     "lm_head_dtype",
     "expert_quantization",
     "latent_moe",
+    "moe_expert_tables",
 ];
 
 /// 2026-10-02: Parse the rules text.

@@ -175,6 +175,7 @@ fn serve_resolved_never_reaches_check_record() {
 fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
     super::LiveForward {
         auto_max_batch_size: None,
+        moe_expert_tables: None,
         forward: forward.to_string(),
         plan_digest: digest.map(str::to_string),
     }
@@ -233,5 +234,32 @@ fn an_auto_slot_count_is_disclosed_and_an_explicit_one_is_not() {
     assert_eq!(
         m.get(super::MAX_BATCH_SIZE).map(String::as_str),
         Some("auto:91")
+    );
+}
+
+/// 2026-10-02: Skipped MoE expert tables are disclosed; built ones (what every serve before the
+/// decision did) add nothing, and an unknown report is refused before anything is written.
+#[test]
+fn skipped_moe_expert_tables_are_disclosed_and_built_ones_are_not() {
+    let with = |t: Option<&str>| super::LiveForward {
+        moe_expert_tables: t.map(str::to_string),
+        ..live("legacy", None)
+    };
+    let mut m = BTreeMap::new();
+    for t in [None, Some("build")] {
+        super::merge_live_forward(&mut m, "legacy", &with(t)).unwrap();
+        assert!(m.is_empty(), "{t:?}");
+    }
+    let mut odd = with(Some("sometimes"));
+    odd.auto_max_batch_size = Some(4);
+    assert!(super::merge_live_forward(&mut m, "legacy", &odd).is_err());
+    assert!(
+        m.is_empty(),
+        "a refused merge leaves the disclosure untouched"
+    );
+    super::merge_live_forward(&mut m, "legacy", &with(Some("skip"))).unwrap();
+    assert_eq!(
+        m.get(super::MOE_EXPERT_TABLES).map(String::as_str),
+        Some("skip")
     );
 }

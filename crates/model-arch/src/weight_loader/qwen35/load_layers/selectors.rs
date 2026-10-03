@@ -38,7 +38,7 @@ pub(super) fn layer_dequant_selected(layer: usize) -> bool {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum HoloFastMoeMode {
     GateUp,
     Full,

@@ -189,9 +189,10 @@ arch = ["qwen3_6_moe"]
 ops = ["expert_gate_up", "expert_down", "linear:shared_gate_up", "linear:shared_down"]
 section = "main"
 stored = ["nvfp4/g16"]
+when = { moe_expert_tables = "build" }
 law = "nvfp4/g16"
 count = 1
-site = "crates/model-layers/src/weight_map/quantized/transpose.rs:58-59 (layers/moe/helpers_a.rs:34-130 via qwen35/load_layers.rs:314-327; on the default levers every NVFP4 MoE layer is a fast-MoE layer, which bypasses the free-memory gate of moe_experts.rs:21, so they are built whatever the memory)"
+site = "crates/model-layers/src/weight_map/quantized/transpose.rs:58-59 (layers/moe/helpers_a.rs:34-130 via qwen35/load_layers.rs:314-332; built when the serve's memory plan fits with them, MoeExpertTables)"
 
 [[copy]]
 id = "moe-nvfp4-shared-fp8-predequant"

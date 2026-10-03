@@ -140,22 +140,24 @@ which does not reach a `NemotronHTopkRouter` parameter).
   to its own change.
 - FUSIONS.toml has no FP8-KV paged-attention rule on gb10, so an FP8-KV serve's attention plans as
   a placeholder group and its split-K workspace is not attributed.
-- The routed experts' transposed NVFP4 tables are not memory-gated on the default levers:
+- The routed experts' transposed NVFP4 tables:
   - `nemotron-expert-twin` is built only without a latent MoE (`prefill_weights.rs`); the rule's
     `when = { latent_moe = "off" }` models that, so Nemotron-3-Super (`moe_latent_size` 1024)
     carries none. At util 0.85, its recipe (65536 tokens, C=8) fits: 7363 MiB headroom, a KV pool
     of 150591 blocks against 32777 needed.
-  - `moe-nvfp4-expert-twin` (qwen35 loader): the 2 GiB free-memory gate (`moe_experts.rs:21`)
-    applies only to a layer that is not a fast-MoE layer, and on the default levers every NVFP4
-    MoE layer is one (`METRALE_HOLO_LOW_MEMORY_MOE` unset selects `Full` for layers 0-99999;
-    `load_layers.rs:110-131, 314-316`; the NVFP4 35B boot logs all 40 layers selected). The
-    tables are built whatever the memory, and the rule rightly has no gate.
-  - Qwen3.5-122B-A10B therefore does not fit: 62451 MiB of tables on 76828 MiB stored, -43643
-    MiB headroom at util 0.85, at any util. Without the tables it would fit with about 18800 MiB
-    headroom; with `METRALE_HOLO_LOW_MEMORY_MOE=0` the loader's gate would skip them (65 GB
-    needed, about 44 GB free after the store). Whether the gate should also bound the fast-MoE
-    default is an engine decision; until then its recipe cannot boot on one GB10. A boot was
-    not run to confirm (81 GB of weights, not on dgx1).
+  - `moe-nvfp4-expert-twin` (qwen35 loader): until 2026-10-02 the loader built them whatever
+    the memory (its 2 GiB free-memory gate bound only non-fast-MoE layers, and on the default
+    levers every NVFP4 MoE layer is one), so Qwen3.5-122B-A10B could not fit on one GB10. They
+    are now built only when this model says they fit: `met serve` plans the checkpoint under its
+    own flags at its declared `--max-seq-len` and batch (`serve_phases/expert_tables.rs`, the
+    embedded kernel tree of `metrale-kernel-tree`), through the function `met circuit memory`
+    decides with (`cli/circuit_memory_tables.rs`), publishes `MoeExpertTables` to the loader, logs
+    it, and discloses a skip in `serve_resolved` (`moe_expert_tables = skip`). The rule reads the
+    decision (`when = { moe_expert_tables = "build" }`).
+    - nvidia/Qwen3.6-35B-A3B-NVFP4, its recipe at 0.85 (8 x 262144 tokens): build, 17348 MiB of
+      tables, 24636 MiB headroom with them.
+    - Qwen3.5-122B-A10B, its single-GB10 recipe at 0.85 (1 x 16384 tokens): skip, 62451 MiB of
+      tables; headroom -43643 MiB with them, 18808 MiB without, 101336 KV blocks for 1026 needed.
 - The plan gives a Nemotron router the BF16 of an `unquantized` node. Nano and Lightning store it
   F32, and #90 serves it F32, as stored. The circuit cannot see a safetensors dtype, so the plan
   under-counts each of those routers by half of its 1.4 MB per layer (16 MB on Nano), inside the

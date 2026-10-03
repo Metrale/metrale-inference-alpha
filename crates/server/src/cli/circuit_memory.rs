@@ -86,6 +86,10 @@ fn header(p: &Point<'_>, f: &EngineFacts) -> Vec<(String, String)> {
             if a.prompt_lookup { "on" } else { "off" },
             a.tree_nodes.map_or("none".into(), |n| n.to_string()),
         )),
+        ("MoE expert tables".to_string(), match &p.tables {
+            Some(d) => format!("{} (decided once, as `met serve` does)", d.describe()),
+            None => "none in this plan".into(),
+        }),
         ("legacy arena".to_string(), format!("BufferSizes at max_batch_tokens {} + GDN two-phase", f.max_batch_tokens)),
         ("MODEL.toml".to_string(), p.behavior.source.clone()),
         ("outside the circuit".to_string(), match p.outside {
@@ -116,7 +120,7 @@ pub(crate) fn run(a: CircuitMemoryArgs) -> Result<()> {
     let cap = point.args.max_seq_len as u64;
     // 2026-10-02: The widest batch a serve takes is one batched verify's width
     // (`VERIFY_WY_TABLE_SEQS`, `MAX_MTP_MAX_SEQS`); `auto` slots search up to it.
-    let widest = match point.a.slots.as_deref() {
+    let widest = match point.query.slots.as_deref() {
         Some("auto") => metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS as u64,
         _ => point.slots(a.concurrency)? as u64,
     };
@@ -155,4 +159,4 @@ pub(crate) fn run(a: CircuitMemoryArgs) -> Result<()> {
 
 #[cfg(test)]
 #[path = "circuit_memory_ledger_tests.rs"]
-mod circuit_memory_ledger_tests;
+pub(crate) mod circuit_memory_ledger_tests;

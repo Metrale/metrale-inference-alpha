@@ -204,6 +204,21 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let dflash_args = adapters::dflash_build_args(&args, &dflash_drafter_state);
     let nllb_lang = adapters::resolve_nllb_lang(&args, &config, &model_dir)?;
     let (nllb_lora_dir, nllb_adapter_name) = adapters::resolve_nllb_adapter(&args, is_nllb)?;
+    // 2026-10-02: The MoE expert-table decision, from the memory plan, before the loader reads
+    // it (`serve_phases::expert_tables`).
+    if metrale_model_engine::factory::loader_for_config(&config)?.reads_expert_table_plan() {
+        let live = serve_phases::expert_tables::LiveDevice {
+            arch: ptx_set.target.arch,
+            sms: gpu.sm_count()?,
+            total_memory: gpu.total_memory()? as u64,
+        };
+        let id = args
+            .model
+            .clone()
+            .unwrap_or_else(|| model_dir.display().to_string());
+        let d = serve_phases::expert_tables::plan(&args, &id, &model_dir, &live)?;
+        serve_phases::expert_tables::publish(d.as_ref())?;
+    }
     let built = serve_phases::build_model(
         &args,
         &config,

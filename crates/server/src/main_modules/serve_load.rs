@@ -303,6 +303,8 @@ pub(crate) fn load_model(
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
             auto_max_batch_size,
+            moe_expert_tables: metrale_model_layers::layers::moe_expert_tables()
+                .map(|t| t.name().to_string()),
         },
         memory,
         // 2026-09-26: `behavior` is MODEL.toml's, embedded at build time, with

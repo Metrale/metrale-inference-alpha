@@ -314,6 +314,13 @@ pub trait ModelWeightLoader {
         true
     }
 
+    /// 2026-10-02: Does this loader read the serve's MoE expert-table decision
+    /// (`metrale_model_layers::layers::MoeExpertTables`)? The serve plans and publishes it before
+    /// load only for a loader that does.
+    fn reads_expert_table_plan(&self) -> bool {
+        false
+    }
+
     /// 2026-09-25: Which checkpoint tensors will this loader read from the host
     /// at bind time, so the checkpoint loader records their location instead
     /// of uploading them?

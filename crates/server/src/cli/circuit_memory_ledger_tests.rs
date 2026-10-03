@@ -120,7 +120,7 @@ fn model_term(r: &MemoryReport, f: &EngineFacts, term: &str) -> u64 {
 /// 2026-10-02: One fixture's model, evaluated at the boot's own pools.
 /// 2026-10-02: The prepared point of `checkpoint` (its in-tree config fixture) under `recipe` and
 /// `serve`; every setting a copy rule may read is set.
-fn point(
+pub(crate) fn point(
     name: &str,
     checkpoint: &str,
     recipe: Option<String>,

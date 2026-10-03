@@ -29,6 +29,7 @@ use super::CircuitMemoryArgs;
 use super::circuit_hw::{CheckpointTexts, FsTree};
 use super::circuit_memory_serve::{Behavior, EngineFacts, engine_facts, serve_args};
 use crate::cli::ServeArgs;
+use metrale_model_layers::layers::MoeExpertTables;
 
 /// 2026-10-02: A booted serve's pool sizes: the main KV blocks and the MTP head's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,9 +38,41 @@ pub(crate) struct BootPool {
     pub draft_kv_blocks: u64,
 }
 
+/// 2026-10-02: The CLI's what-ifs beyond the serve's own flags: `--slots`, `--tree-nodes`,
+/// `--capture-rows`, `--prompt-lookup`. A serve has none ([`Query::SERVE`]); the expert-table
+/// decision evaluates under that, so the CLI and `met serve` decide alike.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Query {
+    pub slots: Option<String>,
+    pub tree_nodes: Option<u64>,
+    pub capture_rows: u64,
+    pub prompt_lookup: bool,
+}
+
+impl Query {
+    /// 2026-10-02: What a serve runs: its own slots, no token tree, drafter capture or lookup.
+    pub(crate) const SERVE: Query = Query {
+        slots: None,
+        tree_nodes: None,
+        capture_rows: 0,
+        prompt_lookup: false,
+    };
+
+    fn of(a: &CircuitMemoryArgs) -> Self {
+        Query {
+            slots: a.slots.clone(),
+            tree_nodes: a.tree_nodes,
+            capture_rows: a.capture_rows,
+            prompt_lookup: a.prompt_lookup,
+        }
+    }
+}
+
 /// 2026-10-02: Everything fixed across the evaluations of one command.
 pub(crate) struct Point<'a> {
     pub(crate) a: &'a CircuitMemoryArgs,
+    /// 2026-10-02: The what-ifs every evaluation applies.
+    pub(crate) query: Query,
     tree: &'a FsTree,
     reg: &'a Registry,
     pub(crate) args: ServeArgs,
@@ -59,6 +92,9 @@ pub(crate) struct Point<'a> {
     /// inverse queries' evaluations.
     plans: std::cell::RefCell<BTreeMap<(String, u64), metrale_circuit::FusionPlan>>,
     families: std::cell::RefCell<Option<metrale_circuit::venn::Families>>,
+    /// 2026-10-02: The MoE expert-table decision `settings` carries; `None` when the plan has
+    /// no such tables.
+    pub(crate) tables: Option<super::circuit_memory_tables::TablesDecision>,
 }
 
 fn dtype(s: &str) -> Result<StateDtype> {
@@ -105,13 +141,15 @@ impl Point<'_> {
     /// serve's `--max-batch-size`.
     pub(crate) fn slots(&self, c: u64) -> Result<usize> {
         use metrale_model_engine::factory::SlotRequest;
-        Ok(match (self.a.slots.as_deref(), self.args.max_batch_size) {
-            (None, SlotRequest::Count(n)) => n,
-            // 2026-10-02: `--max-batch-size auto` balances slots against KV at boot; at a given
-            // concurrency the model sizes exactly that many, as `--slots auto` does.
-            (None, SlotRequest::Auto) | (Some("auto"), _) => c as usize,
-            (Some(n), _) => n.parse().with_context(|| format!("--slots {n}"))?,
-        })
+        Ok(
+            match (self.query.slots.as_deref(), self.args.max_batch_size) {
+                (None, SlotRequest::Count(n)) => n,
+                // 2026-10-02: `--max-batch-size auto` balances slots against KV at boot; at a given
+                // concurrency the model sizes exactly that many, as `--slots auto` does.
+                (None, SlotRequest::Auto) | (Some("auto"), _) => c as usize,
+                (Some(n), _) => n.parse().with_context(|| format!("--slots {n}"))?,
+            },
+        )
     }
 
     /// 2026-10-02: Why `c` sequences of `isl + osl` tokens cannot be served at all (more
@@ -150,11 +188,11 @@ impl Point<'_> {
         }
         let slots = self.slots(c)?;
         let tokens = isl + osl;
-        let tree = self.a.tree_nodes.map(|n| n as usize);
+        let tree = self.query.tree_nodes.map(|n| n as usize);
         let f = engine_facts(&self.args, &self.config, &self.behavior, slots, tree)?;
         let bs = self.args.block_size as u64;
         // 2026-10-02: A token tree's nodes write their KV before the verify accepts any.
-        let written = tokens + self.a.tree_nodes.unwrap_or(0);
+        let written = tokens + self.query.tree_nodes.unwrap_or(0);
         let kv_blocks = match boot {
             Some(b) => b.kv_blocks,
             None => memory::kv_blocks_for(c, written, bs).context("KV blocks")?,
@@ -203,13 +241,13 @@ impl Point<'_> {
             ring: (f.ring_slots as u64, slots as u64),
             carry: f.carry,
             verify_table_rows: f.verify_rows,
-            capture_rows: self.a.capture_rows,
-            lookup: self.a.prompt_lookup.then_some(LookupInputs {
+            capture_rows: self.query.capture_rows,
+            lookup: self.query.prompt_lookup.then_some(LookupInputs {
                 sequences: c,
                 history_tokens: tokens,
             }),
-            tree: self.a.tree_nodes.map(|n| (c, n)),
-            drafts: self.a.tree_nodes.map(|n| (c, n)),
+            tree: self.query.tree_nodes.map(|n| (c, n)),
+            drafts: self.query.tree_nodes.map(|n| (c, n)),
         };
         let decode = if c == 1 { Mode::Decode } else { Mode::MultiSeq };
         let k = f.num_drafts as u64 + 1;
@@ -323,11 +361,25 @@ impl Point<'_> {
 }
 
 /// 2026-10-02: The model `a` names (its checkpoint's `texts`), on its device, from the
-/// repository at `root`.
+/// repository at `root`, under the serve flags `a` renders (its recipe and overrides).
 pub(crate) fn prepare<'a>(
     a: &'a CircuitMemoryArgs,
     texts: &CheckpointTexts,
     root: &Path,
+    tree: &'a FsTree,
+    reg: &'a Registry,
+) -> Result<Point<'a>> {
+    let args = serve_args(root, &texts.id, a.recipe.as_deref(), &a.serve)?;
+    prepare_with(a, args, texts, tree, reg)
+}
+
+/// 2026-10-02: [`prepare`] under resolved serve flags `args` (what `met serve` parsed). The MoE
+/// expert-table decision ([`super::circuit_memory_tables::decide`]) is made here, once, and
+/// every evaluation of the point uses it.
+pub(crate) fn prepare_with<'a>(
+    a: &'a CircuitMemoryArgs,
+    args: ServeArgs,
+    texts: &CheckpointTexts,
     tree: &'a FsTree,
     reg: &'a Registry,
 ) -> Result<Point<'a>> {
@@ -347,7 +399,6 @@ pub(crate) fn prepare<'a>(
             texts.id
         )
     })?;
-    let args = serve_args(root, &texts.id, a.recipe.as_deref(), &a.serve)?;
     let config = metrale_config::parse_config(&config_json)?;
     let quant = QuantMetadata {
         hf_quant_config: texts.hf_quant.as_deref(),
@@ -407,6 +458,10 @@ pub(crate) fn prepare<'a>(
             }
             .to_string(),
         ),
+        (
+            super::circuit_memory_tables::SETTING.to_string(),
+            MoeExpertTables::Build.name().to_string(),
+        ),
     ]);
     let copies = memory::parse_copies(
         &tree
@@ -414,8 +469,9 @@ pub(crate) fn prepare<'a>(
             .map_err(anyhow::Error::msg)?,
     )?;
     let outside = super::circuit_memory_weights::outside_bytes(texts, &served.circuit)?;
-    Ok(Point {
+    let mut p = Point {
         a,
+        query: Query::of(a),
         tree,
         reg,
         budget_bytes: budget::util_budget(device.memory_bytes as u64, args.gpu_memory_utilization),
@@ -433,5 +489,8 @@ pub(crate) fn prepare<'a>(
         plans: Default::default(),
         families: Default::default(),
         device,
-    })
+        tables: None,
+    };
+    p.tables = super::circuit_memory_tables::decide(&mut p)?;
+    Ok(p)
 }
