@@ -29,10 +29,11 @@ metadata:
   kv_dtype: bf16
 
 defaults:
-  # The --activation-quantization routing this recipe was measured under: each projection
-  # picks its activation precision by row count, as before the flag existed. The
-  # row-invariant modes (declared, bf16, fp8, nvfp4) are opt-in until evaluated.
-  activation_quantization: adaptive
+  # The --activation-quantization mode: `declared`, the checkpoint's own activation format at
+  # every row count, so a sequence's tokens do not depend on what shares its batch. Owner rule
+  # 2026-10-01, applied 2026-10-02 after accuracy on this checkpoint: full BFCL draw (declared
+  # 84.56/86.30 vs adaptive and main 84.36/86.12, N=1004 hermetic) and agentic-webserver 2/2.
+  activation_quantization: declared
   # The --weight-quantization tier: `declared`, the checkpoint's own W8A8 (experts and
   # block-scaled attention/GDN decode). Owner decision 2026-09-29 on the full BFCL draw
   # (declared 84.56/86.40 vs nvfp4 85.16/86.15, N=1004 hermetic) and agentic 2/2.
