@@ -59,6 +59,7 @@ mod prefill_error_delivery_tests;
 mod prefill_fifo_tests;
 #[cfg(test)]
 mod prefill_timing_tests;
+mod prompt_lookup_step;
 mod repetition;
 mod rollback;
 mod sample_step;
@@ -85,6 +86,7 @@ mod verify_k3_step;
 mod verify_k4_batch_step;
 mod verify_k4_step;
 mod verify_k4_verdict;
+mod verify_kn_step;
 mod verify_pipeline_helper;
 pub mod vocab_masks;
 
@@ -110,6 +112,7 @@ use phase_continue_prefills::continue_in_progress_prefills;
 use phase_start_prefills::start_new_requests;
 use prefill_a_step::*;
 use prefill_b_step::*;
+use prompt_lookup_step::{copy_in_flight, drafter_accepted};
 use repetition::*;
 use rollback::{RollbackOutcome, rollback_to_boundary};
 use sample_step::*;
@@ -123,6 +126,7 @@ use verify_k3_step::*;
 use verify_k4_batch_step::*;
 use verify_k4_step::*;
 use verify_k4_verdict::*;
+use verify_kn_step::*;
 // 2026-09-25: No `use` for verify_pipeline_helper: callers name it by its full
 // path, `crate::scheduler::verify_pipeline_helper::...`.
 

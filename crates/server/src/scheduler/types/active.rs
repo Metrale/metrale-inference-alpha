@@ -253,6 +253,11 @@ pub(in crate::scheduler) struct ActiveSeq {
     /// measured" and leaves the sequence at full depth, and truncates it
     /// together with `pending_drafts`.
     pub pending_draft_conf: Vec<f32>,
+    /// 2026-10-02: Prompt-lookup state (`--prompt-lookup-decoding`), created on
+    /// the sequence's first speculative step; `None` while the flag is off.
+    /// When it holds a copy in flight, [`Self::pending_drafts`] is that copy,
+    /// not the drafter's chain.
+    pub prompt_lookup: Option<Box<metrale_speculative::prompt_lookup::PromptLookupSeq>>,
     /// 2026-09-25: Time of the last token emission; the scheduling policy measures
     /// time-between-tokens from it.
     pub last_token_time: Instant,

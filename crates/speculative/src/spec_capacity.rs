@@ -41,6 +41,9 @@ pub fn clamp_drafts_to_slot_capacity(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SerialArm {
     DFlash,
+    /// 2026-10-02: Four or more drafts on an MTP serve (a long prompt-lookup
+    /// copy): one K-row verify, then the K4 verdict.
+    KN,
     K4,
     K3,
     K2,
@@ -51,16 +54,19 @@ pub enum SerialArm {
 /// pending drafts than this step's width `step_drafts` (the ladder count
 /// after [`clamp_drafts_to_slot_capacity`]); the surplus is dropped so the
 /// verify never exceeds the slot. With `dflash` every pending draft is kept.
-/// Four or more kept drafts run the DFlash arm; fewer run K4, K3 or K2 by the
-/// kept count, each also bounded by `step_drafts`.
+/// Four or more kept drafts run the DFlash arm on a DFlash serve and the KN arm
+/// otherwise; fewer run K4, K3 or K2 by the kept count, each also bounded by
+/// `step_drafts`.
 pub fn serial_verify_plan(pending: usize, step_drafts: usize, dflash: bool) -> (usize, SerialArm) {
     let keep = if dflash {
         pending
     } else {
         pending.min(step_drafts)
     };
-    let arm = if keep >= 4 {
+    let arm = if keep >= 4 && dflash {
         SerialArm::DFlash
+    } else if keep >= 4 {
+        SerialArm::KN
     } else if step_drafts >= 3 && keep >= 3 {
         SerialArm::K4
     } else if step_drafts >= 2 && keep >= 2 {
@@ -117,5 +123,15 @@ mod tests {
         // 2026-09-25: DFlash γ-blocks are never truncated to an MTP width.
         assert_eq!(serial_verify_plan(16, 16, true), (16, SerialArm::DFlash));
         assert_eq!(serial_verify_plan(3, 3, true), (3, SerialArm::K4));
+    }
+
+    #[test]
+    fn a_long_mtp_copy_takes_the_kn_arm_never_dflash() {
+        // 2026-10-02: A prompt-lookup copy of 8 on an MTP serve: the step width
+        // is the copy's, and 4+ drafts take the K-row MTP verify, not DFlash's
+        // (whose drafter trims and telemetry belong to a block drafter).
+        assert_eq!(serial_verify_plan(8, 8, false), (8, SerialArm::KN));
+        assert_eq!(serial_verify_plan(4, 4, false), (4, SerialArm::KN));
+        assert_eq!(serial_verify_plan(8, 3, false), (3, SerialArm::K4));
     }
 }

@@ -297,6 +297,18 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
         ));
     }
 
+    // 2026-10-02: Prompt lookup takes MTP's round when it matches and leaves
+    // it to MTP otherwise; with no MTP there is no round to take.
+    if args.prompt_lookup.prompt_lookup_decoding && !args.speculative {
+        v.push(Violation::new(
+            "--prompt-lookup-decoding is set without --speculative.",
+            "prompt-lookup copies are verified in the MTP speculative step, in place of \
+             the drafter's chain; without MTP that step never runs, so the flag would do \
+             nothing.",
+            "add --speculative, or drop --prompt-lookup-decoding.",
+        ));
+    }
+
     // 2026-09-26: Only an explicit --num-drafts is checked: an omitted one
     // resolves against MODEL.toml later, and a model default without a
     // speculative method is not a user error.

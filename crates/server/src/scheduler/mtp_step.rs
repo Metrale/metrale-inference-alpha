@@ -235,6 +235,18 @@ pub fn step_mtp(
             .mark(crate::scheduler::mtp_timing::Phase::StepOuter, t_step_outer);
         return;
     }
+    // 2026-10-02: Prompt lookup (`--prompt-lookup-decoding`): a sequence whose
+    // history repeats verifies a copy this step instead of its MTP chain. A
+    // copy keeps its own depth (1..=3 drafts, within its slot's capacity),
+    // stays out of D-Cut, and joins the batch with that depth.
+    let copies = super::prompt_lookup_step::take_rounds_with_copies(
+        model,
+        active,
+        sched,
+        &verify_idxs,
+        ladder_nd,
+    );
+    let mut copy_idxs: Vec<usize> = Vec::new();
     if verify_idxs.len() >= 2
         && sched.levers.mtp_max_seqs > 1
         && !dflash_verify_raw_argmax
@@ -243,7 +255,9 @@ pub fn step_mtp(
     {
         for &idx in &verify_idxs {
             let a = &mut active[idx];
-            if a.grammar_state.is_none() && a.pending_drafts.len() >= ladder_nd {
+            if a.grammar_state.is_none() && copy_in_flight(a) > 0 {
+                copy_idxs.push(idx);
+            } else if a.grammar_state.is_none() && a.pending_drafts.len() >= ladder_nd {
                 if a.pending_drafts.len() > ladder_nd {
                     a.pending_drafts.truncate(ladder_nd);
                 }
@@ -262,7 +276,11 @@ pub fn step_mtp(
     // `batchable_idxs` is put in dispatch order. When D-Cut is off
     // (`METRALE_NO_MTP_DCUT`), `ladder_nd < 2`, or the batch is wider than
     // `dcut_width_cap`, every entry of `ks` is `rows`.
-    let ks = mtp_dcut::plan(sched, active, &mut batchable_idxs, ladder_nd, rows);
+    let mut ks = mtp_dcut::plan(sched, active, &mut batchable_idxs, ladder_nd, rows);
+    for &idx in &copy_idxs {
+        batchable_idxs.push(idx);
+        ks.push(active[idx].pending_drafts.len() + 1);
+    }
     // 2026-09-25: The width the assignment was gated on (`plan` reorders
     // `batchable_idxs`, never resizes it): the per-chunk re-ordering below
     // must ask the gate with this width, never the chunk's, or a chunked
@@ -362,9 +380,15 @@ pub fn step_mtp(
         } else {
             ladder_nd
         };
+        // 2026-10-02: A copy picks its arm by its own length; `step_nd` stays
+        // the drafter's chain length for the propose that follows the verdict.
+        let plan_nd = match copy_in_flight(a) {
+            0 => step_nd,
+            copy => copy,
+        };
         let (keep, arm) = metrale_speculative::spec_capacity::serial_verify_plan(
             drafts.len(),
-            step_nd,
+            plan_nd,
             dflash_verify_raw_argmax,
         );
         drafts.truncate(keep);
@@ -373,6 +397,7 @@ pub fn step_mtp(
         }
         let verify = match arm {
             metrale_speculative::spec_capacity::SerialArm::DFlash => step_verify_dflash,
+            metrale_speculative::spec_capacity::SerialArm::KN => step_verify_kn,
             metrale_speculative::spec_capacity::SerialArm::K4 => step_verify_k4,
             metrale_speculative::spec_capacity::SerialArm::K3 => step_verify_k3,
             metrale_speculative::spec_capacity::SerialArm::K2 => step_verify_k2,
@@ -387,6 +412,7 @@ pub fn step_mtp(
             dflash_verify_raw_argmax,
         );
     }
+    super::prompt_lookup_step::settle_copies(active, sched, &copies);
     sched
         .io
         .tel

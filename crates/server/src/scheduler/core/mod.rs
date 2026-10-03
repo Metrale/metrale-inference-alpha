@@ -96,6 +96,7 @@ impl SchedulerCore {
             max_batch_tokens,
             use_self_speculative,
             use_ngram_speculative,
+            prompt_lookup,
             swap_space_gb,
             high_speed_swap_cfg,
             block_size,
@@ -137,7 +138,7 @@ impl SchedulerCore {
         } else {
             None
         };
-        let sched = crate::scheduler::sched_ctx::SchedCtx::new(
+        let mut sched = crate::scheduler::sched_ctx::SchedCtx::new(
             vocab_masks,
             levers,
             io::SchedIo::serving(
@@ -159,6 +160,17 @@ impl SchedulerCore {
             .bind_gpu_to_thread()
             .expect("Failed to bind CUDA context to scheduler thread");
         let use_mtp = use_speculative && sched.io.dev.model().has_proposer();
+        // 2026-10-02: Prompt lookup rides the MTP step; without MTP it has no
+        // round to take (`validate_serve_args` refuses that combination).
+        sched.prompt_lookup = prompt_lookup.filter(|_| use_mtp);
+        if let Some(pl) = sched.prompt_lookup {
+            tracing::info!(
+                "prompt-lookup decoding: ARMED (ngram={}, max_drafts={}, max_seqs={})",
+                pl.ngram,
+                pl.max_drafts,
+                pl.max_seqs
+            );
+        }
         let num_drafts = if use_mtp || use_self_speculative || use_ngram_speculative {
             num_drafts.max(1)
         } else {

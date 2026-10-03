@@ -32,6 +32,7 @@ pub(crate) mod flag_values;
 pub(crate) mod hermetic;
 pub(crate) mod manifest;
 mod serve_args;
+mod serve_args_prompt_lookup;
 pub(crate) mod sync_recipes;
 mod validate;
 pub use bench_args::BenchmarkArgs;

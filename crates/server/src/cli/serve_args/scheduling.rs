@@ -123,6 +123,11 @@ pub struct ServeSchedulingArgs {
     #[arg(long, default_value_t = false)]
     pub ngram_speculative: bool,
 
+    /// 2026-10-02: The `--prompt-lookup-*` flags, kept here so clap lists them after
+    /// `--ngram-speculative`.
+    #[command(flatten)]
+    pub prompt_lookup: crate::cli::serve_args_prompt_lookup::ServePromptLookupArgs,
+
     /// Enable DFlash block-diffusion speculative decoding (arXiv 2602.06036).
     /// Pairs the target with a small drafter checkpoint (e.g.
     /// `z-lab/Qwen3.6-35B-A3B-DFlash`) that drafts a block of γ tokens per step

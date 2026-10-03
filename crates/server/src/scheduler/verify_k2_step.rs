@@ -254,7 +254,8 @@ pub fn step_verify_k2(
         }
         sched.io.tel.mark(Phase::SaveHidden, t_save);
         let t_trim = sched.io.clock.now();
-        if let Err(e) = model.trim_proposer_state(&mut a.seq, 1, 0) {
+        let drafter_na = drafter_accepted(a, 1);
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, drafter_na, 0) {
             tracing::error!("trim_proposer_state: {e:#}");
         }
         sched.io.tel.mark(Phase::TrimProposer, t_trim);
@@ -302,7 +303,8 @@ pub fn step_verify_k2(
         a.seq.tokens.pop();
 
         let t_trim = sched.io.clock.now();
-        if let Err(e) = model.trim_proposer_state(&mut a.seq, 0, 0) {
+        let drafter_na = drafter_accepted(a, 0);
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, drafter_na, 0) {
             tracing::error!("trim_proposer_state: {e:#}");
         }
         sched.io.tel.mark(Phase::TrimProposer, t_trim);

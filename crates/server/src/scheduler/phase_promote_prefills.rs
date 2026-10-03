@@ -171,6 +171,7 @@ fn build_active_seq_from_prefill(
         logit_bias: p.logit_bias,
         pending_drafts: Vec::new(),
         pending_draft_conf: Vec::new(),
+        prompt_lookup: None,
         inside_thinking: if immediate_finish {
             born_inside_thinking(p.enable_thinking, think_end_token)
         } else {

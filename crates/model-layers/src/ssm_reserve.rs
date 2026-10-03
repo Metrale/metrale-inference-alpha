@@ -20,10 +20,12 @@ pub use decode_ring::{
     published_decode_ring_slots, set_decode_ring_slots, watchdogs_disabled_from_value,
 };
 
+mod copy_tier;
+pub use copy_tier::{CopyTier, copy_tier, set_copy_tier, tier_h, tier_rows};
 mod pool_plan;
 pub use pool_plan::{
     PoolCounts, PoolPlan, PoolShape, PoolState, UnitSource, VerifyCounts, pool_counts,
-    pool_counts_with, recurrent_units, state_dims,
+    pool_counts_tiered, pool_counts_with, recurrent_units, state_dims,
 };
 
 mod rollback;

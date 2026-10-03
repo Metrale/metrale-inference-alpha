@@ -75,9 +75,27 @@ pub struct PoolCounts {
 
 /// 2026-09-30: [`pool_counts_with`] with the verify slots `mtp_state_slots` and the per-slot
 /// h intermediates `verify_slot_h_intermediates` (the MTP ladder).
+///
+/// 2026-10-02: Under a published prompt-lookup copy tier (`copy_tier`) the copy slots hold
+/// the copy depth and the verify rows widen to it ([`pool_counts_tiered`]).
 pub fn pool_counts(shape: &PoolShape) -> PoolCounts {
-    pool_counts_with(shape, mtp_state_slots(shape.max_slots), |s| {
-        verify_slot_h_intermediates(s, shape.num_drafts, false)
+    pool_counts_tiered(shape, super::copy_tier())
+}
+
+/// 2026-10-02: [`pool_counts`] with the copy tier passed in, so tests need not publish it.
+/// The tier widens `num_intermediates` (every slot's conv intermediates and the dummy's h)
+/// and raises the copy slots' h; a uniform-h pool takes the widened depth everywhere.
+pub fn pool_counts_tiered(shape: &PoolShape, tier: Option<super::CopyTier>) -> PoolCounts {
+    let widened = PoolShape {
+        num_intermediates: super::tier_rows(shape.num_intermediates, tier),
+        ..*shape
+    };
+    pool_counts_with(&widened, mtp_state_slots(shape.max_slots), |s| {
+        super::tier_h(
+            verify_slot_h_intermediates(s, shape.num_drafts, false),
+            s,
+            tier,
+        )
     })
 }
 

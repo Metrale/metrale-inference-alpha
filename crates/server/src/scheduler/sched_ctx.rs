@@ -64,6 +64,13 @@ pub struct SchedCtx {
     /// device argmax picked `</think>` or `<think>` for a row whose thinking
     /// had ended.
     pub think_mask_fallbacks: std::cell::Cell<u64>,
+    /// 2026-10-02: Prompt-lookup settings (`--prompt-lookup-decoding`); `None`
+    /// when off. Set once by `SchedulerCore::new`.
+    pub prompt_lookup: Option<metrale_speculative::prompt_lookup::PromptLookupConfig>,
+    /// 2026-10-02: Prompt-lookup counters over the serve's life: copies
+    /// verified, tokens they proposed, tokens accepted
+    /// (`prompt_lookup_step::settle_copies`).
+    pub prompt_lookup_stats: std::cell::Cell<[u64; 3]>,
 }
 
 impl SchedCtx {
@@ -92,6 +99,8 @@ impl SchedCtx {
             dcut: crate::scheduler::mtp_dcut::DcutTelemetry::default(),
             admit_last_queued: std::cell::Cell::new(0),
             think_mask_fallbacks: std::cell::Cell::new(0),
+            prompt_lookup: None,
+            prompt_lookup_stats: std::cell::Cell::new([0; 3]),
         }
     }
 

@@ -95,7 +95,8 @@ impl ReservePlan {
                         self.config.ssm_qkvz_size(),
                         self.config.linear_num_value_heads,
                     ),
-                    self.num_drafts + 1,
+                    // 2026-10-02: Widened by a prompt-lookup copy tier, as the pool widens it.
+                    ssm_reserve::tier_rows(self.num_drafts + 1, ssm_reserve::copy_tier()),
                     v,
                 )
             }

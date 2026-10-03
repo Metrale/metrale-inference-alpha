@@ -28,6 +28,10 @@ pub struct SchedulerConfig {
     pub max_batch_tokens: usize,
     pub use_self_speculative: bool,
     pub use_ngram_speculative: bool,
+    /// 2026-10-02: Prompt-lookup decoding (`--prompt-lookup-decoding`) and its
+    /// settings; `None` when off. It composes with MTP: a sequence whose history
+    /// holds a match verifies the copy that round instead of the drafter's chain.
+    pub prompt_lookup: Option<metrale_speculative::prompt_lookup::PromptLookupConfig>,
     pub swap_space_gb: usize,
     pub high_speed_swap_cfg: Option<metrale_storage::HighSpeedSwapConfig>,
     pub block_size: usize,

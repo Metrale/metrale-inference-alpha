@@ -189,6 +189,30 @@ pub(crate) fn publish_mtp_max_seqs(
     spec::set_mtp_max_seqs(n)
 }
 
+/// 2026-10-02: Publish the prompt-lookup copy tier (`ssm_reserve::copy_tier`) after the MTP
+/// dispatch cap and before the preflight reserve: the first `--prompt-lookup-max-seqs`
+/// verify slots hold `--prompt-lookup-max-drafts` drafts. Nothing is published without
+/// `--prompt-lookup-decoding`.
+pub(crate) fn publish_copy_tier(args: &cli::ServeArgs) -> anyhow::Result<()> {
+    let Some(pl) = args.prompt_lookup_config() else {
+        return Ok(());
+    };
+    use metrale_model_layers::ssm_reserve as reserve;
+    let tier = reserve::CopyTier {
+        slots: pl
+            .max_seqs
+            .min(reserve::mtp_state_slots(args.max_batch_size.ceiling()))
+            .max(1),
+        drafts: pl.max_drafts,
+    };
+    tracing::info!(
+        "prompt-lookup copy tier: verify slots 0..{} hold {} drafts",
+        tier.slots,
+        tier.drafts
+    );
+    reserve::set_copy_tier(tier)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NumDraftsSource, resolve_num_drafts};

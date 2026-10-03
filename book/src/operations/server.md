@@ -77,6 +77,12 @@ See [FP8](../deep-dives/fp8.md) and [NVFP4](../deep-dives/nvfp4.md) for the trad
 | `--mtp-vocab` | `100000` | Limit MTP LM head to the first N token ids (`0` = full vocab). The default is **not** `0`: out of the box the draft head only scores ids `0..100000`, clamped to the model's real vocab size |
 | `--self-speculative` | off | Layer-skipping drafter (no MTP weights required) |
 | `--ngram-speculative` | off | CPU-side n-gram matching |
+| `--prompt-lookup-decoding` | off | With `--speculative`: a sequence whose last `--prompt-lookup-ngram` tokens occurred earlier in its prompt or output verifies the tokens that followed them, in place of the MTP chain, for that round; no match leaves the round to MTP. Per sequence inside batched verify, up to `--prompt-lookup-max-seqs` active sequences |
+| `--prompt-lookup-ngram` | `4` | Match length a copy needs |
+| `--prompt-lookup-max-drafts` | `3` | Ceiling of the copy window (doubles after a fully accepted copy, halves after a broken one), 1..=16. A lone sequence verifies a copy of up to this length in one pass; inside a batch a copy is cut to 3 drafts (the batched verify's widest 4 rows). The first `--prompt-lookup-max-seqs` verify-pool slots are sized for it: about 64 MB per slot per draft above the MTP chain on Qwen3.6-35B-A3B, 152 MB on Qwen3.8-27B |
+| `--prompt-lookup-min-match` | `4` | Tokens a match must span, counted back from the sequence's end (at least `--prompt-lookup-ngram`); longer spans copy less often on prose |
+| `--prompt-lookup-miss-backoff` | `0` | After copies that matched nothing, skip copying for 1, 2, 4… rounds up to this many; any accepted copied token clears it. 0 never skips |
+| `--prompt-lookup-max-seqs` | `8` | Widest batch that proposes copies |
 
 See the [MTP deep dive](../deep-dives/mtp.md). Use only one of `--speculative`,
 `--self-speculative`, `--ngram-speculative` — but note this is **guidance, not an
@@ -84,7 +90,13 @@ enforced constraint**: none of the three carries a clap `conflicts_with` and
 `cli/validate.rs` has no rule for the combination, so passing several parses and
 serves. The scheduler then resolves them by silent precedence (ngram → self-spec
 → MTP) rather than rejecting the config. `--dflash` *is* enforced — it declares
-`conflicts_with = "speculative"`.
+`conflicts_with = "speculative"`. `--prompt-lookup-decoding` is enforced too: it
+requires `--speculative` and conflicts with `--dflash`, `--self-speculative` and
+`--ngram-speculative`.
+
+Prompt lookup only changes which drafts a round verifies. Every emitted token is
+still the target's own pick, so greedy output is the same with the flag on and off
+wherever verify rows are row-invariant (the canonical tiers).
 
 `--num-drafts` is also not a plain constant: when it is still `1`, the model's
 `MODEL.toml` `default_num_drafts` replaces it (`serve_phases/config.rs`). On

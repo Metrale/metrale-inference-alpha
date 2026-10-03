@@ -290,7 +290,7 @@ pub(crate) fn spec_reserve_tokens(args: &cli::ServeArgs) -> usize {
     if args.dflash {
         args.serve_dflash_gamma() + 1
     } else if args.speculative || args.self_speculative || args.ngram_speculative {
-        args.resolved_num_drafts() + 2
+        args.verify_pool_drafts() + 2
     } else {
         1
     }

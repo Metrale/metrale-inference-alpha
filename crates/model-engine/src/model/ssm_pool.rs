@@ -203,6 +203,18 @@ impl SsmStatePool {
                 || num_intermediates != num_drafts + 1,
             rollback: rollback_mode,
         });
+        // 2026-10-02: A prompt-lookup copy tier (`ssm_reserve::copy_tier`) widens the verify
+        // rows: `pool_counts` sized every slot's conv intermediates (and the copy slots' h) for
+        // it, so the conv stride below follows it too. Uniform-h is judged on the MTP K above,
+        // before the widening, so the tier never turns the ladder off.
+        let num_intermediates = if has_mtp {
+            metrale_model_layers::ssm_reserve::tier_rows(
+                num_intermediates,
+                metrale_model_layers::ssm_reserve::copy_tier(),
+            )
+        } else {
+            num_intermediates
+        };
         let plan = PoolPlan::new(config, &counts, h_f16_pool)?;
         let h_bytes = plan.h_f32_unit;
         let h_stored_bytes = plan.h_stored_unit;

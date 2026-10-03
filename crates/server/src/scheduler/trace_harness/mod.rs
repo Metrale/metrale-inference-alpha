@@ -22,6 +22,7 @@ mod model_feed;
 mod model_forward;
 mod model_impl;
 mod pipeline_tests;
+mod prompt_lookup_tests;
 mod runner;
 mod scenarios;
 mod scripted_tests;

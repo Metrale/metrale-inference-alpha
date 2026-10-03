@@ -209,7 +209,8 @@ pub fn step_verify_k3(
             tracing::error!("save_hidden_for_mtp(2): {e:#}");
             return;
         }
-        if let Err(e) = model.trim_proposer_state(&mut a.seq, 2, 0) {
+        let drafter_na = drafter_accepted(a, 2);
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, drafter_na, 0) {
             tracing::error!("trim_proposer_state: {e:#}");
         }
         let t_propose = sched.io.clock.now();
@@ -242,7 +243,8 @@ pub fn step_verify_k3(
     } else if num_accepted == 1 {
         a.seq.seq_len -= 1;
         a.seq.tokens.pop();
-        if let Err(e) = model.trim_proposer_state(&mut a.seq, 1, 0) {
+        let drafter_na = drafter_accepted(a, 1);
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, drafter_na, 0) {
             tracing::error!("trim_proposer_state: {e:#}");
         }
         // 2026-09-25: one draft accepted: commit rows 0..=1.
@@ -297,7 +299,8 @@ pub fn step_verify_k3(
         a.seq.seq_len -= 2;
         a.seq.tokens.pop();
         a.seq.tokens.pop();
-        if let Err(e) = model.trim_proposer_state(&mut a.seq, 0, 0) {
+        let drafter_na = drafter_accepted(a, 0);
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, drafter_na, 0) {
             tracing::error!("trim_proposer_state: {e:#}");
         }
         // 2026-09-25: reject: commit row 0 only.

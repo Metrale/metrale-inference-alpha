@@ -179,6 +179,7 @@ pub(super) fn finish_first_chunk(
                 logit_bias: logit_bias.clone(),
                 pending_drafts: Vec::new(),
                 pending_draft_conf: Vec::new(),
+                prompt_lookup: None,
                 inside_thinking: born_inside_thinking(req_enable_thinking, think_end_token),
                 enable_thinking: req_enable_thinking,
                 thinking_budget: req_thinking_budget,
@@ -268,6 +269,7 @@ pub(super) fn finish_first_chunk(
                 logit_bias: logit_bias.clone(),
                 pending_drafts: Vec::new(),
                 pending_draft_conf: Vec::new(),
+                prompt_lookup: None,
                 inside_thinking: spontaneous_think
                     || born_inside_thinking(req_enable_thinking, think_end_token),
                 enable_thinking: req_enable_thinking,

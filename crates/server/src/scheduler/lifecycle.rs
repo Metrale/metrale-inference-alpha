@@ -368,6 +368,7 @@ pub fn resume_swapped_seq(
         grammar_state: None,
         pending_drafts: Vec::new(),
         pending_draft_conf: Vec::new(),
+        prompt_lookup: None,
         last_token_time: io.clock.now(),
         request_start: s.request_start,
         decode_start: s.decode_start,
