@@ -397,15 +397,6 @@ impl MtpHead {
             );
         }
 
-        // 2026-09-25: Drafter chain confidence (`draft_conf_tau > 0`,
-        // `METRALE_MTP_DRAFT_CONF`). Token selection below is unchanged: this
-        // copies the logits back and folds the draft's top-1 softmax probability
-        // into the running minimum `last_conf_bits`, which `propose` resets. The
-        // model's `run_mtp_propose_inner` drops the drafts when it is below tau.
-        if ctx.levers.draft_conf_tau > 0.0 {
-            self.fold_draft_conf(ctx, logits, v);
-        }
-
         // 2026-09-25: Shadow top-k (`shadow_topk`, `METRALE_MTP_SHADOW_TOPK`, at most
         // 8). Logs this position's top-k ids and softmax probabilities; token
         // selection is unchanged.
@@ -416,6 +407,37 @@ impl MtpHead {
 
         let out_ptr = ctx.buffers.scratch();
 
+        // 2026-10-02: `--draft-confidence-stop`: a draft whose id is read back
+        // here (unmasked, not deferred) also gets its top-1 log-probability,
+        // from the same argmax pass, for `propose` to decide whether the chain
+        // continues (`speculative::draft_stop`). Token selection is unchanged.
+        let want_lp = crate::speculative::draft_stop::draft_stop_logprob().is_some()
+            && grammar_bitmask.is_none()
+            && draft_embed_target.is_none()
+            && self.argmax_batch_lp_k.0 != 0;
+        self.last_conf_bits
+            .store(f32::NAN.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        if want_lp {
+            ops::argmax_bf16_batch_lp(
+                ctx.gpu,
+                self.argmax_batch_lp_k,
+                logits,
+                out_ptr,
+                out_ptr.offset(super::forward_batch::LP_SCRATCH_OFF),
+                v,
+                1,
+                v,
+                stream,
+            )?;
+            let mut buf = vec![0u8; super::forward_batch::LP_SCRATCH_OFF + 4];
+            ctx.gpu.copy_d2h(out_ptr, &mut buf)?;
+            let o = super::forward_batch::LP_SCRATCH_OFF;
+            let lp = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+            self.last_conf_bits
+                .store(lp.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            Self::finish_row(state, position);
+            return Ok(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]));
+        }
         if grammar_bitmask.is_none() {
             ops::argmax_bf16(ctx.gpu, self.argmax_k, logits, out_ptr, v, stream)?;
         }

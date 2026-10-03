@@ -15,7 +15,7 @@ grep -m1 'compiled .* kernels for target' "$WT"/build*.log 2>/dev/null || true
 sudo docker rm -f metrale-conglom >/dev/null 2>&1; sleep 3
 sudo docker run -d --name metrale-conglom --network host --gpus all --ipc=host \
   -e METRALE_NO_FFN_NVFP4_MMQ=1 -e METRALE_SSM_TAIL_MIDCHUNK=0 -e METRALE_MTP_CATCHUP=0 \
-  -e METRALE_MTP_DRAFT_CONF=0.0 -e METRALE_MTP_GATE_FORCE=1 \
+  -e METRALE_MTP_GATE_FORCE=1 \
   -e METRALE_SSM_TAIL_LEASE_TTL=128 -e METRALE_BF16_TC_PREFILL=1 ${EXTRA_ENV:-} \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface:ro" \
   -v "$WT/target/release/met:/usr/local/bin/met:ro" metrale-gb10:followups \

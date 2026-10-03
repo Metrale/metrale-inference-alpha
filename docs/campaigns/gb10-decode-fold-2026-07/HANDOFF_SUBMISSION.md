@@ -82,7 +82,7 @@ PATH=/usr/local/cuda/bin:$PATH METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=qwen3
 # 3. serve — GOLDEN CONFIG, frozen c2final env; ONLY --num-drafts differs from the golden run (2 -> 3)
 sudo docker run -d --name metrale-golden-e2e --network host --gpus all --ipc=host \
   -e METRALE_NO_FFN_NVFP4_MMQ=1 -e METRALE_SSM_TAIL_MIDCHUNK=0 -e METRALE_MTP_CATCHUP=0 \
-  -e METRALE_MTP_DRAFT_CONF=0.0 -e METRALE_MTP_GATE_FORCE=1 -e METRALE_SSM_TAIL_PROTECT=1 \
+  -e METRALE_MTP_GATE_FORCE=1 -e METRALE_SSM_TAIL_PROTECT=1 \
   -e METRALE_SSM_TAIL_LEASE_TTL=128 -e METRALE_BF16_TC_PREFILL=1 \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface:ro" \
   -v "<worktree>/target/release/met:/usr/local/bin/met:ro" \

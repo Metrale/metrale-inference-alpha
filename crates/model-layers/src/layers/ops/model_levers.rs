@@ -21,7 +21,6 @@
 
 /// 2026-09-25: Kernel-path levers for one loaded model. `TransformerModel::new` resolves its own
 /// copy with [`ModelLevers::from_env`]; other readers use the process-wide [`ModelLevers::get`].
-// 2026-09-25: `Eq` is not derived because `draft_conf_tau` is an `f32`.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct ModelLevers {
     /// 2026-09-25: On unless `METRALE_NO_GDN_REGRESIDENT=1`. Allows the register-resident GDN
@@ -228,12 +227,6 @@ pub struct ModelLevers {
     /// `w8a16_gemm_pipelined_m32` at construction (`qwen3_attention/init_proj_kernels.rs`),
     /// which batches of more than 16 rows can then take. Without it the handle is zero.
     pub fp8_attn_m32: bool,
-    /// 2026-09-25: `METRALE_MTP_DRAFT_CONF=<t>` (`speculative::draft_conf_tau`): the confidence
-    /// floor for submitting MTP drafts to verification, clamped to `[0.0, 0.99]`. Unset or
-    /// unparseable is `0.0`, which disables it. Below the floor the drafts are dropped and the
-    /// drafter rows trimmed (`model-engine` `impl_b3.rs`). `MtpHead::last_confidence` reads the
-    /// variable itself (`draft_proposer.rs`).
-    pub draft_conf_tau: f32,
     /// 2026-09-25: `METRALE_SSM_SAVE_DUMP` (presence): the scratch/SSM-state fingerprint probe on a
     /// sequence's first decode step, which also runs that step without graphs
     /// (`model/trait_impl/decode_a.rs`).

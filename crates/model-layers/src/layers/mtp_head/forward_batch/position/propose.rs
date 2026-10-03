@@ -106,11 +106,14 @@ impl MtpHead {
                 );
             }
         }
-        // 2026-09-25: Reset the chain confidence as `propose` does. The one
-        // caller skips the batched propose when `draft_conf_tau > 0`
-        // (`speculative_mtp.rs`).
-        self.last_conf_bits
-            .store(1.0f32.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        // 2026-10-02: `--draft-confidence-stop`: with the log-probabilities
+        // requested, the loop ends once every sequence's chain has stopped
+        // (`draft_stop::chain_continues`). Each sequence keeps the drafts the
+        // loop made; the scheduler truncates each chain to its own depth
+        // (`draft_stop::chain_depth`, in `mtp_dcut::plan`).
+        let stop_lp =
+            crate::speculative::draft_stop::draft_stop_logprob().filter(|_| out_conf.is_some());
+        let mut stopped = vec![false; n];
 
         let h = ctx.config.hidden_size;
         let mut cur_tokens = last_tokens.to_vec();
@@ -171,6 +174,14 @@ impl MtpHead {
             cur_tokens.copy_from_slice(&ids);
             for state in states.iter_mut() {
                 state.last_num_drafted = j + 1;
+            }
+            if let Some(ln_tau) = stop_lp {
+                for (s, &l) in stopped.iter_mut().zip(&lp) {
+                    *s = *s || !crate::speculative::draft_stop::chain_continues(l, ln_tau);
+                }
+                if stopped.iter().all(|&s| s) {
+                    break;
+                }
             }
         }
         for (state, drafts) in states.iter_mut().zip(all.iter()) {

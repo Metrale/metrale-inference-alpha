@@ -73,6 +73,7 @@ See [FP8](../deep-dives/fp8.md) and [NVFP4](../deep-dives/nvfp4.md) for the trad
 |---|---|---|
 | `--speculative` | off | Enable MTP — requires MTP weights in checkpoint |
 | `--num-drafts` | `1` | Draft tokens per verify (K = num_drafts + 1); default per-model from `MODEL.toml` |
+| `--draft-confidence-stop` | off | `TAU` in (0, 1): an MTP chain continues past a draft only while that draft's top-1 probability is at least `TAU`, so it ends with its first draft below `TAU` (still verified). Fewer drafter steps and verify rows on unconfident chains; emitted tokens unchanged. With `--speculative` only |
 | `--mtp-quantization` | `bf16` | Must match main-model checkpoint (`nvfp4`, `fp8`, `bf16`) |
 | `--mtp-vocab` | `100000` | Limit MTP LM head to the first N token ids (`0` = full vocab). The default is **not** `0`: out of the box the draft head only scores ids `0..100000`, clamped to the model's real vocab size |
 | `--self-speculative` | off | Layer-skipping drafter (no MTP weights required) |

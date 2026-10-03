@@ -161,12 +161,41 @@ pub(super) fn plan(
     ladder_nd: usize,
     rows: usize,
 ) -> Vec<usize> {
+    plan_with_stop(
+        sched,
+        active,
+        batchable,
+        ladder_nd,
+        rows,
+        metrale_model_layers::speculative::draft_stop::draft_stop_logprob(),
+    )
+}
+
+/// 2026-10-02: [`plan`] with the `--draft-confidence-stop` threshold passed in
+/// (`ln tau`), so tests need not publish the process global.
+///
+/// With a threshold, every sequence's depth is also capped at its chain depth
+/// (`draft_stop::chain_depth` of its confidences), at every width, and at the
+/// drafts it holds: under the stop a batch may arrive with fewer than
+/// `ladder_nd` drafts (the batched propose ends once every chain has stopped,
+/// and a per-sequence propose stops on its own). The canonical depth
+/// re-pairing is used only when every sequence holds the depth it is
+/// re-paired with; otherwise each keeps its own depth.
+pub(super) fn plan_with_stop(
+    sched: &crate::scheduler::sched_ctx::SchedCtx,
+    active: &mut [ActiveSeq],
+    batchable: &mut Vec<usize>,
+    ladder_nd: usize,
+    rows: usize,
+    stop_ln_tau: Option<f32>,
+) -> Vec<usize> {
     let mut ks: Vec<usize> = vec![rows; batchable.len()];
-    if !sched.levers.dcut_enabled
-        || ladder_nd < 2
-        || batchable.is_empty()
-        || batchable.len() > sched.levers.dcut_width_cap
-    {
+    let dcut_on = sched.levers.dcut_enabled
+        && ladder_nd >= 2
+        && !batchable.is_empty()
+        && batchable.len() <= sched.levers.dcut_width_cap;
+    let stop_on = stop_ln_tau.is_some() && ladder_nd >= 2 && !batchable.is_empty();
+    if !dcut_on && !stop_on {
         return ks;
     }
     let confs: Vec<&[f32]> = batchable
@@ -182,14 +211,30 @@ pub(super) fn plan(
             }
         })
         .collect();
-    let retained = select(
-        &confs,
-        ladder_nd,
-        VERIFY_ROW_BUDGET,
-        sched.levers.dcut_ratio,
-    );
+    let retained = if dcut_on {
+        select(
+            &confs,
+            ladder_nd,
+            VERIFY_ROW_BUDGET,
+            sched.levers.dcut_ratio,
+        )
+    } else {
+        vec![ladder_nd; batchable.len()]
+    };
+    let held: Vec<usize> = batchable
+        .iter()
+        .map(|&i| active[i].pending_drafts.len())
+        .collect();
     for (pos, r) in retained.iter().enumerate() {
-        ks[pos] = (*r).clamp(1, ladder_nd) + 1;
+        let mut depth = (*r).min(held[pos]);
+        if let Some(ln_tau) = stop_ln_tau
+            && !confs[pos].is_empty()
+        {
+            depth = depth.min(metrale_model_layers::speculative::draft_stop::chain_depth(
+                confs[pos], ln_tau,
+            ));
+        }
+        ks[pos] = depth.clamp(1, ladder_nd) + 1;
     }
     // 2026-09-25: Dispatch order and depth assignment, from the ordering rule
     // the graph key also uses. Canonical: `ks_out[p]` is the multiset's p-th
@@ -201,15 +246,19 @@ pub(super) fn plan(
         .iter()
         .map(|&idx| active[idx].seq.ssm_slot_idx().unwrap_or(usize::MAX))
         .collect();
-    let (order, ks_out) = metrale_model_layers::speculative::verify_key::verify_batch_order(
-        &slots,
-        &ks,
-        metrale_model_layers::speculative::verify_key::canonical_assignment(batchable.len()),
-    );
-    // 2026-09-25: Truncate to the assigned depth. Every batchable sequence
-    // enters with exactly `ladder_nd` drafts (`mtp_step` truncates the
-    // surplus) and `ks_out[p] - 1` is in `1..=ladder_nd`, so this always
-    // keeps a prefix of the proposed drafts.
+    let canonical =
+        metrale_model_layers::speculative::verify_key::canonical_assignment(batchable.len());
+    let (mut order, mut ks_out) =
+        metrale_model_layers::speculative::verify_key::verify_batch_order(&slots, &ks, canonical);
+    // 2026-10-02: A re-pairing that hands a sequence more rows than it holds
+    // drafts for is infeasible; each sequence then keeps its own depth.
+    if canonical && order.iter().zip(&ks_out).any(|(&p, &k)| k - 1 > held[p]) {
+        (order, ks_out) =
+            metrale_model_layers::speculative::verify_key::verify_batch_order(&slots, &ks, false);
+    }
+    // 2026-09-25: Truncate to the assigned depth, which never exceeds the
+    // drafts a sequence holds, so this always keeps a prefix of the proposed
+    // drafts.
     let reordered: Vec<usize> = order.iter().map(|&p| batchable[p]).collect();
     for (idx, &k) in reordered.iter().zip(&ks_out) {
         let a = &mut active[*idx];

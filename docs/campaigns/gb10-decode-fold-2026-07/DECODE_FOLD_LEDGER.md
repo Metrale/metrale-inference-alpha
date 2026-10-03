@@ -47,7 +47,7 @@ wall ~4984–5023s · IoU 0.6254–0.6285 · BFCL 87.0–87.6 · TTFT p50 ~1557�
 --speculative --num-drafts 2 --mtp-quantization bf16
 --tool-call-parser qwen3_xml --disable-tool-grammar true --disable-thinking
 ENV: METRALE_NO_FFN_NVFP4_MMQ=1 METRALE_SSM_TAIL_MIDCHUNK=0 METRALE_MTP_CATCHUP=0
-     METRALE_MTP_DRAFT_CONF=0.0 METRALE_MTP_GATE_FORCE=1 METRALE_SSM_TAIL_PROTECT=1
+     METRALE_MTP_GATE_FORCE=1 METRALE_SSM_TAIL_PROTECT=1
      METRALE_SSM_TAIL_LEASE_TTL=128 METRALE_BF16_TC_PREFILL=1
 ```
 Build: `METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=qwen3.6-27b cargo build --release -p metrale-server --bin met --features cuda`

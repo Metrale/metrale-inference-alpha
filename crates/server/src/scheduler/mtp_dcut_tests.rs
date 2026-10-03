@@ -295,3 +295,97 @@ fn ragged_chunks_also_respect_the_width_bound() {
         assert!(hi > lo, "empty range");
     }
 }
+
+// 2026-10-02: --draft-confidence-stop through `plan_with_stop`.
+
+fn stop_ctx(dcut: bool) -> crate::scheduler::sched_ctx::SchedCtx {
+    let mut ctx = crate::scheduler::sched_ctx::SchedCtx::for_test();
+    let mut levers = crate::scheduler::levers::SchedLevers::defaults();
+    levers.dcut_enabled = dcut;
+    ctx.levers = std::sync::Arc::new(levers);
+    ctx
+}
+
+/// 2026-10-02: Active sequences holding the given drafts' confidences (one
+/// draft per confidence; draft ids are irrelevant here).
+fn seqs_with(confs: &[&[f32]]) -> Vec<ActiveSeq> {
+    confs
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let (mut a, _rx) = crate::scheduler::test_support::active_seq(i, 1);
+            a.pending_drafts = (0..c.len() as u32).map(|d| 100 + d).collect();
+            a.pending_draft_conf = c.to_vec();
+            a
+        })
+        .collect()
+}
+
+const LN_HALF: f32 = -std::f32::consts::LN_2;
+
+#[test]
+fn the_stop_caps_each_chain_at_its_first_unconfident_draft() {
+    let sched = stop_ctx(false);
+    let mut active = seqs_with(&[
+        &[-0.01, -0.02, -0.03],
+        &[-0.01, -2.0, -0.1],
+        &[-3.0, -0.1, -0.1],
+    ]);
+    let mut batchable = vec![0, 1, 2];
+    let ks = plan_with_stop(&sched, &mut active, &mut batchable, 3, 4, Some(LN_HALF));
+    // 2026-10-02: Deepest first (below the canonical width each keeps its own).
+    assert_eq!(ks, vec![4, 3, 2]);
+    assert_eq!(batchable, vec![0, 1, 2]);
+    let held: Vec<usize> = active.iter().map(|a| a.pending_drafts.len()).collect();
+    assert_eq!(held, vec![3, 2, 1], "drafts truncated to the planned depth");
+}
+
+#[test]
+fn without_the_stop_or_d_cut_the_plan_is_uniform() {
+    let sched = stop_ctx(false);
+    let mut active = seqs_with(&[&[-0.01, -2.0, -0.1], &[-3.0, -0.1, -0.1]]);
+    let mut batchable = vec![0, 1];
+    let ks = plan_with_stop(&sched, &mut active, &mut batchable, 3, 4, None);
+    assert_eq!(ks, vec![4, 4]);
+    assert!(active.iter().all(|a| a.pending_drafts.len() == 3));
+}
+
+#[test]
+fn the_stop_applies_above_the_d_cut_width_cap() {
+    let sched = stop_ctx(true);
+    let n = sched.levers.dcut_width_cap + 4;
+    let confident: &[f32] = &[-0.01, -0.01, -0.01];
+    let short: &[f32] = &[-0.01, -5.0, -0.01];
+    let confs: Vec<&[f32]> = (0..n)
+        .map(|i| if i % 2 == 0 { confident } else { short })
+        .collect();
+    let mut active = seqs_with(&confs);
+    let mut batchable: Vec<usize> = (0..n).collect();
+    let ks = plan_with_stop(&sched, &mut active, &mut batchable, 3, 4, Some(LN_HALF));
+    let total: usize = ks.iter().sum();
+    assert_eq!(
+        total,
+        (n / 2) * 4 + (n / 2) * 3,
+        "half the chains stop after 2 drafts"
+    );
+}
+
+#[test]
+fn a_short_chain_joins_at_its_own_depth_when_re_pairing_cannot_hold_it() {
+    // 2026-10-02: At the canonical width the depths would be re-paired
+    // deepest-first in slot order; sequence 0 holds only one draft, so the
+    // re-pairing is infeasible and every sequence keeps its own depth.
+    let sched = stop_ctx(false);
+    let n = metrale_model_layers::speculative::verify_key::CANONICAL_KEY_MIN_WIDTH;
+    let full: &[f32] = &[-0.01, -0.01, -0.01];
+    let one: &[f32] = &[-0.01];
+    let confs: Vec<&[f32]> = (0..n).map(|i| if i == 0 { one } else { full }).collect();
+    let mut active = seqs_with(&confs);
+    let mut batchable: Vec<usize> = (0..n).collect();
+    let ks = plan_with_stop(&sched, &mut active, &mut batchable, 3, 4, Some(LN_HALF));
+    for (pos, &i) in batchable.iter().enumerate() {
+        assert_eq!(ks[pos], active[i].pending_drafts.len() + 1);
+    }
+    assert_eq!(active[0].pending_drafts.len(), 1);
+    assert_eq!(ks.iter().sum::<usize>(), 2 + (n - 1) * 4);
+}

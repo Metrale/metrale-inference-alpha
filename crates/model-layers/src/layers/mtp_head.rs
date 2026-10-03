@@ -226,9 +226,9 @@ pub struct MtpHead {
     /// 2026-09-25: 4-byte device buffer that `embed_from_argmax` writes the draft id to,
     /// for deferred readback.
     draft_token_id_dev: DevicePtr,
-    /// 2026-09-25: Chain confidence of the last propose, as f32 bits: the minimum top-1
-    /// softmax probability across its drafts. Reset to 1.0 at each propose and
-    /// lowered by the forward when `draft_conf_tau > 0`.
+    /// 2026-10-02: Top-1 log-probability of the last single-sequence draft whose id was read
+    /// back, as f32 bits; NaN when it was not measured. Written by `forward_one` under
+    /// `--draft-confidence-stop`, read by `propose` to stop the chain.
     pub(super) last_conf_bits: std::sync::atomic::AtomicU32,
     dense_gemv_k: Option<KernelHandle>,
     dense_gemv_fp8w_k: Option<KernelHandle>,
